@@ -705,7 +705,11 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   }));
 
 // Keep executed events (count every executed ADD/DROP for dues)
-const adds  = deduped.filter(r => r.action === "ADD");
+// Count every FA add, but for WAIVER adds keep only the team that truly got the player
+const adds = deduped.filter(r =>
+  r.action === "ADD" &&
+  (r.method !== "WAIVER" || isGenuineAddBySeries(r, series, seasonId))
+);
 const drops = deduped.filter(r => r.action === "DROP");
 
 

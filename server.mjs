@@ -697,7 +697,7 @@ onProgress?.(sp, maxSp, "Resolving player names…");
     } catch {}
 
   await sleep(150);
-}
+
 
   }
   return map;

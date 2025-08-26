@@ -631,36 +631,34 @@ const spFromDate = (dateLike, seasonYear)=> Math.max(1, Math.min(25, (leagueWeek
 
 
 function isGenuineAddBySeries(row, series, seasonYear) {
-  if (!row.playerId) return true; // can’t check — let it through
-  const sp = spFromDate(row.date, seasonYear);
+  // If we don't know the player, let it count (cannot verify)
+  if (!row.playerId) return true;
+
+  // Only verify WAIVER adds. FA adds can be added/dropped same week and should still count.
+  if (String(row.method).toUpperCase() !== "WAIVER") return true;
+
+  const sp = spFromDate(row.date, seasonYear);  // 1..25
+  const teamId = Number(row.teamIdRaw ?? row.teamId); // <- numeric!
+
   const before = Math.max(1, sp - 1);
+  const later  = [sp, sp + 1, sp + 2].filter(n => n < series.length);
 
-  const haveAny =
-    (series?.[before] && Object.keys(series[before]).length) ||
-    (series?.[sp] && Object.keys(series[sp]).length) ||
-    (series?.[sp + 1] && Object.keys(series[sp + 1]).length);
+  const wasBefore    = isOnRoster(series, before, teamId, row.playerId);
+  const appearsLater = later.some(n => isOnRoster(series, teamId, row.playerId));
 
-  if (!haveAny) return true; // no snapshots → do not discard
-
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = [sp, sp + 1, sp + 2].some(n => isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return !wasBefore && appearsLater;
 }
 
-function isExecutedDropBySeries(row, series, seasonYear) {
-  if (!row.playerId) return true; // allow if unknown
+
+function isExecutedDropBySeries(row, series, seasonYear){
+  if (!row.playerId) return false;
   const sp = spFromDate(row.date, seasonYear);
+  const teamId = Number(row.teamIdRaw ?? row.teamId); // <- numeric!
   const before = Math.max(1, sp - 1);
+  const later  = [sp, sp + 1, sp + 2].filter(n => n < series.length);
 
-  const haveAny =
-    (series?.[before] && Object.keys(series[before]).length) ||
-    (series?.[sp] && Object.keys(series[sp]).length) ||
-    (series?.[sp + 1] && Object.keys(series[sp + 1]).length);
-
-  if (!haveAny) return true; // no snapshots → do not discard
-
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = [sp, sp + 1, sp + 2].some(n => isOnRoster(series, n, row.teamIdRaw, row.playerId));
+  const wasBefore    = isOnRoster(series, before, teamId, row.playerId);
+  const appearsLater = later.some(n => isOnRoster(series, n, teamId, row.playerId));
   return wasBefore && !appearsLater;
 }
 
@@ -696,13 +694,14 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   // Roster series (public) to verify executed adds/drops and get names later
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
 
-  // Dedup → annotate
-  const deduped = dedupeMoves(all).map(e => ({
-    ...e,
-    teamIdRaw: e.teamId,
-    team: idToName[e.teamId] || `Team ${e.teamId}`,
-    player: e.playerName || null
-  }));
+ // Dedup → annotate (make teamIdRaw a Number!)
+const deduped = dedupeMoves(all).map(e => ({
+  ...e,
+  teamIdRaw: Number(e.teamId),
+  team: idToName[e.teamId] || `Team ${e.teamId}`,
+  player: e.playerName || null
+}));
+
 
 // Keep executed events (count every executed ADD/DROP for dues)
 // Count every FA add, but for WAIVER adds keep only the team that truly got the player

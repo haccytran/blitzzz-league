@@ -727,20 +727,26 @@ const deduped = dedupeMoves(all).map(e => ({
 const verified = [];
 for (const r of deduped) {
   if (r.action === "ADD") {
-    // If ESPN didn't give a playerId for some reason, keep it (rare, but don't lose data).
-    if (!r.playerId) { verified.push(r); continue; }
+  // If we don't know the player, skip — we can't prove it was a winning add.
+  if (!r.playerId) continue;
 
-    const sp  = spFromDate(r.date, seasonId);
-    const tid = r.teamIdRaw;
+  const sp  = spFromDate(r.date, seasonId);
+  const tid = r.teamIdRaw;
 
-    // A genuine ADD means the player shows up on that team's roster shortly after.
-    const appears =
-      isOnRoster(series, sp,   tid, r.playerId) ||
-      isOnRoster(series, sp+1, tid, r.playerId) ||
-      isOnRoster(series, sp+2, tid, r.playerId);
+  // must NOT be on the roster the week before (avoid counting bids / no-ops)
+  const wasBefore =
+    isOnRoster(series, Math.max(1, sp - 1), tid, r.playerId);
 
-    if (appears) verified.push(r);   // loser bids won't pass this check
-  } else if (r.action === "DROP") {
+  // MUST appear soon after (handles waiver posting lag)
+  const appears =
+    isOnRoster(series, sp,   tid, r.playerId) ||
+    isOnRoster(series, sp+1, tid, r.playerId) ||
+    isOnRoster(series, sp+2, tid, r.playerId);
+
+  if (!wasBefore && appears) verified.push(r);
+}
+
+ else if (r.action === "DROP") {
     // Only count executed drops (player was on the roster before, and gone after).
     if (!r.playerId) continue;
 
@@ -1013,6 +1019,77 @@ app.use(express.static(CLIENT_DIR));
 app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(CLIENT_DIR, "index.html"));
 });
+
+
+// --- BEGIN: add/dedupe helpers ---
+
+// true only for *real* adds: winning waiver adds or free-agent adds.
+// (ignore draft, trade, and non-winning waiver attempts)
+function isActualAdd(txn) {
+  if (!txn || !Array.isArray(txn.items)) return false;
+
+  // ESPN sends waivers with type "WAIVER" and status "EXECUTED"
+  // Free agent adds are type "FREEAGENT" and status "EXECUTED"
+  const isWaiverWinner =
+    txn.type === "WAIVER" &&
+    txn.status === "EXECUTED" &&
+    txn.items.some(it => it.type === "ADD");
+
+  const isFreeAgentAdd =
+    txn.type === "FREEAGENT" &&
+    txn.status === "EXECUTED" &&
+    txn.items.some(it => it.type === "ADD");
+
+  return isWaiverWinner || isFreeAgentAdd;
+}
+
+// turn raw ESPN txns into our flat rows array,
+// counting only real adds once (per player+team+scoringPeriod),
+// but including every DROP (they don't affect dues but you log them).
+function buildRowsDedupeWaivers(transactions) {
+  const rows = [];
+  const seenAdd = new Set(); // key: playerId@teamId@sp
+
+  for (const t of transactions || []) {
+    const sp = t.scoringPeriodId;
+    const when = t.processDate ?? t.proposedDate ?? 0;
+
+    // include all DROPs (useful for history)
+    for (const d of (t.items || []).filter(i => i.type === "DROP")) {
+      rows.push({
+        type: "DROP",
+        teamId: d.fromTeamId ?? t.teamId ?? 0,
+        playerId: d.playerId,
+        scoringPeriodId: sp,
+        ts: when
+      });
+    }
+
+    // include only real ADDs (FA + winning waivers), one per player/team/period
+    if (isActualAdd(t)) {
+      for (const a of t.items.filter(i => i.type === "ADD")) {
+        const key = `${a.playerId}@${a.toTeamId}@${sp}`;
+        if (!seenAdd.has(key)) {
+          seenAdd.add(key);
+          rows.push({
+            type: "ADD",
+            teamId: a.toTeamId,
+            playerId: a.playerId,
+            scoringPeriodId: sp,
+            ts: when
+          });
+        }
+      }
+    }
+  }
+
+  // keep rows in time order so your UI feels right
+  rows.sort((x, y) => (x.ts ?? 0) - (y.ts ?? 0));
+  return rows;
+}
+
+// --- END: add/dedupe helpers ---
+
 
 
 /* =========================

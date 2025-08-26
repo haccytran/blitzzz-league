@@ -505,12 +505,24 @@ function dedupeMoves(events){
 }
 async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const all = [];
-  for (let sp=1; sp<=maxSp; sp++){
-onProgress?.(sp, maxSp, "Reading ESPN activity…");
-    try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"tx")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"recent")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMovesFromComm(j)); } catch {}
-  }
+  for (let sp = 1; sp <= maxSp; sp++) {
+  onProgress?.(sp, maxSp, "Reading ESPN activity…");
+  try {
+    const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie: true });
+    all.push(...extractMoves(j,"tx"));
+  } catch (e) { console.log("mTransactions2 failed for SP", sp, e?.message); }
+
+  try {
+    const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie: true });
+    all.push(...extractMoves(j,"recent"));
+  } catch (e) { console.log("recentActivity failed for SP", sp, e?.message); }
+
+  try {
+    const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie: true });
+    all.push(...extractMovesFromComm(j));
+  } catch (e) { console.log("comm failed for SP", sp, e?.message); }
+}
+
   return all.map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
             .sort((a,b)=> a.date - b.date);
 }

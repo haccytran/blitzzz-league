@@ -579,7 +579,6 @@ async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25,
     } catch {}
 
   await sleep(150);
-}
 
   }
 

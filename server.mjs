@@ -703,22 +703,49 @@ const deduped = dedupeMoves(all).map(e => ({
 }));
 
 
-// Keep executed events (count every executed ADD/DROP for dues)
-// Count every FA add, but for WAIVER adds keep only the team that truly got the player
-const adds = deduped.filter(r =>
-  r.action === "ADD" &&
-  (r.method !== "WAIVER" || isGenuineAddBySeries(r, series, seasonId))
-);
-const drops = deduped.filter(r => r.action === "DROP");
+// Verify against roster snapshots to keep only *winning* waiver adds and *executed* drops.
+const verified = [];
+for (const r of deduped) {
+  if (r.action === "ADD") {
+    // If ESPN didn't give a playerId for some reason, keep it (rare, but don't lose data).
+    if (!r.playerId) { verified.push(r); continue; }
 
+    const sp  = spFromDate(r.date, seasonId);
+    const tid = r.teamIdRaw;
 
-  // Backfill missing player names via roster snapshots
-  const needIds = [...new Set([...adds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
-  const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
-  for (const r of [...adds, ...drops]) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
+    // A genuine ADD means the player shows up on that team's roster shortly after.
+    const appears =
+      isOnRoster(series, sp,   tid, r.playerId) ||
+      isOnRoster(series, sp+1, tid, r.playerId) ||
+      isOnRoster(series, sp+2, tid, r.playerId);
+
+    if (appears) verified.push(r);   // loser bids won't pass this check
+  } else if (r.action === "DROP") {
+    // Only count executed drops (player was on the roster before, and gone after).
+    if (!r.playerId) continue;
+
+    const sp  = spFromDate(r.date, seasonId);
+    const tid = r.teamIdRaw;
+
+    const wasBefore =
+      isOnRoster(series, Math.max(1, sp-1), tid, r.playerId) ||
+      isOnRoster(series, sp,              tid, r.playerId);
+
+    const appearsLater =
+      isOnRoster(series, sp+1, tid, r.playerId) ||
+      isOnRoster(series, sp+2, tid, r.playerId);
+
+    if (wasBefore && !appearsLater) verified.push(r);
+  }
+}
+
+// Backfill missing player names for verified events
+const needIds = [...new Set(verified.map(r => r.player ? null : r.playerId).filter(Boolean))];
+const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
+for (const r of verified) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
 
 // Flatten for UI — definitive week math (avoids off-by-one) + de-dupe repeated DROPs
-let rawMoves = [...adds, ...drops].map(r => {
+let rawMoves = verified.map(r => {
   const wb = weekBucketPT(r.date, seasonId);
   return {
     date: fmtPT(r.date),
@@ -733,6 +760,30 @@ let rawMoves = [...adds, ...drops].map(r => {
     playerId: r.playerId || null
   };
 }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
+
+// Collapse duplicate DROP lines (same as before)
+const DEDUPE_WINDOW_MS = 3 * 60 * 1000;
+const dedupedMoves = [];
+const lastByKey = new Map(); // key -> {action, ts}
+
+for (const m of rawMoves) {
+  const key = `${m.team}|${m.playerId || m.player}`;
+
+  if (m.action === "DROP") {
+    const prev = lastByKey.get(key);
+    if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) {
+      continue;
+    }
+    lastByKey.set(key, { action: "DROP", ts: m.ts });
+  } else if (m.action === "ADD") {
+    lastByKey.set(key, { action: "ADD", ts: m.ts });
+  }
+
+  dedupedMoves.push(m);
+}
+
+// Replace rawMoves with the cleaned list (and strip helper field)
+rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
 
 // Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
 // unless there was an ADD for that player by that team in between.

@@ -861,25 +861,6 @@ for (const r of deduped) {
   }
 }
 
- else if (r.action === "DROP") {
-    // Only count executed drops (player was on the roster before, and gone after).
-    if (!r.playerId) continue;
-
-    const sp  = spFromDate(r.date, seasonId);
-    const tid = r.teamIdRaw;
-
-    const wasBefore =
-      isOnRoster(series, Math.max(1, sp-1), tid, r.playerId) ||
-      isOnRoster(series, sp,              tid, r.playerId);
-
-    const appearsLater =
-      isOnRoster(series, sp+1, tid, r.playerId) ||
-      isOnRoster(series, sp+2, tid, r.playerId);
-
-    if (wasBefore && !appearsLater) verified.push(r);
-  }
-}
-
 // Backfill missing player names for verified events
 const needIds = [...new Set(verified.map(r => r.player ? null : r.playerId).filter(Boolean))];
 const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25, logger });

@@ -704,9 +704,10 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
     player: e.playerName || null
   }));
 
-  // Keep executed events only
-  const adds  = deduped.filter(r => r.action === "ADD"  && isGenuineAddBySeries(r, series, seasonId));
-  const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
+// Keep executed events (count every executed ADD/DROP for dues)
+const adds  = deduped.filter(r => r.action === "ADD");
+const drops = deduped.filter(r => r.action === "DROP");
+
 
   // Backfill missing player names via roster snapshots
   const needIds = [...new Set([...adds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];

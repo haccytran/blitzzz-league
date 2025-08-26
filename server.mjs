@@ -303,8 +303,9 @@ async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requi
 
   // Public-friendly → lm-api-reads → site.web fallback
   const urls = [
-    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
+    // Prefer the read-replica first — this returns the richest, most stable JSON
     `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
+    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
     `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`
   ];
 
@@ -452,8 +453,20 @@ function inferMethod(typeStr, typeNum, t, it){
   if (isWithinWaiverWindowPT(ts)) return "WAIVER";
   return "FA";
 }
-const pickPlayerId   = (it)=> it?.playerId ?? it?.playerPoolEntry?.player?.id ?? it?.entityId ?? null;
-const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
+const pickPlayerId   = (it)=> it?.playerId
+ ?? it?.playerPoolEntry?.player?.id
+  ?? it?.player?.id
+  ?? it?.athleteId
+?? it?.entityId 
+?? null;
+
+
+const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName 
+|| it?.player?.fullName 
+|| it?.athlete?.fullName
+|| t?.playerPoolEntry?.player?.fullName 
+|| t?.player?.fullName 
+|| null;
 
 function extractMoves(json, src="tx"){
   const rows =
@@ -651,18 +664,17 @@ function isGenuineAddBySeries(row, series, seasonYear) {
 
 
 function isExecutedDropBySeries(row, series, seasonYear){
-  if (!row.playerId) return false;
+  // If the transaction JSON didn’t carry a playerId (common on site.web.api),
+  // assume the drop was executed rather than silently discarding it.
+  if (!row.playerId) return true;
   const sp = spFromDate(row.date, seasonYear);
-  const teamId = Number(row.teamIdRaw ?? row.teamId); // <- numeric!
   const before = Math.max(1, sp - 1);
-  const later  = [sp, sp + 1, sp + 2].filter(n => n < series.length);
-
-  const wasBefore    = isOnRoster(series, before, teamId, row.playerId);
-  const appearsLater = later.some(n => isOnRoster(series, n, teamId, row.playerId));
+  // look ahead a touch more so re-adds in the same/later week don’t erase the drop
+  const later = [sp, sp+1, sp+2, sp+3].filter(n=> n < series.length);
+  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
+  const appearsLater = later.some(n => isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return wasBefore && !appearsLater;
 }
-
-
 async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
   const need = new Set((ids||[]).filter(Boolean));
   const map = {}; if (need.size===0) return map;

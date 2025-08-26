@@ -326,7 +326,7 @@ async function fetchJSONWithRetry(url, { requireCookie, req, label, logger }) {
   }
 
   let lastErr = "";
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {  // fewer retries per host
     try {
       logger?.debug(`HTTP attempt ${attempt} → ${label}`, { url });
       const res = await fetch(url, { headers });
@@ -342,16 +342,19 @@ async function fetchJSONWithRetry(url, { requireCookie, req, label, logger }) {
           logger?.error(`Parse failed for ${label}`, e, { preview: txt.slice(0, 200) });
         }
       } else {
-        lastErr = `status ${res.status}, ct ${ct}, body: ${txt.slice(0,160).replace(/\s+/g," ")}`;
-        logger?.error(`Non-JSON for ${label}`, { status: res.status, ct, preview: txt.slice(0, 200) });
+        // Bot/HTML page—don’t burn more retries on this host.
+        const preview = txt.slice(0, 160).replace(/\s+/g, " ");
+        lastErr = `status ${res.status}, ct ${ct}, body: ${preview}`;
+        logger?.error(`Non-JSON for ${label} (fast-fail)`, { status: res.status, ct, preview });
+        throw new Error(`Non-JSON (${ct})`);
       }
 
       // backoff + jitter
-      await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt) + Math.random() * 1000));
+      await new Promise(r => setTimeout(r, 300 * Math.pow(2, attempt) + Math.random() * 400));
     } catch (e) {
       lastErr = `Network error: ${e?.message || e}`;
       logger?.error(`Network error for ${label}`, e, { attempt });
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+      await new Promise(r => setTimeout(r, 400 * attempt));
     }
   }
   const err = new Error(`ESPN non-JSON for ${label}: ${lastErr}`);
@@ -365,10 +368,13 @@ async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requi
   const bust = `&_=${Date.now()}`;
   const v = encodeURIComponent(view);
 
-  const urls = [
-    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
+const urls = [
+    // This one is consistently JSON (your logs show it working)
     `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
-    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`
+    // Secondary JSON source
+    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
+    // Last: main site (often returns HTML bot page on Render IPs)
+    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`
   ];
 
   let last = null;
@@ -636,6 +642,11 @@ async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25,
     // --- First pass (cookie = true) ---
     try {
       const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true, logger });
+      all.push(...extractMoves(j, "tx"));
+    } catch {}
+// Quick no-cookie follow-up (many hosts allow this and return JSON)
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: false, logger });
       all.push(...extractMoves(j, "tx"));
     } catch {}
     try {
@@ -1023,6 +1034,12 @@ app.post("/api/report/update", async (req, res) => {
     );
     setProgress(jobId, 100, "Failed");
     res.status(502).send(err?.message || String(err));
+} finally {
+    // Persist the latest debug log even on success, so you can inspect it.
+    try {
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      await fs.writeFile(path.join(DATA_DIR, "last-espn-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
+    } catch {}
   }
 });
 

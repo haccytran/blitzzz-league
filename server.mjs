@@ -157,11 +157,37 @@ async function writeJson(name, obj) {
   await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
 }
 
+
 /* =========================
-   Time helpers (Wed→Tue league week)
+   Time helpers (Wed→Tue league week) — robust PT conversion
    ========================= */
-function toPT(d) { return new Date(d.toLocaleString("en-US", { timeZone: LEAGUE_TZ })); }
-function fmtPT(d) { return toPT(d).toLocaleString(); }
+const dtfPT = new Intl.DateTimeFormat("en-US", {
+  timeZone: LEAGUE_TZ,               // "America/Los_Angeles"
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+/** Return a Date whose clock reflects PT (no locale string parsing). */
+function toPT(dateLike) {
+  const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  const parts = Object.fromEntries(dtfPT.formatToParts(d).map(p => [p.type, p.value]));
+  // Build a UTC timestamp that represents the PT wall clock time.
+  return new Date(Date.UTC(
+    +parts.year, +parts.month - 1, +parts.day,
+    +parts.hour, +parts.minute, +parts.second
+  ));
+}
+
+/** Pretty-print a timestamp in PT for labels/debug. */
+function fmtPT(dateLike) {
+  return new Date(dateLike).toLocaleString("en-US", { timeZone: LEAGUE_TZ });
+}
+
 
 const WEEK_START_DAY = 3; // Wednesday
 function startOfLeagueWeekPT(date){

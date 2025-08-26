@@ -287,22 +287,22 @@ async function fetchJSONWithRetry(url, { requireCookie, req, label }) {
   }
 
   let lastErr = "";
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    const res = await fetch(url, { headers });
-    const ct = res.headers.get("content-type") || "";
+  for (let attempt = 1; attempt <= 6; attempt++) {        // was 4 → now 6
+    const res  = await fetch(url, { headers });
+    const ct   = res.headers.get("content-type") || "";
     const text = await res.text();
 
-    // JSON happy path
     if (ct.includes("application/json")) {
       try { return JSON.parse(text); }
       catch (e) { lastErr = `JSON parse failed: ${e?.message || e}`; }
     } else {
-      // Keep a tiny snippet for diagnostics
+      // keep a tiny snippet for diagnostics
       lastErr = `status ${res.status}, ct ${ct}, body: ${text.slice(0, 160).replace(/\s+/g, " ")}`;
     }
 
-    // Backoff before next try
-    await sleep(200 * attempt); // 200ms, 400ms, 600ms...
+    // exponential backoff + jitter
+    const delay = 250 * attempt + Math.floor(Math.random() * 300);
+    await sleep(delay);
   }
   throw new Error(`ESPN non-JSON for ${label}: ${lastErr}`);
 }
@@ -563,30 +563,51 @@ async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25,
   for (let sp = 1; sp <= maxSp; sp++) {
     onProgress?.(sp, maxSp, "Reading ESPN activity…");
 
+    const before = all.length;
+
+    // --- First pass (cookie = true) ---
     try {
       const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true });
       all.push(...extractMoves(j, "tx"));
     } catch {}
-
     try {
       const j = await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true });
       all.push(...extractMoves(j, "recent"));
     } catch {}
-
     try {
       const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true });
       all.push(...extractMovesFromComm(j));
     } catch {}
 
-  await sleep(150);
+    // small pause between weeks
+    await sleep(120 + Math.floor(Math.random() * 120));
 
+    // If this week looks “thin”, try a rescue pass with cookie = false.
+    // (On some Render IPs, cookie-auth can trigger anti-bot; the no-cookie
+    // site endpoints sometimes succeed for the same week.)
+    const addedFirstPass = all.length - before;
+    if (addedFirstPass < 6) { // tweak threshold if you like
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: false });
+        all.push(...extractMoves(j, "tx"));
+      } catch {}
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: false });
+        all.push(...extractMoves(j, "recent"));
+      } catch {}
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: false });
+        all.push(...extractMovesFromComm(j));
+      } catch {}
+
+      await sleep(220);
+    }
   }
 
   return all
     .map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
     .sort((a, b) => a.date - b.date);
 }
-
 
 
 async function fetchRosterSeries({ leagueId, seasonId, req, maxSp = 25, onProgress }) {

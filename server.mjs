@@ -787,29 +787,6 @@ rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
 
 // Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
 // unless there was an ADD for that player by that team in between.
-const dedupedMoves = [];
-const lastByKey = new Map(); // key -> {action, ts}
-
-for (const m of rawMoves) {
-  const key = `${m.team}|${m.playerId || m.player}`;
-
-  if (m.action === "DROP") {
-    const prev = lastByKey.get(key);
-    if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) {
-      // Same team dropped same player at the same moment: skip duplicate
-      continue;
-    }
-    lastByKey.set(key, { action: "DROP", ts: m.ts });
-  } else if (m.action === "ADD") {
-    // If the team re-ADDs, we reset the chain so a later DROP will show again
-    lastByKey.set(key, { action: "ADD", ts: m.ts });
-  }
-
-  dedupedMoves.push(m);
-}
-
-// Replace rawMoves with the cleaned list (and strip helper field)
-rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
 
   
 

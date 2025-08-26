@@ -634,7 +634,6 @@ async function fetchRosterSeries({ leagueId, seasonId, req, maxSp = 25, onProgre
         }
 
   await sleep(150);
-}
 
       }
     }

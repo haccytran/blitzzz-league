@@ -547,46 +547,98 @@ async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25,
     .map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
     .sort((a, b) => a.date - b.date);
 }
-async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress }){
+
+
+async function fetchRosterSeries({ leagueId, seasonId, req, maxSp = 25, onProgress }) {
   const series = [];
-  for (let sp=1; sp<=maxSp; sp++){
-onProgress?.(sp, maxSp, "Building roster timeline…");
-    try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
-      const byTeam = {};
-      for (const t of (r?.teams || [])) {
-        const set = new Set();
-        for (const e of (t.roster?.entries || [])) {
-          const pid = e.playerPoolEntry?.player?.id;
-          if (pid) set.add(pid);
+  let lastGood = {}; // carry-forward fallback if a week fails
+
+  for (let sp = 1; sp <= maxSp; sp++) {
+    onProgress?.(sp, maxSp, "Building roster timeline…");
+
+    // up to 3 tries: vanilla → cookie → cookie (with small backoff)
+    let attempt = 0, done = false;
+    while (!done && attempt < 3) {
+      attempt++;
+      try {
+        const r = await espnFetch({
+          leagueId, seasonId, view: "mRoster", scoringPeriodId: sp, req,
+          requireCookie: attempt > 1 // try cookie on retries
+        });
+
+        const byTeam = {};
+        for (const t of (r?.teams || [])) {
+          const set = new Set();
+          for (const e of (t?.roster?.entries || [])) {
+            const pid = e?.playerPoolEntry?.player?.id;
+            if (pid) set.add(pid);
+          }
+          byTeam[t.id] = set;
         }
-        byTeam[t.id] = set;
+
+        if (Object.keys(byTeam).length > 0) {
+          series[sp] = byTeam;
+          lastGood = byTeam; // remember last good snapshot
+        } else {
+          // API returned no teams — use previous good snapshot
+          series[sp] = lastGood;
+        }
+        done = true;
+      } catch {
+        // small backoff before next attempt
+        await new Promise(r => setTimeout(r, 400 + attempt * 250));
+        if (attempt >= 3) {
+          // still failing — use last good snapshot so we don't drop moves
+          series[sp] = lastGood;
+          done = true;
+        }
       }
-      series[sp] = byTeam;
-    } catch { series[sp] = {}; }
+    }
   }
+
   return series;
 }
+
+
 const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]?.[teamId]?.has(playerId));
 const spFromDate = (dateLike, seasonYear)=> Math.max(1, Math.min(25, (leagueWeekOf(new Date(dateLike), seasonYear).week || 1)));
-function isGenuineAddBySeries(row, series, seasonYear){
-  if (!row.playerId) return true;
+
+
+function isGenuineAddBySeries(row, series, seasonYear) {
+  if (!row.playerId) return true; // can’t check — let it through
   const sp = spFromDate(row.date, seasonYear);
   const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
+
+  const haveAny =
+    (series?.[before] && Object.keys(series[before]).length) ||
+    (series?.[sp] && Object.keys(series[sp]).length) ||
+    (series?.[sp + 1] && Object.keys(series[sp + 1]).length);
+
+  if (!haveAny) return true; // no snapshots → do not discard
+
   const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
+  const appearsLater = [sp, sp + 1, sp + 2].some(n => isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return !wasBefore && appearsLater;
 }
-function isExecutedDropBySeries(row, series, seasonYear){
-  if (!row.playerId) return false;
+
+function isExecutedDropBySeries(row, series, seasonYear) {
+  if (!row.playerId) return true; // allow if unknown
   const sp = spFromDate(row.date, seasonYear);
   const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
+
+  const haveAny =
+    (series?.[before] && Object.keys(series[before]).length) ||
+    (series?.[sp] && Object.keys(series[sp]).length) ||
+    (series?.[sp + 1] && Object.keys(series[sp + 1]).length);
+
+  if (!haveAny) return true; // no snapshots → do not discard
+
   const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
+  const appearsLater = [sp, sp + 1, sp + 2].some(n => isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return wasBefore && !appearsLater;
 }
+
+
 async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
   const need = new Set((ids||[]).filter(Boolean));
   const map = {}; if (need.size===0) return map;
@@ -831,6 +883,30 @@ app.get("/api/debug/trans-check", async (req, res) => {
   }
   res.json(rows);
 });
+
+/* ===== Debug endpoint: mRoster availability by scoring period ===== */
+app.get("/api/debug/roster-check", async (req, res) => {
+  const { leagueId, seasonId } = req.query || {};
+  if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
+
+  const out = [];
+  for (let sp = 1; sp <= 25; sp++) {
+    const row = { sp };
+    try {
+      const r = await espnFetch({ leagueId, seasonId, view: "mRoster", scoringPeriodId: sp, req, requireCookie: false });
+      const teamCount = Array.isArray(r?.teams) ? r.teams.length : 0;
+      const playerSlots = (r?.teams || []).reduce((n, t) => n + (t?.roster?.entries?.length || 0), 0);
+      row.teams = teamCount;    // should be 10 for your league
+      row.entries = playerSlots; // total roster entries that week
+    } catch (e) {
+      row.teams = "ERR";
+      row.entries = 0;
+    }
+    out.push(row);
+  }
+  res.json(out);
+});
+
 
 // serve the built client (Vite "dist" folder)
 const CLIENT_DIR = path.join(__dirname, "dist");

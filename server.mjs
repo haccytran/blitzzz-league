@@ -405,6 +405,8 @@ app.post("/api/polls/close", async (req, res) => {
 /* =========================
    Official Snapshot (commissioner builds once; league reads)
    ========================= */
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
@@ -503,28 +505,47 @@ function dedupeMoves(events){
   }
   return out;
 }
-async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
+async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25, onProgress }) {
   const all = [];
+
   for (let sp = 1; sp <= maxSp; sp++) {
-  onProgress?.(sp, maxSp, "Reading ESPN activity…");
-  try {
-    const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie: true });
-    all.push(...extractMoves(j,"tx"));
-  } catch (e) { console.log("mTransactions2 failed for SP", sp, e?.message); }
+    onProgress?.(sp, maxSp, "Reading ESPN activity…");
 
-  try {
-    const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie: true });
-    all.push(...extractMoves(j,"recent"));
-  } catch (e) { console.log("recentActivity failed for SP", sp, e?.message); }
+    // small delay between weeks to reduce throttling from ESPN
+    await sleep(250);
 
-  try {
-    const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie: true });
-    all.push(...extractMovesFromComm(j));
-  } catch (e) { console.log("comm failed for SP", sp, e?.message); }
-}
+    // helper to fetch one view with retries + logs
+    const grab = async (view, tag) => {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const j = await espnFetch({
+            leagueId, seasonId, view, scoringPeriodId: sp, req, requireCookie: true
+          });
+          if (view === "kona_league_communication") {
+            const rows = extractMovesFromComm(j);
+            all.push(...rows);
+            console.log(`[SP ${sp}] ${tag}: ok (${rows.length})`);
+          } else {
+            const rows = extractMoves(j, tag);
+            all.push(...rows);
+            console.log(`[SP ${sp}] ${tag}: ok (${rows.length})`);
+          }
+          return;
+        } catch (e) {
+          console.log(`[SP ${sp}] ${tag}: attempt ${attempt} failed -> ${e?.message || e}`);
+          if (attempt < 3) await sleep(500 + attempt * 300);
+        }
+      }
+    };
 
-  return all.map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
-            .sort((a,b)=> a.date - b.date);
+    await grab("mTransactions2", "tx");
+    await grab("recentActivity", "recent");
+    await grab("kona_league_communication", "comm");
+  }
+
+  return all
+    .map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
+    .sort((a, b) => a.date - b.date);
 }
 async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const series = [];
@@ -705,6 +726,7 @@ app.get("/api/report", async (req, res) => {
 
 });
 app.post("/api/report/update", async (req, res) => {
+ console.log("[REPORT/UPDATE] start", req.body);
   // gate: only commissioner can run the official snapshot
   if (req.header("x-admin") !== ADMIN_PASSWORD) {
     return res.status(401).send("Unauthorized");
@@ -770,13 +792,45 @@ await writeJson("report.json", snapshot);
 
 setProgress(jobId, 100, "Snapshot complete");
 res.json({ ok: true, weeks: (report?.weekRows || []).length });
-
+console.log("[REPORT/UPDATE] done"); 
   } catch (err) {
     setProgress(jobId, 100, "Failed");
     res.status(502).send(err?.message || String(err));
   }
 });
 
+app.get("/api/debug/trans-check", async (req, res) => {
+  const leagueId = req.query.leagueId;
+  const seasonId = req.query.seasonId;
+  if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
+
+  const rows = [];
+  for (let sp = 1; sp <= 25; sp++) {
+    const row = { sp };
+    for (const [view, tag] of [
+      ["mTransactions2", "tx"],
+      ["recentActivity", "recent"],
+      ["kona_league_communication", "comm"]
+    ]) {
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view, scoringPeriodId: sp, req, requireCookie: true });
+        const count =
+          (Array.isArray(j?.transactions) && j.transactions.length) ||
+          (Array.isArray(j?.events) && j.events.length) ||
+          (Array.isArray(j?.messages) && j.messages.length) ||
+          (Array.isArray(j?.topics) && j.topics.length) ||
+          (Array.isArray(j) && j.length) ||
+          0;
+        row[tag] = count;
+      } catch {
+        row[tag] = "ERR";
+      }
+      await sleep(120);
+    }
+    rows.push(row);
+  }
+  res.json(rows);
+});
 
 // serve the built client (Vite "dist" folder)
 const CLIENT_DIR = path.join(__dirname, "dist");

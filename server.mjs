@@ -1036,9 +1036,9 @@ app.get("/api/debug/last-espn-log", async (_req, res) => {
   }
 });
 
-const logger = new ProcessLogger();
 
 app.get("/api/debug/trans-check", async (req, res) => {
+  const logger = new ProcessLogger();
   const leagueId = req.query.leagueId;
   const seasonId = req.query.seasonId;
   if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
@@ -1072,8 +1072,9 @@ app.get("/api/debug/trans-check", async (req, res) => {
 });
 
 /* ===== Debug endpoint: mRoster availability by scoring period ===== */
-logger = new ProcessLogger();
+
 app.get("/api/debug/roster-check", async (req, res) => {
+const logger = new ProcessLogger();
   const { leagueId, seasonId } = req.query || {};
   if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
 
@@ -1094,8 +1095,9 @@ app.get("/api/debug/roster-check", async (req, res) => {
   }
   res.json(out);
 });
-const logger = new ProcessLogger();
+
 app.get("/api/debug/sp-health", async (req, res) => {
+const logger = new ProcessLogger();
   const { leagueId, seasonId } = req.query || {};
   if (!leagueId || !seasonId) return res.status(400).send("leagueId & seasonId required");
 

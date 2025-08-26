@@ -273,26 +273,38 @@ const BROWSER_HEADERS = {
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
   "Origin": "https://fantasy.espn.com",
-  "Referer": "https://fantasy.espn.com/",
+  // A referer that looks like a human browsing your league helps avoid bot pages:
+  "Referer": "https://fantasy.espn.com/football/team",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
 };
 
-async function tryFetchJSON(url, requireCookie, req) {
+// Robust fetch that retries when ESPN sends HTML / bot pages / 429s.
+async function fetchJSONWithRetry(url, { requireCookie, req, label }) {
   const headers = { ...BROWSER_HEADERS };
   if (requireCookie) {
     const ck = buildCookie(req);
     if (ck) headers.Cookie = ck;
   }
-  const r = await fetch(url, { headers });
-  const text = await r.text();
-  try { return { ok:true, json: JSON.parse(text), status: r.status }; }
-  catch {
-    return {
-      ok:false, status: r.status,
-      snippet: text.slice(0,200).replace(/\s+/g," "),
-      ct: r.headers.get("content-type") || ""
-    };
+
+  let lastErr = "";
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const res = await fetch(url, { headers });
+    const ct = res.headers.get("content-type") || "";
+    const text = await res.text();
+
+    // JSON happy path
+    if (ct.includes("application/json")) {
+      try { return JSON.parse(text); }
+      catch (e) { lastErr = `JSON parse failed: ${e?.message || e}`; }
+    } else {
+      // Keep a tiny snippet for diagnostics
+      lastErr = `status ${res.status}, ct ${ct}, body: ${text.slice(0, 160).replace(/\s+/g, " ")}`;
+    }
+
+    // Backoff before next try
+    await sleep(200 * attempt); // 200ms, 400ms, 600ms...
   }
+  throw new Error(`ESPN non-JSON for ${label}: ${lastErr}`);
 }
 
 async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false }) {
@@ -301,24 +313,24 @@ async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requi
   const bust = `&_=${Date.now()}`;
   const viewEnc = encodeURIComponent(view);
 
-  // Public-friendly → lm-api-reads → site.web fallback
   const urls = [
-    // Prefer the read-replica first — this returns the richest, most stable JSON
-    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
+    // These three cover most cases; order matters
     `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
+    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
     `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`
   ];
 
   let last = null;
   for (const url of urls) {
-    const res = await tryFetchJSON(url, requireCookie, req);
-    if (res.ok) return res.json;
-    last = res;
+    try {
+      return await fetchJSONWithRetry(url, { requireCookie, req, label: `${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}` });
+    } catch (e) {
+      last = e;
+      // Tiny pause between fallbacks to reduce bot pages
+      await sleep(120);
+    }
   }
-  throw new Error(
-    `ESPN returned non-JSON for ${view}${scoringPeriodId?` (SP ${scoringPeriodId})`:""}. ` +
-    `Status ${last?.status||"?"}, ct ${last?.ct||"?"}. Snippet: ${last?.snippet||""}`
-  );
+  throw new Error(last?.message || "Unknown ESPN error");
 }
 
 /* Pass-through endpoint used by the UI (set ?auth=1 to force cookies) */
@@ -574,6 +586,10 @@ async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25,
           console.log(`[SP ${sp}] ${tag}: attempt ${attempt} failed -> ${e?.message || e}`);
           if (attempt < 3) await sleep(500 + attempt * 300);
         }
+
+  await sleep(150);
+}
+
       }
     };
 
@@ -631,6 +647,10 @@ async function fetchRosterSeries({ leagueId, seasonId, req, maxSp = 25, onProgre
           series[sp] = lastGood;
           done = true;
         }
+
+  await sleep(150);
+}
+
       }
     }
   }
@@ -691,6 +711,10 @@ onProgress?.(sp, maxSp, "Resolving player names…");
       }
       if (need.size===0) break;
     } catch {}
+
+  await sleep(150);
+}
+
   }
   return map;
 }
@@ -800,7 +824,7 @@ rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
 // Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
 // unless there was an ADD for that player by that team in between.
 
-  
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   // Dues: first 2 adds per team per week are free; $5 each afterwards
   const perWeek = new Map(); // week -> Map(team -> count)
@@ -971,6 +995,27 @@ app.get("/api/debug/roster-check", async (req, res) => {
       row.teams = "ERR";
       row.entries = 0;
     }
+    out.push(row);
+  }
+  res.json(out);
+});
+
+app.get("/api/debug/sp-health", async (req, res) => {
+  const { leagueId, seasonId } = req.query || {};
+  if (!leagueId || !seasonId) return res.status(400).send("leagueId & seasonId required");
+
+  const out = [];
+  for (let sp = 1; sp <= 25; sp++) {
+    const row = { sp, tx: "ok", recent: "ok", comm: "ok" };
+    try { await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true }); }
+    catch (e) { row.tx = (e.message || "").slice(0, 120); }
+    await sleep(80);
+    try { await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true }); }
+    catch (e) { row.recent = (e.message || "").slice(0, 120); }
+    await sleep(80);
+    try { await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true }); }
+    catch (e) { row.comm = (e.message || "").slice(0, 120); }
+    await sleep(120);
     out.push(row);
   }
   res.json(out);

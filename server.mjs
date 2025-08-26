@@ -825,25 +825,40 @@ const deduped = dedupeMoves(all).map(e => ({
 
 // Verify against roster snapshots to keep only *winning* waiver adds and *executed* drops.
 const verified = [];
+
 for (const r of deduped) {
   if (r.action === "ADD") {
-  // If we don't know the player, skip — we can't prove it was a winning add.
-  if (!r.playerId) continue;
+    const isWaiver = String(r.method).toUpperCase() === "WAIVER";
 
-  const sp  = spFromDate(r.date, seasonId);
-  const tid = r.teamIdRaw;
-
-  // must NOT be on the roster the week before (avoid counting bids / no-ops)
-  const wasBefore =
-    isOnRoster(series, Math.max(1, sp - 1), tid, r.playerId);
-
-  // MUST appear soon after (handles waiver posting lag)
-  const appears =
-    isOnRoster(series, sp,   tid, r.playerId) ||
-    isOnRoster(series, sp+1, tid, r.playerId) ||
-    isOnRoster(series, sp+2, tid, r.playerId);
-
-  if (!wasBefore && appears) verified.push(r);
+    if (!isWaiver) {
+      // FA add — count it even if playerId is missing or series is thin
+      verified.push(r);
+    } else {
+      // Waiver add — verify it really landed on the roster
+      if (!r.playerId) continue; // can't verify a waiver without a player id
+      const sp  = spFromDate(r.date, seasonId);
+      const tid = r.teamIdRaw;
+      const wasBefore =
+        isOnRoster(series, Math.max(1, sp - 1), tid, r.playerId);
+      const appears =
+        isOnRoster(series, sp,   tid, r.playerId) ||
+        isOnRoster(series, sp+1, tid, r.playerId) ||
+        isOnRoster(series, sp+2, tid, r.playerId);
+      if (!wasBefore && appears) verified.push(r);
+    }
+  } else if (r.action === "DROP") {
+    // Drops don’t affect dues; if playerId is missing, keep it for history.
+    if (!r.playerId) { verified.push(r); continue; }
+    const sp  = spFromDate(r.date, seasonId);
+    const tid = r.teamIdRaw;
+    const wasBefore =
+      isOnRoster(series, Math.max(1, sp-1), tid, r.playerId) ||
+      isOnRoster(series, sp,              tid, r.playerId);
+    const appearsLater =
+      isOnRoster(series, sp+1, tid, r.playerId) ||
+      isOnRoster(series, sp+2, tid, r.playerId);
+    if (wasBefore && !appearsLater) verified.push(r);
+  }
 }
 
  else if (r.action === "DROP") {

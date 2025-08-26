@@ -1,0 +1,818 @@
+﻿import React, { useEffect, useMemo, useState } from "react";
+import Logo from "./Logo.jsx";
+
+/* ---------------- Config ---------------- */
+const ADMIN_ENV = import.meta.env.VITE_ADMIN_PASSWORD || "changeme";
+const DEFAULT_LEAGUE_ID = import.meta.env.VITE_ESPN_LEAGUE_ID || "";
+const DEFAULT_SEASON   = import.meta.env.VITE_ESPN_SEASON || new Date().getFullYear();
+
+const LEAGUE_TZ = "America/Los_Angeles"; // PT
+const WEEK_START_DAY = 4;                // 4 = Thursday (Thu→Wed week)
+
+const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
+
+/* ---------------- Tiny utils ---------------- */
+const th = { textAlign:"left", borderBottom:"1px solid #e5e7eb", padding:"6px 8px" };
+const td = { borderBottom:"1px solid #f1f5f9", padding:"6px 8px" };
+function nid(){ return Math.random().toString(36).slice(2,9) }
+function today(){ return new Date().toISOString().slice(0,10) }
+function downloadJSON(obj, name){
+  const blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url; a.download=name; a.click(); URL.revokeObjectURL(url);
+}
+function downloadCSV(name, rows){
+  const csv = rows.map(r => r.map(x => `"${String(x??"").replaceAll('"','""')}"`).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv"}); const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ---------------- Week math (Thu→Wed, Wed 11:59 PM cutoff) ---------------- */
+function toPT(d){ return new Date(d.toLocaleString("en-US", { timeZone: LEAGUE_TZ })); }
+function startOfLeagueWeekPT(date){
+  const z = toPT(date);
+  const base = new Date(z); base.setHours(0,0,0,0);
+  const dow = base.getDay();
+  const back = (dow - WEEK_START_DAY + 7) % 7;
+  base.setDate(base.getDate() - back);
+  if (z < base) base.setDate(base.getDate() - 7);
+  return base;
+}
+function firstThursdayOfSeptemberPT(year){
+  const d = toPT(new Date(year, 8, 1)); // Sep=8
+  const offset = (4 - d.getDay() + 7) % 7; // 4=Thu
+  d.setDate(d.getDate() + offset);
+  d.setHours(0,0,0,0);
+  return d;
+}
+function leagueWeekOf(date, seasonYear){
+  const start = startOfLeagueWeekPT(date);
+  const week1 = startOfLeagueWeekPT(firstThursdayOfSeptemberPT(seasonYear));
+  let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
+  if (start < week1) week = 0;
+  return { week, start, key: localDateKey(start) };
+}
+function currentWeekLabel(seasonYear){
+  const w = leagueWeekOf(new Date(), seasonYear);
+  return w.week > 0 ? `Week ${w.week}` : "Preseason";
+}
+function weekRangeLabelDisplay(startPT){
+  const thu = new Date(startPT); thu.setHours(0,0,0,0);
+  const wed = new Date(thu); wed.setDate(wed.getDate()+6); wed.setHours(23,59,0,0);
+  return `${fmtShort(thu)}–${fmtShort(wed)} (cutoff Wed 11:59 PM PT)`;
+}
+function weekKeyFrom(w){ return w.key || localDateKey(w.start || new Date()) }
+function shiftWeek(w,delta){ const s=new Date(w.start || new Date()); s.setDate(s.getDate()+delta*7); return { ...leagueWeekOf(s, new Date(s).getFullYear()) } }
+function localDateKey(d){ const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const da=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${da}` }
+function fmtShort(d){ return toPT(d).toLocaleDateString(undefined,{month:"short", day:"numeric"}) }
+
+/* ---------------- ESPN helpers ---------------- */
+function teamName(t){ return (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`); }
+
+/** Very defensive parser for ESPN transactions-like payloads */
+function extractAdds(json){
+  const tx0 =
+    (Array.isArray(json?.transactions) && json.transactions) ||
+    (Array.isArray(json?.events) && json.events) ||
+    (Array.isArray(json?.messages) && json.messages) ||
+    (Array.isArray(json) && json) ||
+    (json?.transactions && typeof json.transactions === "object" ? Object.values(json.transactions) : null) ||
+    (json?.events && typeof json.events === "object" ? Object.values(json.events) : null) ||
+    (json && typeof json === "object" && !Array.isArray(json) ? Object.values(json) : null) ||
+    [];
+
+  const tx = Array.isArray(tx0) ? tx0 : [];
+  const out = [];
+
+  for (const t of tx){
+    const when = t.processDate ?? t.proposedDate ?? t.executionDate ?? t.date ?? t.timestamp ?? Date.now();
+    const date = new Date(when);
+
+    const items = Array.isArray(t.items) ? t.items
+               : Array.isArray(t.messages) ? t.messages
+               : Array.isArray(t.changes) ? t.changes
+               : (t.item ? [t.item] : []);
+
+    const toTeamDefault = t.toTeamId ?? t.teamId ?? t.forTeamId ?? t.targetTeamId ?? null;
+
+    if (!items.length){
+      const typeStr = String(t.type ?? t.moveType ?? "").toUpperCase();
+      if ((/ADD|WAIVER|CLAIM/).test(typeStr) && toTeamDefault != null){
+        out.push({ teamId: toTeamDefault, date });
+      }
+      continue;
+    }
+
+    for (const it of items){
+      const typeRaw = it.type ?? it.moveType ?? it.action;
+      const typeStr = typeof typeRaw === "string" ? typeRaw.toUpperCase() : String(typeRaw);
+      const isAddish = /(ADD|WAIVER|CLAIM)/.test(typeStr) || [1,5,7].includes(typeRaw);
+      const teamId = it.toTeamId ?? it.teamId ?? it.forTeamId ?? toTeamDefault;
+      if (isAddish && teamId != null){
+        out.push({ teamId, date });
+      }
+    }
+  }
+  return out;
+}
+
+// Guarded JSON fetch (HTML => error)
+async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId }) {
+  const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
+  const url = API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&view=${view}${sp}`);
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`ESPN ${view} request failed (${r.status}).`);
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) throw new Error(`ESPN returned non-JSON for ${view}${sp ? ` (SP ${scoringPeriodId})` : ""}.`);
+  return r.json();
+}
+
+// Fallback: communication feed sometimes logs add/claim
+function extractAddsFromComm(json) {
+  const topics =
+    (Array.isArray(json?.topics) && json.topics) ||
+    (json?.topics && typeof json.topics === "object" ? Object.values(json.topics) : []) ||
+    (Array.isArray(json) ? json : []);
+
+  const out = [];
+  for (const t of topics) {
+    const msgs = (Array.isArray(t?.messages) && t.messages)
+              || (Array.isArray(t?.posts) && t.posts)
+              || [];
+    for (const m of msgs) {
+      const when = m.date ?? m.timestamp ?? t.date ?? Date.now();
+      const date = new Date(when);
+      const acts = (Array.isArray(m.actions) && m.actions) || [];
+      if (!acts.length) continue;
+      for (const a of acts) {
+        const typeStr = String(a.type ?? a.action ?? "").toUpperCase();
+        const isAddish = /(ADD|WAIVER|CLAIM)/.test(typeStr);
+        const teamId = a.toTeamId ?? a.teamId ?? m.toTeamId ?? m.teamId ?? null;
+        if (isAddish && teamId != null) out.push({ teamId, date });
+      }
+    }
+  }
+  return out;
+}
+
+// Fetch across many scoring periods, merging both sources
+async function fetchSeasonAddsAllSources({ leagueId, seasonId, maxSp = 25 }) {
+  const SP = Array.from({ length: maxSp }, (_, i) => i + 1);
+  const adds = [];
+
+  const txResults = await Promise.allSettled(
+    SP.map(sp => fetchEspnJson({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp }))
+  );
+  for (const res of txResults) {
+    if (res.status === "fulfilled") {
+      const a = extractAdds(res.value);
+      if (a?.length) adds.push(...a);
+    }
+  }
+
+  if (adds.length === 0) {
+    const commResults = await Promise.allSettled(
+      SP.map(sp => fetchEspnJson({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp }))
+    );
+    for (const res of commResults) {
+      if (res.status === "fulfilled") {
+        const a = extractAddsFromComm(res.value);
+        if (a?.length) adds.push(...a);
+      }
+    }
+  }
+  return adds;
+}
+
+/* ---------------- App ---------------- */
+export default function App(){ return <LeagueHub/> }
+
+function LeagueHub(){
+  useEffect(()=>{ document.title = "Blitzzz Fantasy Football League"; }, []);
+
+  const STORAGE_KEY = "ffl_hub_data_v1";
+  function load(){
+    const defaultData = {
+      announcements: [],
+      tradeBlock: [],
+      weekly: { text: "", weekLabel: "", updatedAt: Date.now() },
+      members: [],
+      waivers: [],
+      leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Waivers: First two pickups per <b>week</b> are free; then $5 each.</li></ul>"
+    };
+    try{ const raw=localStorage.getItem(STORAGE_KEY); return raw? {...defaultData, ...JSON.parse(raw)} : defaultData } catch { return defaultData }
+  }
+
+  const [data,setData]=useState(load);
+  const [active,setActive]=useState("waivers");
+
+  // Admin
+  const [isAdmin,setIsAdmin] = useState(localStorage.getItem("ffl_is_admin")==="1");
+  const login = ()=>{ const pass = prompt("Enter admin password:"); if(pass===ADMIN_ENV){ setIsAdmin(true); localStorage.setItem("ffl_is_admin","1"); alert("Admin enabled"); } else alert("Incorrect password"); };
+  const logout = ()=>{ setIsAdmin(false); localStorage.removeItem("ffl_is_admin"); };
+
+  useEffect(()=>{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
+
+  // ESPN config
+  const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: DEFAULT_SEASON });
+  const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
+
+  // Weeks (respect season)
+  const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), seasonYear));
+  useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), seasonYear)); }, [seasonYear]);
+
+  const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])),[data.members]);
+
+  // Manual waivers → compute weekly counts & owed
+  const weekKey = weekKeyFrom(selectedWeek);
+  const waiversThisWeek = useMemo(
+    () => data.waivers.filter(w => weekKeyFrom(leagueWeekOf(new Date(w.date), seasonYear)) === weekKey),
+    [data.waivers, weekKey, seasonYear]
+  );
+  const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
+  const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
+
+  // CRUD
+  const addAnnouncement = (html)=> setData(d=>({...d, announcements:[{id:nid(), html, createdAt:Date.now()}, ...d.announcements]}));
+  const deleteAnnouncement = (id)=> setData(d=>({...d, announcements:d.announcements.filter(a=>a.id!==id)}));
+  const addTrade = (t)=> setData(d=>({...d, tradeBlock:[{id:nid(), createdAt:Date.now(), ...t}, ...d.tradeBlock]}));
+  const deleteTrade = (id)=> setData(d=>({...d, tradeBlock:d.tradeBlock.filter(t=>t.id!==id)}));
+  const updateWeekly = (partial)=> setData(d=>({...d, weekly:{...d.weekly, ...partial, updatedAt:Date.now()}}));
+  const addMember = (name)=> setData(d=>({...d, members:[...d.members, {id:nid(), name}]}));
+  const deleteMember = (id)=> setData(d=>({...d, members:d.members.filter(m=>m.id!==id), waivers:d.waivers.filter(w=>w.userId!==id)}));
+  const addWaiver = (userId, player, date)=> setData(d=>({...d, waivers:[{id:nid(), userId, player, date: date || today()}, ...d.waivers]}));
+  const deleteWaiver = (id)=> setData(d=>({...d, waivers:d.waivers.filter(w=>w.id!==id)}));
+
+  // Import ESPN teams (names only)
+  const importEspnTeams = async ()=>{
+    if(!espn.leagueId) return alert("Enter League ID");
+    try{
+      const json = await fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" });
+      const teams = json?.teams || [];
+      if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
+      const names = [...new Set(teams.map(t => teamName(t)))];
+      setData(d => ({ ...d, members: names.map(n => ({ id: nid(), name: n })) }));
+      alert(`Imported ${names.length} teams.`);
+    } catch(e){ alert(e.message || "ESPN fetch failed. Check League/Season."); }
+  };
+
+  // ESPN dues sync
+  const [espnReport, setEspnReport] = useState(null);
+  const [lastSynced, setLastSynced] = useState("");
+  async function syncEspnDues(){
+    if(!espn.leagueId) return alert("Enter league & season first in League Settings.");
+    try {
+      const teamsJson = await fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" });
+      const idToName  = Object.fromEntries((teamsJson?.teams||[]).map(t => [t.id, teamName(t)]));
+      const allAdds   = await fetchSeasonAddsAllSources({ leagueId: espn.leagueId, seasonId: espn.seasonId, maxSp: 25 });
+
+      if (allAdds.length === 0) {
+        alert("No waiver adds found for this season (or ESPN isn’t exposing the feed). Try another season or check after waivers process.");
+        setEspnReport({ weekRows: [], totalsRows: [] });
+        setLastSynced(new Date().toLocaleString());
+        setActive("dues");
+        return;
+      }
+
+      const byWeek = new Map();   // key -> { week, start, counts:{name:n} }
+      const totals = {};          // name -> season adds
+
+      for (const a of allAdds){
+        const wk = leagueWeekOf(a.date, seasonYear);
+        if (wk.week <= 0) continue;
+        const key = wk.key;
+        const name = idToName[a.teamId] || `Team ${a.teamId}`;
+        if (!byWeek.has(key)) byWeek.set(key, { week:wk.week, start:wk.start, counts:{} });
+        const bucket = byWeek.get(key);
+        bucket.counts[name] = (bucket.counts[name]||0) + 1;
+        totals[name] = (totals[name]||0) + 1;
+      }
+
+      const weekRows = [...byWeek.values()]
+        .sort((a,b)=> a.start - b.start)
+        .map(w=>{
+          const entries = Object.keys(w.counts).sort().map(name=>{
+            const c = w.counts[name];
+            const owes = Math.max(0, c-2)*5;
+            return { name, count:c, owes };
+          });
+          return { week:w.week, range: weekRangeLabelDisplay(w.start), entries };
+        });
+
+      const totalsRows = Object.keys(totals).sort().map(name=>{
+        let addsAll = 0, owesAll = 0;
+        for(const w of weekRows){
+          const e = w.entries.find(x=>x.name===name);
+          if (e){ addsAll += e.count; owesAll += e.owes; }
+        }
+        return { name, adds:addsAll, owes:owesAll };
+      });
+
+      setEspnReport({ weekRows, totalsRows });
+      setLastSynced(new Date().toLocaleString());
+      setActive("dues");
+      alert(`Synced ${allAdds.length} add events across ${weekRows.length} weeks.`);
+    } catch (e) {
+      console.error(e);
+      alert(e.message || "ESPN sync failed.");
+    }
+  }
+
+  /* ---- Views ---- */
+  const views = {
+    announcements: <AnnouncementsView {...{isAdmin,login,logout,data,setData,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
+    weekly:       <WeeklyView {...{isAdmin,data,updateWeekly}} seasonYear={seasonYear} />,
+    waivers: (
+      <Section title="Waivers & Dues" actions={
+        <div style={{display:"flex", gap:8}}>
+          <button className="btn primary" onClick={syncEspnDues}>Sync from ESPN (auto)</button>
+          <button className="btn secondary" onClick={()=>{ if(confirm("Reset waivers and announcements?")) setData(d=>({...d, announcements:[], waivers:[]})) }} disabled={!isAdmin}>Reset Season</button>
+        </div>
+      }>
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
+          <div className="card" style={{padding:16}}>
+            <h3>Members</h3>
+            {isAdmin && <AddMember onAdd={addMember}/>}
+            <ul style={{listStyle:"none",padding:0,margin:0}}>
+              {data.members.map(m=>(
+                <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
+                  <span>{m.name}</span>
+                  <span style={{fontSize:14,color:"#334155"}}>Waivers (this week): {waiverCounts[m.id]||0} • Owes: ${waiverOwed[m.id]||0}</span>
+                  {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
+                </li>
+              ))}
+              {data.members.length===0 && <p style={{color:"#64748b"}}>Add your league members or import via ESPN.</p>}
+            </ul>
+          </div>
+
+          <div className="card" style={{padding:16}}>
+            {isAdmin ? (
+              <>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <h3>Log a Waiver Pickup</h3>
+                  <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
+                </div>
+                <WaiverForm members={data.members} onAdd={addWaiver} disabled={data.members.length===0} />
+              </>
+            ) : (
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <h3>Waiver Activity</h3>
+                <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
+              </div>
+            )}
+
+            <h4>History (selected week)</h4>
+            <ul style={{listStyle:"none",padding:0,margin:0}}>
+              {waiversThisWeek.map(w=>(
+                <li key={w.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
+                  <span><b>{membersById[w.userId]?.name||"Unknown"}</b> picked up <b>{w.player}</b> on {w.date}</span>
+                  {isAdmin && <button onClick={()=>deleteWaiver(w.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Delete</button>}
+                </li>
+              ))}
+              {waiversThisWeek.length===0 && <p style={{color:"#64748b"}}>No waiver activity this week.</p>}
+            </ul>
+          </div>
+        </div>
+
+        {espnReport && (
+          <div className="card" style={{padding:12, marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+            <div>Auto dues ready. Last synced: <b>{lastSynced || "—"}</b></div>
+            <button className="btn" onClick={()=>setActive("dues")}>Open Dues</button>
+          </div>
+        )}
+      </Section>
+    ),
+    dues: <DuesView report={espnReport} lastSynced={lastSynced} syncEspnDues={syncEspnDues} />,
+    rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
+    settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,setData}}/>,
+    trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>
+  };
+
+  return (
+    <>
+      <IntroSplash/>
+      <div className="container">
+        <div className="card app-shell" style={{overflow:"hidden"}}>
+          <aside className="sidebar" style={{padding:20}}>
+            <div className="brand">
+              <Logo size={96}/>
+              <div className="brand-title">Blitzzz <span>Fantasy Football League</span></div>
+            </div>
+            <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={setActive}/>
+            <NavBtn id="weekly"       label="🗓 Weekly Challenges" active={active} onClick={setActive}/>
+            <NavBtn id="waivers"      label="💵 Waivers" active={active} onClick={setActive}/>
+            <NavBtn id="dues"         label="🧾 Dues" active={active} onClick={setActive}/>
+            <NavBtn id="rosters"      label="📋 Rosters" active={active} onClick={setActive}/>
+            <NavBtn id="settings"     label="⚙️ League Settings" active={active} onClick={setActive}/>
+            <NavBtn id="trading"      label="🔁 Trading Block" active={active} onClick={setActive}/>
+            <div style={{marginTop:12}}>
+              {isAdmin
+                ? <button className="btn secondary" onClick={logout} style={{width:"100%"}}>Log out</button>
+                : <button className="btn primary" onClick={login} style={{width:"100%"}}>Admin login</button>}
+            </div>
+          </aside>
+          <main style={{padding:24}}>
+            {views[active]}
+          </main>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ---------------- UI helpers/components ---------------- */
+function NavBtn({id,label,active,onClick}){
+  const is = active===id;
+  return (
+    <button onClick={()=>onClick(id)}
+      className={is? "nav-active" : ""}
+      style={{display:"block", width:"100%", textAlign:"left", padding:"10px 12px", borderRadius:12, margin:"6px 0", color:"#e2e8f0", background: is?"#1f2937":"transparent", border:"1px solid rgba(255,255,255,0.1)"}}>
+      {label}
+    </button>
+  );
+}
+function Section({title, actions, children}){
+  return (
+    <div style={{minHeight:"70vh", display:"flex", flexDirection:"column"}}>
+      <header style={{display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:"1px solid #e2e8f0", paddingBottom:8, marginBottom:16}}>
+        <h1 style={{fontSize:20, margin:0}}>{title}</h1>
+        <div style={{display:"flex", gap:8}}>{actions}</div>
+      </header>
+      <div style={{flex:1}}>{children}</div>
+    </div>
+  );
+}
+
+/* ---- Announcements + Activity7 ---- */
+function AnnouncementsView({isAdmin,login,logout,data,setData,addAnnouncement,deleteAnnouncement, espn, seasonYear}){
+  // Set default weekly label if empty
+  useEffect(()=>{
+    if (!data.weekly.weekLabel) {
+      setData(d=>({...d, weekly:{...d.weekly, weekLabel: currentWeekLabel(seasonYear)}}));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seasonYear]);
+
+  return (
+    <Section title="Announcements" actions={
+      <>
+        {isAdmin ? <button className="btn secondary" onClick={logout}>Log out</button> : <button className="btn primary" onClick={login}>Admin login</button>}
+        <button className="btn" onClick={()=>downloadJSON(data, "fantasy-league-data.json")}>Export</button>
+        <label className="btn secondary" style={{cursor:"pointer"}}>Import
+          <input type="file" accept="application/json" style={{display:"none"}}
+            onChange={e=>e.target.files?.[0] && readJSON(e.target.files[0], (obj)=> setData({...data, ...obj}))}/>
+        </label>
+      </>
+    }>
+      <Activity7 leagueId={espn.leagueId} seasonId={espn.seasonId} />
+      {isAdmin && <AnnouncementEditor onPost={addAnnouncement}/>}
+      <ul style={{display:"grid", gap:16}}>
+        {data.announcements.length===0 && <p style={{color:"#64748b"}}>No announcements yet.</p>}
+        {data.announcements.map(a=>(
+          <li key={a.id} className="card" style={{padding:16}}>
+            <div className="prose" dangerouslySetInnerHTML={{__html:a.html}}/>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:8,fontSize:12,color:"#64748b"}}>
+              <span>{new Date(a.createdAt).toLocaleString()}</span>
+              {isAdmin && <button onClick={()=>deleteAnnouncement(a.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Delete</button>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+function Activity7({leagueId, seasonId}){
+  const [loading,setLoading] = useState(false);
+  const [error,setError] = useState("");
+  const [stats,setStats] = useState(null);
+  async function refresh(){
+    if(!leagueId) { setError("Set League ID & Season in League Settings."); return; }
+    setError(""); setLoading(true);
+    try{
+      const teamJson = await fetchEspnJson({ leagueId, seasonId, view:"mTeam" });
+      const idToName  = Object.fromEntries((teamJson?.teams||[]).map(t => [t.id, teamName(t)]));
+
+      const allAdds = await fetchSeasonAddsAllSources({ leagueId, seasonId, maxSp: 10 }); // fewer periods for speed
+      const cutoff = Date.now() - 7*24*60*60*1000;
+      const recent = allAdds.filter(a => a.date.getTime() >= cutoff);
+
+      const counts = {};
+      recent.forEach(a => { const n = idToName[a.teamId] || `Team ${a.teamId}`; counts[n]=(counts[n]||0)+1; });
+      const top = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+      setStats({ total: recent.length, top });
+    }catch(err){ setError(err.message || "Could not load ESPN activity."); }
+    setLoading(false);
+  }
+  useEffect(()=>{ refresh(); }, [leagueId, seasonId]);
+
+  return (
+    <div className="card" style={{padding:12, marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <strong>Last 7 Days — Waiver Adds</strong>
+        <button className="btn secondary" onClick={refresh} disabled={loading}>{loading?"Refreshing…":"Refresh"}</button>
+      </div>
+      {!leagueId && <div style={{color:"#64748b"}}>Set your ESPN details to see activity.</div>}
+      {error && <div style={{color:"#dc2626"}}>{error}</div>}
+      {stats && (
+        <div style={{marginTop:6}}>
+          <div style={{fontSize:14,color:"#64748b"}}>Total adds: {stats.total}</div>
+          <ul style={{margin:6, marginLeft:18}}>
+            {stats.top.map(([name,count])=> <li key={name}>{name} — {count}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Editor pieces ---- */
+function AnnouncementEditor({onPost}){
+  const ref = React.useRef(null);
+  const post = ()=>{ const html=ref.current?.innerHTML?.trim(); if(!html || html==="<br>") return alert("Type something first"); onPost(html); ref.current.innerHTML=""; };
+  const exec = (cmd,val=null)=> document.execCommand(cmd,false,val);
+  return (
+    <div style={{marginBottom:16}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap", padding:8, border:"1px solid #e2e8f0", borderRadius:12, background:"#f8fafc"}}>
+        <ToolbarButton onClick={()=>exec("bold")} label="Bold"/>
+        <ToolbarButton onClick={()=>exec("italic")} label="Italic"/>
+        <ToolbarButton onClick={()=>exec("insertUnorderedList")} label="• List"/>
+        <ToolbarButton onClick={()=>exec("formatBlock","h2")} label="H2"/>
+        <ToolbarButton onClick={()=>exec("createLink", prompt("Link URL:"))} label="Link"/>
+      </div>
+      <div ref={ref} contentEditable className="card" style={{minHeight:120, padding:12, marginTop:8}}></div>
+      <div style={{textAlign:"right", marginTop:8}}><button className="btn" onClick={post}>Post Announcement</button></div>
+    </div>
+  );
+}
+function ToolbarButton({onClick,label}){ return <button onClick={onClick} className="btn secondary">{label}</button>; }
+function TradeForm({onSubmit}){
+  const [player,setPlayer]=useState(""); const [position,setPosition]=useState(""); const [owner,setOwner]=useState(""); const [notes,setNotes]=useState("");
+  return (
+    <form onSubmit={(e)=>{e.preventDefault(); if(!player) return; onSubmit({player,position,owner,notes}); setPlayer(""); setPosition(""); setOwner(""); setNotes("");}} className="card" style={{padding:16, background:"#f8fafc", marginBottom:12}}>
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr"}}>
+        <input className="input" placeholder="Player" value={player} onChange={e=>setPlayer(e.target.value)}/>
+        <input className="input" placeholder="Position (e.g., WR)" value={position} onChange={e=>setPosition(e.target.value)}/>
+        <input className="input" placeholder="Owner" value={owner} onChange={e=>setOwner(e.target.value)}/>
+      </div>
+      <input className="input" placeholder="Notes" style={{marginTop:8}} value={notes} onChange={e=>setNotes(e.target.value)}/>
+      <div style={{textAlign:"right", marginTop:8}}><button className="btn">Add to Block</button></div>
+    </form>
+  );
+}
+function WeeklyEditor({weekly,onChange,adminMode}){
+  const [text,setText]=useState(weekly.text); const [weekLabel,setWeekLabel]=useState(weekly.weekLabel); const [deadline,setDeadline]=useState(weekly.deadline||"");
+  useEffect(()=>{ setText(weekly.text); setWeekLabel(weekly.weekLabel); setDeadline(weekly.deadline||""); }, [weekly]);
+  return (
+    <div className="grid" style={{gap:12}}>
+      {adminMode && (
+        <div className="card" style={{padding:16, background:"#f8fafc"}}>
+          <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:12}}>
+            <input className="input" placeholder="Week label (e.g., Week 3)" value={weekLabel} onChange={e=>setWeekLabel(e.target.value)}/>
+            <input className="input" placeholder="Deadline (optional)" value={deadline} onChange={e=>setDeadline(e.target.value)}/>
+          </div>
+          <textarea className="input" style={{minHeight:120, marginTop:8}} placeholder="Describe this week's challenge..." value={text} onChange={e=>setText(e.target.value)}/>
+          <div style={{textAlign:"right", marginTop:8}}><button className="btn" onClick={()=> onChange({ text, weekLabel, deadline })}>Save</button></div>
+        </div>
+      )}
+      <div className="card" style={{padding:16}}>
+        <h3 style={{marginTop:0}}>{weekLabel || "Current Challenge"}</h3>
+        {deadline && <p style={{fontSize:14, color:"#64748b"}}>Deadline: {deadline}</p>}
+        {text ? <p style={{whiteSpace:"pre-wrap"}}>{text}</p> : <p style={{color:"#64748b"}}>No challenge posted yet.</p>}
+      </div>
+    </div>
+  );
+}
+function AddMember({onAdd}){ const [name,setName]=useState(""); return (
+  <form onSubmit={(e)=>{e.preventDefault(); if(!name) return; onAdd(name); setName("");}} style={{display:"flex", gap:8, margin:"8px 0 12px"}}>
+    <input className="input" placeholder="Member name" value={name} onChange={e=>setName(e.target.value)}/>
+    <button className="btn">Add</button>
+  </form>
+); }
+function WaiverForm({members,onAdd,disabled}){ const [userId,setUserId]=useState(members[0]?.id||""); const [player,setPlayer]=useState(""); const [date,setDate]=useState(today());
+  useEffect(()=>{ setUserId(members[0]?.id||""); }, [members]);
+  return (
+    <form onSubmit={(e)=>{e.preventDefault(); if(!userId||!player) return; onAdd(userId,player,date); setPlayer("");}} className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:8}}>
+      <select className="input" value={userId} onChange={e=>setUserId(e.target.value)} disabled={disabled}>
+        {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+      </select>
+      <input className="input" placeholder="Player" value={player} onChange={e=>setPlayer(e.target.value)} disabled={disabled}/>
+      <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} disabled={disabled}/>
+      <div style={{gridColumn:"1 / -1", textAlign:"right"}}><button className="btn" disabled={disabled}>Add Waiver</button></div>
+    </form>
+  );
+}
+
+/* ---- Dues view ---- */
+function DuesView({ report, lastSynced, syncEspnDues }){
+  return (
+    <Section title="Dues (Auto from ESPN)" actions={
+      <div style={{display:"flex", gap:8}}>
+        <button className="btn secondary" onClick={syncEspnDues}>Re-sync from ESPN</button>
+        <button className="btn" onClick={()=>print()}>Print</button>
+        {report && <>
+          <button className="btn secondary" onClick={()=>{
+            const rows=[["Team","Adds","Owes"], ...report.totalsRows.map(r=>[r.name,r.adds,`$${r.owes}`])];
+            downloadCSV("dues_totals.csv", rows);
+          }}>Download CSV (totals)</button>
+          <button className="btn secondary" onClick={()=>{
+            const rows=[["Week","Range","Team","Adds","Owes"]];
+            report.weekRows.forEach(w=> w.entries.forEach(e=> rows.push([w.week,w.range,e.name,e.count,`$${e.owes}`])));
+            downloadCSV("dues_by_week.csv", rows);
+          }}>Download CSV (by week)</button>
+        </>}
+      </div>
+    }>
+      <p style={{marginTop:-8, color:"#64748b"}}>Last synced: <b>{lastSynced || "—"}</b>. Rule: first two adds each week are free, then $5 each.</p>
+      {!report && <p style={{color:"#64748b"}}>No data yet — go to <b>Waivers</b> and click <b>Sync from ESPN (auto)</b>.</p>}
+      {report && (
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:24}}>
+          <div>
+            <h3>Season to Date</h3>
+            <table style={{width:"100%", borderCollapse:"collapse"}}>
+              <thead><tr><th style={th}>Team</th><th style={th}>Adds</th><th style={th}>Owes</th></tr></thead>
+              <tbody>
+                {report.totalsRows.map(r=>(
+                  <tr key={r.name}><td style={td}>{r.name}</td><td style={td}>{r.adds}</td><td style={td}>${r.owes}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3>By Week (Thu→Wed, cutoff Wed 11:59 PM PT)</h3>
+            {report.weekRows.map(w=>(
+              <div key={w.week} style={{marginBottom:12}}>
+                <div style={{fontWeight:600, margin:"6px 0"}}>Week {w.week} — {w.range}</div>
+                <table style={{width:"100%", borderCollapse:"collapse"}}>
+                  <thead><tr><th style={th}>Team</th><th style={th}>Adds</th><th style={th}>Owes</th></tr></thead>
+                  <tbody>
+                    {w.entries.map(e=>(
+                      <tr key={e.name}><td style={td}>{e.name}</td><td style={td}>{e.count}</td><td style={td}>${e.owes}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/* ---- Rosters ---- */
+function Rosters({ leagueId, seasonId }){
+  const [loading,setLoading] = useState(false);
+  const [error,setError] = useState("");
+  const [teams,setTeams] = useState([]);
+  useEffect(()=>{ if(!leagueId) return;
+    (async ()=>{
+      setLoading(true); setError("");
+      try{
+        const [teamJson, rosJson, setJson] = await Promise.all([
+          fetchEspnJson({ leagueId, seasonId, view:"mTeam" }),
+          fetchEspnJson({ leagueId, seasonId, view:"mRoster" }),
+          fetchEspnJson({ leagueId, seasonId, view:"mSettings" }),
+        ]);
+        const teamsById = Object.fromEntries((teamJson?.teams||[]).map(t => [t.id, teamName(t)]));
+        const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
+        const items = (rosJson?.teams||[]).map(t => {
+          const entries = (t.roster?.entries||[]).map(e => {
+            const p = e.playerPoolEntry?.player;
+            const fullName = p?.fullName || "Player";
+            const pos = posIdToName(p?.defaultPositionId);
+            const slot = slotMap[e.lineupSlotId] || "—";
+            return { name: fullName, pos, slot };
+          });
+          return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
+        }).sort((a,b)=> a.teamName.localeCompare(b.teamName));
+        setTeams(items);
+      }catch{ setError("Failed to load rosters."); }
+      setLoading(false);
+    })();
+  }, [leagueId, seasonId]);
+
+  return (
+    <Section title="Rosters" actions={<span className="badge">View-only (ESPN live)</span>}>
+      {!leagueId && <p style={{color:"#64748b"}}>Set your ESPN League ID & Season in <b>League Settings</b>.</p>}
+      {loading && <p>Loading rosters…</p>}
+      {error && <p style={{color:"#dc2626"}}>{error}</p>}
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
+        {teams.map(team => (
+          <div key={team.teamName} className="card" style={{padding:16}}>
+            <h3 style={{marginTop:0}}>{team.teamName}</h3>
+            <ul style={{margin:0,paddingLeft:16}}>
+              {team.entries.map((e,i)=> <li key={i}><b>{e.slot}</b> — {e.name} ({e.pos})</li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+      {!loading && teams.length===0 && leagueId && <p style={{color:"#64748b"}}>No roster data yet (pre-draft?).</p>}
+    </Section>
+  );
+}
+
+/* ---- Misc helpers ---- */
+function posIdToName(id){ const map={0:"QB",1:"TQB",2:"RB",3:"RB",4:"WR",5:"WR",6:"TE",7:"OP",8:"DT",9:"DE",10:"LB",11:"DE",12:"DB",13:"DB",14:"DP",15:"D/ST",16:"D/ST",17:"K"}; return map?.[id] || "—"; }
+function slotIdToName(counts){ const map={0:"QB",2:"RB",3:"RB/WR",4:"WR",5:"WR/TE",6:"TE",7:"OP",16:"D/ST",17:"K",20:"Bench",21:"IR",23:"FLEX",24:"EDR",25:"RDP",26:"RDP",27:"RDP",28:"Head Coach"}; const res={}; Object.keys(counts).forEach(k=> res[k] = map[k] || `Slot ${k}`); return res; }
+function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
+  const nowJump = () => {
+    const w = leagueWeekOf(new Date(), seasonYear);
+    const anchor = leagueWeekOf(firstThursdayOfSeptemberPT(seasonYear), seasonYear);
+    setSelectedWeek(w.week > 0 ? w : anchor);
+  };
+  const label = selectedWeek.week>0 ? `Week ${selectedWeek.week} (Thu→Wed)` : `Preseason (Thu→Wed)`;
+  return (
+    <div style={{display:"flex", alignItems:"center", gap:8}}>
+      <button type="button" className="btn secondary" aria-label="Previous week" onClick={()=>setSelectedWeek(shiftWeek(selectedWeek,-1))}>◀</button>
+      <span style={{fontSize:14,color:"#334155",minWidth:170,textAlign:"center"}}>{label}</span>
+      <button type="button" className="btn secondary" aria-label="Next week" onClick={()=>setSelectedWeek(shiftWeek(selectedWeek, 1))}>▶</button>
+      <button type="button" className="btn secondary" onClick={nowJump}>This Week</button>
+    </div>
+  );
+}
+function SettingsView({isAdmin,espn,setEspn,importEspnTeams,data,setData}){
+  const actions = isAdmin ? (
+    <div style={{display:"flex", gap:8, alignItems:"center"}}>
+      <input className="input" placeholder="ESPN League ID"
+             value={espn.leagueId} onChange={e=>setEspn({...espn, leagueId:e.target.value})} style={{width:160}}/>
+      <input className="input" placeholder="Season"
+             value={espn.seasonId} onChange={e=>setEspn({...espn, seasonId:e.target.value})} style={{width:120}}/>
+      <button className="btn primary" onClick={importEspnTeams}>Import ESPN Teams</button>
+    </div>
+  ) : (
+    <span className="badge">Admin only</span>
+  );
+
+  return (
+    <Section title="League Settings" actions={actions}>
+      <RichEditor html={data.leagueSettingsHtml}
+                  setHtml={html=> setData(d=>({...d, leagueSettingsHtml: html}))}
+                  readOnly={!isAdmin}/>
+    </Section>
+  );
+}
+function TradingView({isAdmin,addTrade,deleteTrade,data}){
+  return (
+    <Section title="Trading Block">
+      {isAdmin && <TradeForm onSubmit={addTrade}/>}
+      <div className="grid">
+        {data.tradeBlock.length===0 && <p style={{color:"#64748b"}}>Nothing on the block yet.</p>}
+        {data.tradeBlock.map(t=>(
+          <div key={t.id} className="card" style={{padding:16}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,fontSize:14,alignItems:"center"}}>
+              <span style={{background:"#f1f5f9",padding:"2px 8px",borderRadius:999}}>{t.position||"PLAYER"}</span>
+              <strong>{t.player}</strong>
+              <span style={{color:"#64748b"}}>• Owner: {t.owner||"—"}</span>
+              <span style={{marginLeft:"auto", color:"#94a3b8"}}>{new Date(t.createdAt).toLocaleDateString()}</span>
+            </div>
+            {t.notes && <p style={{marginTop:8, whiteSpace:"pre-wrap"}}>{t.notes}</p>}
+            {isAdmin && <div style={{textAlign:"right", marginTop:8}}><button onClick={()=>deleteTrade(t.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button></div>}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+function WeeklyView({isAdmin,data,updateWeekly,seasonYear}){
+  return (
+    <Section title="Weekly Challenges">
+      <WeeklyEditor weekly={{
+        ...data.weekly,
+        weekLabel: data.weekly.weekLabel || currentWeekLabel(seasonYear)
+      }} onChange={updateWeekly} adminMode={isAdmin}/>
+    </Section>
+  );
+}
+function readJSON(file, cb){ const r=new FileReader(); r.onload=()=>{ try{ cb(JSON.parse(r.result)) }catch{ alert("Invalid JSON") } }; r.readAsText(file); }
+function RichEditor({ html, setHtml, readOnly }) {
+  const [local, setLocal] = useState(html || "");
+  useEffect(() => { setLocal(html || ""); }, [html]);
+  if (readOnly) {
+    return (
+      <div className="card" style={{padding:16}}>
+        <div className="prose" dangerouslySetInnerHTML={{ __html: local || "<p>No settings yet.</p>" }} />
+      </div>
+    );
+  }
+  return (
+    <div className="card" style={{padding:16, background:"#f8fafc"}}>
+      <textarea className="input" style={{minHeight:160}} value={local}
+        onChange={e=>setLocal(e.target.value)} />
+      <div style={{fontSize:12,color:"#64748b",marginTop:8}}>
+        Tip: This box accepts HTML (e.g., &lt;ul&gt;...&lt;/ul&gt; for lists).
+      </div>
+      <div style={{textAlign:"right", marginTop:8}}>
+        <button className="btn" onClick={()=> setHtml(local)}>Save</button>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Splash ---- */
+function IntroSplash(){
+  const [show,setShow] = useState(true);
+  useEffect(()=>{ const t=setTimeout(()=>setShow(false), 1600); return ()=>clearTimeout(t); }, []);
+  if(!show) return null;
+  return <div className="splash"><Logo size={160}/></div>;
+}

@@ -1,0 +1,58 @@
+{
+  "polls": [],
+  "teamCodes": {
+    "2025:1": {
+      "code": "SURGE",
+      "createdAt": 1756098662852
+    },
+    "2025:2": {
+      "code": "QUARTZ",
+      "createdAt": 1756098662852
+    },
+    "2025:3": {
+      "code": "BISON",
+      "createdAt": 1756098662852
+    },
+    "2025:6": {
+      "code": "ONYX",
+      "createdAt": 1756098662852
+    },
+    "2025:12": {
+      "code": "COUGAR",
+      "createdAt": 1756098662852
+    },
+    "2025:14": {
+      "code": "CEDAR",
+      "createdAt": 1756098662852
+    },
+    "2025:16": {
+      "code": "COMET",
+      "createdAt": 1756098662852
+    },
+    "2025:18": {
+      "code": "MAPLE",
+      "createdAt": 1756098662852
+    },
+    "2025:19": {
+      "code": "VIPER",
+      "createdAt": 1756098662852
+    },
+    "2025:20": {
+      "code": "MOOSE",
+      "createdAt": 1756098662852
+    }
+  },
+  "votes": {
+    "8r8s1w1n": {
+      "2": "yogqynzn",
+      "16": "yogqynzn"
+    },
+    "q1jn3i4e": {
+      "2": "jzmee492",
+      "16": "y37hecy1"
+    },
+    "35be0xao": {
+      "16": "a5w6mhyo"
+    }
+  }
+}

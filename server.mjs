@@ -750,7 +750,7 @@ function isGenuineAddBySeries(row, series, seasonYear) {
   const later  = [sp, sp + 1, sp + 2].filter(n => n < series.length);
 
   const wasBefore    = isOnRoster(series, before, teamId, row.playerId);
-  const appearsLater = later.some(n => isOnRoster(series, teamId, row.playerId));
+  const appearsLater = later.some(n => isOnRoster(series, n, teamId, row.playerId));
 
   return !wasBefore && appearsLater;
 }
@@ -792,16 +792,16 @@ onProgress?.(sp, maxSp, "Resolving player names…");
   return map;
 }
 
-async function buildOfficialReport({ leagueId, seasonId, req }){
+async function buildOfficialReport({ leagueId, seasonId, req, logger }){
   // Team names — public in most leagues
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false, logger });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
   // All raw moves from three sources (cookie-required)
-  const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
+  const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25, logger });
 
   // Roster series (public) to verify executed adds/drops and get names later
-  const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
+  const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25, logger });
 
  // Dedup → annotate (make teamIdRaw a Number!)
 const deduped = dedupeMoves(all).map(e => ({
@@ -856,7 +856,7 @@ for (const r of deduped) {
 
 // Backfill missing player names for verified events
 const needIds = [...new Set(verified.map(r => r.player ? null : r.playerId).filter(Boolean))];
-const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
+const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25, logger });
 for (const r of verified) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
 
 // Flatten for UI — definitive week math (avoids off-by-one) + de-dupe repeated DROPs
@@ -903,7 +903,6 @@ rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
 // Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
 // unless there was an ADD for that player by that team in between.
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   // Dues: first 2 adds per team per week are free; $5 each afterwards
   const perWeek = new Map(); // week -> Map(team -> count)
@@ -952,22 +951,8 @@ app.get("/api/report", async (req, res) => {
 
 app.post("/api/report/update", async (req, res) => {
   const logger = new ProcessLogger();
-  try {
-    // …
-    const moves = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25, onProgress:…, logger });
-    const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25, onProgress:…, logger });
-    const needIds = [...new Set(moves.map(m => m.playerId).filter(Boolean))];
-    const nameMap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25, onProgress:…, logger });
-    // …
-  } catch (err) {
-    // before sending the error, persist the debug log:
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(path.join(DATA_DIR, "last-espn-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
-    // …
-  }
-});
+  console.log("[REPORT/UPDATE] start", req.body);
 
- console.log("[REPORT/UPDATE] start", req.body);
   // gate: only commissioner can run the official snapshot
   if (req.header("x-admin") !== ADMIN_PASSWORD) {
     return res.status(401).send("Unauthorized");
@@ -984,13 +969,13 @@ app.post("/api/report/update", async (req, res) => {
   try {
     // 5% — starting
     setProgress(jobId, 5, "Fetching teams…");
-    const mTeam = await espnFetch({
+    await espnFetch({
       leagueId, seasonId, view: "mTeam", req, requireCookie: false, logger
     });
 
     // 10% → 55% — transactions across scoring periods
     const moves = await fetchSeasonMovesAllSources({
-      leagueId, seasonId, req, maxSp: 25,
+      leagueId, seasonId, req, maxSp: 25, logger,
       onProgress: (sp, max, msg) => {
         const pct = 10 + Math.round((sp / max) * 45);
         setProgress(jobId, pct, `${msg} (${sp}/${max})`);
@@ -999,7 +984,7 @@ app.post("/api/report/update", async (req, res) => {
 
     // 55% → 82% — roster snapshots (used by your downstream logic)
     const series = await fetchRosterSeries({
-      leagueId, seasonId, req, maxSp: 25,
+      leagueId, seasonId, req, maxSp: 25, logger,
       onProgress: (sp, max, msg) => {
         const pct = 55 + Math.round((sp / max) * 27);
         setProgress(jobId, pct, `${msg} (${sp}/${max})`);
@@ -1008,33 +993,34 @@ app.post("/api/report/update", async (req, res) => {
 
     // 82% → 92% — resolve any missing playerId → name
     const needIds = [...new Set(moves.map(m => m.playerId).filter(Boolean))];
-    const nameMap = await buildPlayerMap({
-      leagueId, seasonId, req, ids: needIds, maxSp: 25,
+    await buildPlayerMap({
+      leagueId, seasonId, req, ids: needIds, maxSp: 25, logger,
       onProgress: (sp, max, msg) => {
         const pct = 82 + Math.round((sp / max) * 10);
         setProgress(jobId, pct, `${msg} (${sp}/${max})`);
       }
     });
 
-    // 92% → 100% — your existing report builder
+    // 92% → 100% — build the official report (this function re-uses ESPN data)
     setProgress(jobId, 92, "Computing official totals…");
+    const report = await buildOfficialReport({ leagueId, seasonId, req, logger });
 
-    // If your build function needs series/nameMap, pass them;
-    // if it already pulls from ESPN internally, just ignore these locals.
-    const report = await buildOfficialReport({
-      leagueId, seasonId, req,
-      // series, nameMap    // uncomment if your builder expects them
-    });
+    // persist per-season (also update legacy report.json for compatibility)
+    const snapshot = { seasonId, leagueId, ...report };
+    await writeJson(`report_${seasonId}.json`, snapshot);
+    await writeJson("report.json", snapshot);
 
-// persist per-season (also update legacy report.json for compatibility)
-const snapshot = { seasonId, leagueId, ...report };
-await writeJson(`report_${seasonId}.json`, snapshot);
-await writeJson("report.json", snapshot);
-
-setProgress(jobId, 100, "Snapshot complete");
-res.json({ ok: true, weeks: (report?.weekRows || []).length });
-console.log("[REPORT/UPDATE] done"); 
+    setProgress(jobId, 100, "Snapshot complete");
+    res.json({ ok: true, weeks: (report?.weekRows || []).length });
+    console.log("[REPORT/UPDATE] done");
   } catch (err) {
+    // save the debug log so we can inspect it
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(
+      path.join(DATA_DIR, "last-espn-log.json"),
+      JSON.stringify(logger.getFullLog(), null, 2),
+      "utf8"
+    );
     setProgress(jobId, 100, "Failed");
     res.status(502).send(err?.message || String(err));
   }
@@ -1049,6 +1035,8 @@ app.get("/api/debug/last-espn-log", async (_req, res) => {
     res.status(404).send("No log yet");
   }
 });
+
+const logger = new ProcessLogger();
 
 app.get("/api/debug/trans-check", async (req, res) => {
   const leagueId = req.query.leagueId;
@@ -1084,6 +1072,7 @@ app.get("/api/debug/trans-check", async (req, res) => {
 });
 
 /* ===== Debug endpoint: mRoster availability by scoring period ===== */
+const logger = new ProcessLogger();
 app.get("/api/debug/roster-check", async (req, res) => {
   const { leagueId, seasonId } = req.query || {};
   if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
@@ -1105,7 +1094,7 @@ app.get("/api/debug/roster-check", async (req, res) => {
   }
   res.json(out);
 });
-
+const logger = new ProcessLogger();
 app.get("/api/debug/sp-health", async (req, res) => {
   const { leagueId, seasonId } = req.query || {};
   if (!leagueId || !seasonId) return res.status(400).send("leagueId & seasonId required");

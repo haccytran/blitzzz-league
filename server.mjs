@@ -1072,7 +1072,7 @@ app.get("/api/debug/trans-check", async (req, res) => {
 });
 
 /* ===== Debug endpoint: mRoster availability by scoring period ===== */
-const logger = new ProcessLogger();
+logger = new ProcessLogger();
 app.get("/api/debug/roster-check", async (req, res) => {
   const { leagueId, seasonId } = req.query || {};
   if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");

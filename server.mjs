@@ -556,52 +556,38 @@ function dedupeMoves(events){
   }
   return out;
 }
+// Build a full list of moves from all sources across scoring periods
 async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25, onProgress }) {
   const all = [];
 
   for (let sp = 1; sp <= maxSp; sp++) {
     onProgress?.(sp, maxSp, "Reading ESPN activity…");
 
-    // small delay between weeks to reduce throttling from ESPN
-    await sleep(250);
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true });
+      all.push(...extractMoves(j, "tx"));
+    } catch {}
 
-    // helper to fetch one view with retries + logs
-    const grab = async (view, tag) => {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const j = await espnFetch({
-            leagueId, seasonId, view, scoringPeriodId: sp, req, requireCookie: true
-          });
-          if (view === "kona_league_communication") {
-            const rows = extractMovesFromComm(j);
-            all.push(...rows);
-            console.log(`[SP ${sp}] ${tag}: ok (${rows.length})`);
-          } else {
-            const rows = extractMoves(j, tag);
-            all.push(...rows);
-            console.log(`[SP ${sp}] ${tag}: ok (${rows.length})`);
-          }
-          return;
-        } catch (e) {
-          console.log(`[SP ${sp}] ${tag}: attempt ${attempt} failed -> ${e?.message || e}`);
-          if (attempt < 3) await sleep(500 + attempt * 300);
-        }
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true });
+      all.push(...extractMoves(j, "recent"));
+    } catch {}
+
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true });
+      all.push(...extractMovesFromComm(j));
+    } catch {}
 
   await sleep(150);
 }
 
-      }
-    };
-
-    await grab("mTransactions2", "tx");
-    await grab("recentActivity", "recent");
-    await grab("kona_league_communication", "comm");
   }
 
   return all
     .map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
     .sort((a, b) => a.date - b.date);
 }
+
 
 
 async function fetchRosterSeries({ leagueId, seasonId, req, maxSp = 25, onProgress }) {

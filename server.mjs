@@ -1125,13 +1125,12 @@ app.post("/api/report/update", async (req, res) => {
   }
 });
 
-// ===== NEW DIAGNOSTIC ENDPOINTS =====
+// ===== DEBUG / DIAGNOSTIC ENDPOINTS =====
 
-// Get the full diagnostic log from last report generation
+// Read any diagnostics snapshot you may have saved
 app.get("/api/debug/diagnostics", async (req, res) => {
   const seasonId = req.query?.seasonId;
   if (!seasonId) return res.status(400).send("seasonId required");
-  
   try {
     const diagnostics = await readJson(`diagnostics_${seasonId}.json`, null);
     res.json(diagnostics || { message: "No diagnostics found - run a report update first" });
@@ -1140,7 +1139,11 @@ app.get("/api/debug/diagnostics", async (req, res) => {
   }
 });
 
-// Quick transaction count comparison
+/**
+ * Transaction summary across scoring periods
+ * - counts extracted moves per source (tx / recent / comm)
+ * - compares with the currently saved report (if any)
+ */
 app.get("/api/debug/transaction-summary", async (req, res) => {
   const logger = new ProcessLogger();
   const { leagueId, seasonId } = req.query || {};
@@ -1148,184 +1151,19 @@ app.get("/api/debug/transaction-summary", async (req, res) => {
 
   try {
     logger.info("Starting transaction summary");
-    
     const rawCounts = {};
     let totalRaw = 0;
-    
-    // Get raw counts per scoring period
+
     for (let sp = 1; sp <= 25; sp++) {
       rawCounts[sp] = { tx: 0, recent: 0, comm: 0 };
-      
+
       try {
         const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true, logger });
         const moves = extractMoves(j, "tx", logger);
         rawCounts[sp].tx = moves.length;
         totalRaw += moves.length;
-      } catch (e) { 
-        logger.error(`Roster SP ${sp} failed`, e);
-      row.teams = "ERR";
-      row.entries = 0;
-    }
-    out.push(row);
-  }
-  res.json(out);
-});
-
-app.get("/api/debug/sp-health", async (req, res) => {
-  const logger = new ProcessLogger();
-  const { leagueId, seasonId } = req.query || {};
-  if (!leagueId || !seasonId) return res.status(400).send("leagueId & seasonId required");
-
-  const out = [];
-  for (let sp = 1; sp <= 25; sp++) {
-    const row = { sp, tx: "ok", recent: "ok", comm: "ok" };
-    
-    try { 
-      await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true, logger }); 
-    } catch (e) { 
-      row.tx = (e.message || "").slice(0, 120); 
-      logger.error(`SP health check - mTransactions2 SP ${sp}`, e);
-    }
-    await sleep(80);
-    
-    try { 
-      await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true, logger }); 
-    } catch (e) { 
-      row.recent = (e.message || "").slice(0, 120); 
-      logger.error(`SP health check - recentActivity SP ${sp}`, e);
-    }
-    await sleep(80);
-    
-    try { 
-      await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true, logger }); 
-    } catch (e) { 
-      row.comm = (e.message || "").slice(0, 120); 
-      logger.error(`SP health check - kona_league_communication SP ${sp}`, e);
-    }
-    await sleep(120);
-    out.push(row);
-  }
-  res.json(out);
-});
-
-// ===== NEW SUPER DETAILED DEBUG ENDPOINT =====
-app.get("/api/debug/full-pipeline", async (req, res) => {
-  const logger = new ProcessLogger();
-  const { leagueId, seasonId } = req.query || {};
-  if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
-
-  try {
-    logger.info("Starting full pipeline debug");
-
-    // Step 1: Get team info
-    const mTeam = await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false, logger });
-    const teamInfo = (mTeam?.teams || []).map(t => ({ id: t.id, name: teamName(t) }));
-    logger.info("Team info loaded", { teamCount: teamInfo.length, teams: teamInfo });
-
-    // Step 2: Test a few scoring periods in detail
-    const testSPs = [1, 5, 10, 15, 20]; // Sample scoring periods
-    const spResults = {};
-
-    for (const sp of testSPs) {
-      logger.info(`Testing scoring period ${sp}`);
-      const spData = { sp, sources: {}, totalMoves: 0 };
-
-      // Test each source
-      for (const [view, tag] of [
-        ["mTransactions2", "tx"],
-        ["recentActivity", "recent"],
-        ["kona_league_communication", "comm"]
-      ]) {
-        try {
-          const j = await espnFetch({ 
-            leagueId, seasonId, view, scoringPeriodId: sp, req, 
-            requireCookie: true, logger 
-          });
-          
-          const moves = view === "kona_league_communication" 
-            ? extractMovesFromComm(j, logger)
-            : extractMoves(j, tag, logger);
-
-          spData.sources[tag] = {
-            success: true,
-            rawTransactionCount: Array.isArray(j?.transactions) ? j.transactions.length : 0,
-            rawEventCount: Array.isArray(j?.events) ? j.events.length : 0,
-            rawTopicCount: Array.isArray(j?.topics) ? j.topics.length : 0,
-            extractedMoves: moves.length,
-            sampleRawData: j ? Object.keys(j).slice(0, 10) : [],
-            sampleMoves: moves.slice(0, 2)
-          };
-          spData.totalMoves += moves.length;
-        } catch (e) {
-          logger.error(`Full pipeline test - ${view} SP ${sp}`, e);
-          spData.sources[tag] = {
-            success: false,
-            error: e.message,
-            extractedMoves: 0
-          };
-        }
-        await sleep(200);
-      }
-
-      spResults[sp] = spData;
-    }
-
-    // Step 3: Test roster verification on a sample
-    logger.info("Testing roster verification logic");
-    const sampleSP = 10;
-    let rosterSample = {};
-    try {
-      const r = await espnFetch({ 
-        leagueId, seasonId, view: "mRoster", scoringPeriodId: sampleSP, req, 
-        requireCookie: false, logger 
-      });
-      for (const t of (r?.teams || [])) {
-        const playerIds = (t?.roster?.entries || [])
-          .map(e => e?.playerPoolEntry?.player?.id)
-          .filter(Boolean);
-        rosterSample[t.id] = playerIds;
-      }
-      logger.info(`Roster sample for SP ${sampleSP}`, { 
-        teamCount: Object.keys(rosterSample).length,
-        totalPlayers: Object.values(rosterSample).reduce((sum, arr) => sum + arr.length, 0)
-      });
-    } catch (e) {
-      logger.error(`Roster sample failed`, e);
-    }
-
-    res.json({
-      summary: {
-        teamCount: teamInfo.length,
-        testedScoringPeriods: testSPs,
-        totalRawMovesFromSample: Object.values(spResults).reduce((sum, sp) => sum + sp.totalMoves, 0)
-      },
-      teamInfo,
-      scoringPeriodResults: spResults,
-      rosterSample,
-      fullLog: logger.getFullLog()
-    });
-
-  } catch (e) {
-    logger.error("Full pipeline debug failed", e);
-    res.status(500).json({
-      error: e.message,
-      logs: logger.logs
-    });
-  }
-});
-
-// ===== STATIC FILE SERVING =====
-const CLIENT_DIR = path.join(__dirname, "dist");
-app.use(express.static(CLIENT_DIR));
-app.get(/^(?!\/api).*/, (_req, res) => {
-  res.sendFile(path.join(CLIENT_DIR, "index.html"));
-});
-
-// ===== START SERVER =====
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`Enhanced logging enabled - check console for detailed transaction processing info`);
-});error(`mTransactions2 SP ${sp} failed`, e);
+      } catch (e) {
+        logger.error(`mTransactions2 SP ${sp} failed`, e);
       }
 
       try {
@@ -1337,10 +1175,16 @@ app.listen(PORT, () => {
         logger.error(`recentActivity SP ${sp} failed`, e);
       }
 
-      await sleep(200); // Slower for this diagnostic
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true, logger });
+        const moves = extractMovesFromComm(j, logger);
+        rawCounts[sp].comm = moves.length;
+        totalRaw += moves.length;
+      } catch (e) {
+        logger.error(`communication SP ${sp} failed`, e);
+      }
     }
 
-    // Get processed count from existing report
     const existingReport = await readJson(`report_${seasonId}.json`, null);
     const processedCount = existingReport?.rawMoves?.length || 0;
 
@@ -1360,66 +1204,42 @@ app.listen(PORT, () => {
   }
 });
 
-// Test a single scoring period in detail
+/** Inspect a single scoring period in detail */
 app.get("/api/debug/scoring-period-detail", async (req, res) => {
   const logger = new ProcessLogger();
   const { leagueId, seasonId, sp } = req.query || {};
-  if (!leagueId || !seasonId || !sp) {
-    return res.status(400).send("leagueId, seasonId, and sp required");
-  }
+  if (!leagueId || !seasonId || !sp) return res.status(400).send("leagueId, seasonId, and sp required");
 
   try {
     const results = {};
-    
-    // Test all three endpoints for this SP
     for (const [view, tag] of [
       ["mTransactions2", "tx"],
-      ["recentActivity", "recent"], 
+      ["recentActivity", "recent"],
       ["kona_league_communication", "comm"]
     ]) {
       try {
-        const j = await espnFetch({ 
-          leagueId, seasonId, view, scoringPeriodId: sp, req, 
-          requireCookie: true, logger 
-        });
-        
-        const moves = view === "kona_league_communication" 
-          ? extractMovesFromComm(j, logger)
-          : extractMoves(j, tag, logger);
-          
+        const j = await espnFetch({ leagueId, seasonId, view, scoringPeriodId: sp, req, requireCookie: true, logger });
+        const moves = view === "kona_league_communication" ? extractMovesFromComm(j, logger) : extractMoves(j, tag, logger);
         results[tag] = {
           success: true,
           moveCount: moves.length,
           rawDataKeys: Object.keys(j || {}),
           sampleMoves: moves.slice(0, 3).map(m => ({
-            action: m.action,
-            method: m.method,
-            team: m.teamId,
-            player: m.playerName || m.playerId,
-            date: m.date
+            action: m.action, method: m.method, team: m.teamId, player: m.playerName || m.playerId, date: m.date
           }))
         };
       } catch (e) {
         logger.error(`${view} failed for SP ${sp}`, e);
-        results[tag] = {
-          success: false,
-          error: e.message,
-          moveCount: 0
-        };
+        results[tag] = { success: false, error: e.message, moveCount: 0 };
       }
     }
-
-    res.json({
-      scoringPeriod: sp,
-      results,
-      logs: logger.logs
-    });
+    res.json({ scoringPeriod: Number(sp), results, logs: logger.logs });
   } catch (e) {
     res.status(500).send(e?.message || String(e));
   }
 });
 
-// ===== EXISTING DEBUG ENDPOINTS (enhanced) =====
+/** Fast raw-counts check per scoring period without parsing moves */
 app.get("/api/debug/trans-check", async (req, res) => {
   const logger = new ProcessLogger();
   const leagueId = req.query.leagueId;
@@ -1438,11 +1258,13 @@ app.get("/api/debug/trans-check", async (req, res) => {
     ]) {
       try {
         const j = await espnFetch({ leagueId, seasonId, view, scoringPeriodId: sp, req, requireCookie: true, logger });
-        const count = (Array.isArray(j?.transactions) && j.transactions.length) ||
-                     (Array.isArray(j?.events) && j.events.length) ||
-                     (Array.isArray(j?.messages) && j.messages.length) ||
-                     (Array.isArray(j?.topics) && j.topics.length) ||
-                     (Array.isArray(j) && j.length) || 0;
+        const count =
+          (Array.isArray(j?.transactions) && j.transactions.length) ||
+          (Array.isArray(j?.events) && j.events.length) ||
+          (Array.isArray(j?.messages) && j.messages.length) ||
+          (Array.isArray(j?.topics) && j.topics.length) ||
+          (Array.isArray(j) && j.length) ||
+          0;
         row[tag] = count;
         totalCount += count;
       } catch (e) {
@@ -1453,15 +1275,12 @@ app.get("/api/debug/trans-check", async (req, res) => {
     }
     rows.push(row);
   }
-  
+
   logger.info(`Trans-check complete`, { totalRawCount: totalCount });
-  res.json({ 
-    rows, 
-    summary: { totalRawTransactions: totalCount },
-    errors: logger.stats.errors
-  });
+  res.json({ rows, summary: { totalRawTransactions: totalCount } });
 });
 
+/** Roster availability by scoring period */
 app.get("/api/debug/roster-check", async (req, res) => {
   const logger = new ProcessLogger();
   const { leagueId, seasonId } = req.query || {};
@@ -1477,4 +1296,47 @@ app.get("/api/debug/roster-check", async (req, res) => {
       row.teams = teamCount;
       row.entries = playerSlots;
     } catch (e) {
-      logger.
+      row.teams = "ERR";
+      row.entries = 0;
+      logger.error(`Roster SP ${sp} failed`, e);
+    }
+    out.push(row);
+  }
+  res.json(out);
+});
+
+/** Health check of the three ESPN endpoints per scoring period */
+app.get("/api/debug/sp-health", async (req, res) => {
+  const logger = new ProcessLogger();
+  const { leagueId, seasonId } = req.query || {};
+  if (!leagueId || !seasonId) return res.status(400).send("leagueId & seasonId required");
+
+  const out = [];
+  for (let sp = 1; sp <= 25; sp++) {
+    const row = { sp, tx: "ok", recent: "ok", comm: "ok" };
+    try { await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true, logger }); }
+    catch (e) { row.tx = (e.message || "").slice(0, 120); logger.error(`SP health - mTransactions2 SP ${sp}`, e); }
+    await sleep(80);
+    try { await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true, logger }); }
+    catch (e) { row.recent = (e.message || "").slice(0, 120); logger.error(`SP health - recentActivity SP ${sp}`, e); }
+    await sleep(80);
+    try { await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true, logger }); }
+    catch (e) { row.comm = (e.message || "").slice(0, 120); logger.error(`SP health - comm SP ${sp}`, e); }
+    await sleep(120);
+    out.push(row);
+  }
+  res.json(out);
+});
+
+// ===== STATIC FILE SERVING =====
+const CLIENT_DIR = path.join(__dirname, "dist");
+app.use(express.static(CLIENT_DIR));
+app.get(/^(?!\/api).*/, (_req, res) => {
+  res.sendFile(path.join(CLIENT_DIR, "index.html"));
+});
+
+// ===== START SERVER =====
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Enhanced logging enabled - check console for detailed transaction processing info`);
+});

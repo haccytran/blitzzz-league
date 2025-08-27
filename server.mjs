@@ -571,6 +571,10 @@ app.get("/api/espn", async (req, res) => {
   } catch (e) { res.status(502).send(String(e.message || e)); }
 });
 
+
+import registerV37Routes from "./v37-state-routes.mjs";
+registerV37Routes(app, { espnFetch }); // espnFetch already exists in v3.6
+
 // =========================
 // Static hosting
 // =========================
@@ -579,3 +583,5 @@ app.use(express.static(CLIENT_DIR));
 app.get(/^(?!\/api).*/, (_req, res) => { res.sendFile(path.join(CLIENT_DIR, "index.html")); });
 
 app.listen(PORT, () => { console.log(`Server running on http://localhost:${PORT}`); });
+
+

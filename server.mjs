@@ -1,7 +1,5 @@
-// --- server.mjs (Version 3.5, NATIVE TZ ONLY) ---
-// Uses host/local timezone (Render: set TZ=America/Los_Angeles).
-// No robust PT conversion. Transactions/polls logic matches 3.5 behavior.
-
+// --- Blitzzz League server — VERSION 3.6 (native TZ only; require TZ=America/Los_Angeles) ---
+﻿// server.mjs — cookie-optional ESPN proxy + official snapshot + polls
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -11,222 +9,134 @@ import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
+/* =========================
+   Setup
+   ========================= */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const DATA_DIR   = path.join(__dirname, "data");
+const PORT = process.env.PORT || 8787;
 
-const PORT           = process.env.PORT || 8787;
 const ADMIN_PASSWORD = process.env.VITE_ADMIN_PASSWORD || "changeme";
+const LEAGUE_TZ = "America/Los_Angeles"; // Pacific Time
 
-// ---- IMPORTANT: rely on native local time ----
-// Make sure your environment sets TZ=America/Los_Angeles (Render dashboard)
+const DATA_DIR = path.join(__dirname, "data");
+await fs.mkdir(DATA_DIR, { recursive: true });
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+// ===== Enhanced debug logger (lightweight) =====
+const DEBUG_DIR = path.join(__dirname, "data");
+const BUILD_LOG = path.join(DEBUG_DIR, "last-build-log.json");
+const ESPN_LOG  = path.join(DEBUG_DIR, "last-espn-log.json");
 
-// =========================
-// Polls (v2.1)
-// =========================
-const POLLS_FILE = path.join(DATA_DIR, "polls.json");
-let pollsState = { polls: {}, votes: {}, teamCodes: {} };
-async function loadPolls() {
-  try {
-    const raw = await fs.readFile(POLLS_FILE, "utf-8");
-    const data = JSON.parse(raw);
-    pollsState.polls     = data.polls     || {};
-    pollsState.votes     = data.votes     || {};
-    pollsState.teamCodes = data.teamCodes || {};
-  } catch {}
-}
-async function savePolls() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(POLLS_FILE, JSON.stringify(pollsState, null, 2), "utf-8");
-}
-await loadPolls();
-
-const FRIENDLY_WORDS = [
-  "MANGO","FALCON","TIGER","ORCA","BISON","HAWK","PANDA","EAGLE","MAPLE","CEDAR","ONYX","ZINC",
-  "SAPPHIRE","COBALT","QUARTZ","NEON","NOVA","COMET","BOLT","BLITZ","STORM","GLACIER","RAPTOR",
-  "VIPER","COUGAR","WOLF","SHARK","LYNX","OTTER","MOOSE","BEAR","FOX","RAVEN","ROBIN","DRAGON",
-  "PHOENIX","ORBIT","ROCKET","ATLAS","APEX","DELTA","OMEGA","THUNDER","SURGE","WAVE","EMBER",
-  "FROST","POLAR","COSMIC","SHADOW","AQUA"
-];
-const randomFriendlyCode = () => FRIENDLY_WORDS[Math.floor(Math.random() * FRIENDLY_WORDS.length)];
-
-app.post("/api/polls/issue-team-codes", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { seasonId, teams } = req.body || {};
-  if (!seasonId || !Array.isArray(teams)) return res.status(400).send("Missing seasonId or teams[]");
-  const used = new Set(Object.values(pollsState.teamCodes || {}).map(v => v.code));
-  const issued = [];
-  for (const t of teams) {
-    const key = `${seasonId}:${t.id}`;
-    if (!pollsState.teamCodes[key]) {
-      let code;
-      do { code = randomFriendlyCode(); } while (used.has(code));
-      used.add(code);
-      pollsState.teamCodes[key] = { code, createdAt: Date.now() };
-    }
-    issued.push({ teamId: t.id, teamName: t.name, code: pollsState.teamCodes[key].code });
+class ProcessLogger {
+  constructor() {
+    this.logs = [];
+    this.stats = { errors: [] };
   }
-  await savePolls();
-  res.json({ issued: issued.length, codes: issued });
-});
-app.post("/api/polls/vote", async (req, res) => {
-  const { pollId, optionId, seasonId, teamCode } = req.body || {};
-  if (!pollId || !optionId || !seasonId || !teamCode) return res.status(400).send("Missing fields");
-  let teamId = null;
-  for (const [k,v] of Object.entries(pollsState.teamCodes)) {
-    if (k.startsWith(`${seasonId}:`) && String(v.code).toUpperCase() === String(teamCode).toUpperCase()) { teamId = Number(k.split(":")[1]); break; }
+  log(level, message, data = {}) {
+    const row = { t: new Date().toISOString(), level, message, ...(Object.keys(data).length ? { data } : {}) };
+    this.logs.push(row);
+    const line = `[${row.t}] ${String(level).padEnd(5)} ${message}`;
+    if (Object.keys(data).length) console.log(line, data); else console.log(line);
   }
-  if (!teamId) return res.status(403).send("Invalid code");
-  pollsState.votes[pollId] = pollsState.votes[pollId] || {};
-  pollsState.votes[pollId][teamId] = optionId;
-  await savePolls();
-  res.json({ ok: true, byTeam: pollsState.votes[pollId] });
-});
-app.get("/api/polls", (req, res) => {
-  const seasonId = String(req.query?.seasonId || "");
-  const out = Object.values(pollsState.polls || {}).map(p => {
-    const byTeam = pollsState.votes?.[p.id] || {};
-    const tally = {};
-    Object.values(byTeam).forEach(opt => { tally[opt] = (tally[opt] || 0) + 1; });
-    const codesTotal = seasonId
-      ? Object.keys(pollsState.teamCodes || {}).filter(k => k.startsWith(`${seasonId}:`)).length
-      : Object.keys(pollsState.teamCodes || {}).length;
-    return {
-      id: p.id, question: p.question, closed: !!p.closed,
-      options: (p.options || []).map(o => ({ id: o.id, label: o.label, votes: tally[o.id] || 0 })),
-      codesUsed: Object.keys(byTeam).length, codesTotal
-    };
-  });
-  res.json({ polls: out });
-});
-const nid = () => Math.random().toString(36).slice(2, 10);
-app.post("/api/polls/create", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { question, options } = req.body || {};
-  if (!question || !Array.isArray(options) || options.length < 2) return res.status(400).send("Bad request");
-  const id = nid();
-  pollsState.polls[id] = { id, question: String(question), closed: false, options: options.map(label => ({ id: nid(), label: String(label) })) };
-  await savePolls();
-  res.json({ ok: true, pollId: id });
-});
-app.post("/api/polls/close", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { pollId, closed } = req.body || {};
-  if (!pollId || !pollsState.polls[pollId]) return res.status(404).send("Not found");
-  pollsState.polls[pollId].closed = !!closed;
-  await savePolls();
-  res.json({ ok: true });
-});
-app.post("/api/polls/delete", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { pollId } = req.body || {};
-  if (!pollId) return res.status(400).send("Missing pollId");
-  if (pollsState.polls[pollId]) delete pollsState.polls[pollId];
-  if (pollsState.votes[pollId]) delete pollsState.votes[pollId];
-  await savePolls();
-  res.json({ ok: true });
-});
-app.get("/api/polls/team-codes", (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const seasonId = req.query?.seasonId;
-  if (!seasonId) return res.status(400).send("Missing seasonId");
-  const rows = [];
-  for (const [k,v] of Object.entries(pollsState.teamCodes || {})) {
-    if (k.startsWith(`${seasonId}:`)) rows.push({ teamId: Number(k.split(":")[1]), code: v.code, createdAt: v.createdAt });
-  }
-  res.json({ codes: rows });
-});
-
-// =========================
-// Progress
-// =========================
-const jobProgress = new Map();
-function setProgress(jobId, pct, msg) {
-  if (!jobId) return;
-  jobProgress.set(jobId, { pct: Math.max(0, Math.min(100, Math.round(pct))), msg: String(msg || ""), t: Date.now() });
+  info(m,d){ this.log("INFO", m, d); }
+  debug(m,d){ this.log("DEBUG", m, d); }
+  warn(m,d){ this.log("WARN", m, d); }
+  error(m,e,d={}){ const err = { message: e?.message || String(e), stack: e?.stack, ...d }; this.stats.errors.push(err); this.log("ERROR", m, err); }
+  async persistBuild(){ await fs.mkdir(DEBUG_DIR, { recursive: true }); await fs.writeFile(BUILD_LOG, JSON.stringify({ logs:this.logs, stats:this.stats }, null, 2), "utf8"); }
 }
-app.get("/api/progress", (req, res) => {
-  const { jobId } = req.query || {};
-  res.json(jobProgress.get(jobId) || { pct: 0, msg: "" });
-});
 
-// =========================
-// File helpers
-// =========================
+
+/* =========================
+   File helpers
+   ========================= */
 const fpath = (name) => path.join(DATA_DIR, name);
+
 async function readJson(name, fallback) {
   try { return JSON.parse(await fs.readFile(fpath(name), "utf8")); }
   catch { return fallback; }
 }
 async function writeJson(name, obj) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
 }
 
-// =========================
-// Week helpers (NATIVE LOCAL TIME)
-// =========================
+/* =========================
+   Time helpers (Wed→Tue league week)
+   ========================= */
+function toPT(d) { return new Date(d.toLocaleString("en-US", { timeZone: LEAGUE_TZ })); }
+function fmtPT(d) { return toPT(d).toLocaleString(); }
+
 const WEEK_START_DAY = 3; // Wednesday
-function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
-function normalizeEpoch(x){
-  if (x == null) return Date.now();
-  if (typeof x === "string") x = Number(x);
-  if (x > 0 && x < 1e11) return x * 1000;
-  return x;
-}
-function isWithinWaiverWindow(dateLike){
-  const z = new Date(dateLike);
-  if (z.getDay() !== 3) return false;
-  const minutes = z.getHours()*60 + z.getMinutes();
-  return minutes <= 4*60 + 30;
-}
-function startOfLeagueWeek(date){
-  const z = new Date(date);
+function startOfLeagueWeekPT(date){
+  const z = toPT(date);
   const base = new Date(z); base.setHours(0,0,0,0);
   const back = (base.getDay() - WEEK_START_DAY + 7) % 7;
   base.setDate(base.getDate() - back);
   if (z < base) base.setDate(base.getDate() - 7);
   return base;
 }
-function firstWednesdayOfSeptember(year){
-  const d = new Date(year, 8, 1);
+function firstWednesdayOfSeptemberPT(year){
+  const d = toPT(new Date(year, 8, 1));
   const offset = (3 - d.getDay() + 7) % 7;
   d.setDate(d.getDate() + offset);
   d.setHours(0,0,0,0);
   return d;
 }
+
+// --- Precise week bucketing (Wed→Tue), with early-Wed waiver grace window ---
 const DAY = 24*60*60*1000;
-const WAIVER_EARLY_WED_SHIFT_MS = 5 * 60 * 60 * 1000;
-function weekBucket(date, seasonYear) {
-  let z = new Date(date);
-  if (z.getDay() === 3 && z.getHours() < 5) z = new Date(z.getTime() - WAIVER_EARLY_WED_SHIFT_MS);
-  const w1 = firstWednesdayOfSeptember(Number(seasonYear));
+const WAIVER_EARLY_WED_SHIFT_MS = 5 * 60 * 60 * 1000; // 5 hours
+
+function weekBucketPT(date, seasonYear) {
+  // Normalize to PT
+  const z0 = toPT(new Date(date));
+
+  // If the timestamp is in the *early* part of Wednesday (PT), shift it
+  // back a few hours so it counts toward the week that ended Tue 11:59 PM.
+  // (This matches real waiver processing behavior.)
+  let z = new Date(z0);
+  if (z.getDay() === 3 /* Wed */ && z.getHours() < 5) {
+    z = new Date(z.getTime() - WAIVER_EARLY_WED_SHIFT_MS);
+  }
+
+  // Anchor at the first Wednesday of September (00:00 PT)
+  const w1 = firstWednesdayOfSeptemberPT(Number(seasonYear));
+
+  // 1-based week index, clamped at 1
   const diff = z.getTime() - w1.getTime();
   const week = Math.max(1, Math.floor(diff / (7 * DAY)) + 1);
+
+  // Start of that league week (for labels)
   const start = new Date(w1.getTime() + (week - 1) * 7 * DAY);
   return { week, start };
 }
+
+
 function leagueWeekOf(date, seasonYear){
-  const start = startOfLeagueWeek(date);
-  const week1 = startOfLeagueWeek(firstWednesdayOfSeptember(seasonYear));
+  const start = startOfLeagueWeekPT(date);
+  const week1 = startOfLeagueWeekPT(firstWednesdayOfSeptemberPT(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
-  if (start < week1) week = 0;
+  if (start < week1) week = 0; // preseason bucket
   return { week, start };
 }
-function weekRangeLabelDisplay(start){
-  const wed = new Date(start); wed.setHours(0,0,0,0);
+function weekRangeLabelDisplay(startPT){
+  const wed = new Date(startPT); wed.setHours(0,0,0,0);
   const tue = new Date(wed); tue.setDate(tue.getDate()+6); tue.setHours(23,59,0,0);
-  const short = (d)=> new Date(d).toLocaleDateString(undefined,{month:"short", day:"numeric"});
+  const short = (d)=> toPT(d).toLocaleDateString(undefined,{month:"short", day:"numeric"});
   return `${short(wed)}–${short(tue)} (cutoff Tue 11:59 PM PT)`;
 }
+function normalizeEpoch(x){
+  if (x == null) return Date.now();
+  if (typeof x === "string") x = Number(x);
+  if (x > 0 && x < 1e11) return x * 1000; // seconds → ms
+  return x;
+}
 
-// =========================
-// ESPN proxy (3.5 behavior)
-// =========================
+/* =========================
+   ESPN proxy (cookie-optional, multi-host fallback)
+   ========================= */
 function buildCookie(req) {
   const hdr = req.headers["x-espn-cookie"];
   if (hdr) return String(hdr);
@@ -236,60 +146,187 @@ function buildCookie(req) {
   if (process.env.ESPN_COOKIE) return process.env.ESPN_COOKIE;
   return "";
 }
+
+// Robust JSON fetch with minimal retries; fast-fails on HTML (bot pages)
 const BROWSER_HEADERS = {
   "x-fantasy-source": "kona",
   "x-fantasy-platform": "kona",
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
   "Origin": "https://fantasy.espn.com",
-  "Referer": "https://fantasy.espn.com/",
+  "Referer": "https://fantasy.espn.com/football/team",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
 };
-async function tryFetchJSON(url, requireCookie, req) {
+
+async function fetchJSONWithRetry(url, { requireCookie, req, label, logger }) {
   const headers = { ...BROWSER_HEADERS };
   if (requireCookie) {
     const ck = buildCookie(req);
-    if (ck) headers.Cookie = ck;
+    if (ck) { headers.Cookie = ck; logger?.debug("Cookie attached", { label, len: ck.length }); }
+    else { logger?.warn("No cookie available", { label }); }
   }
-  const r = await fetch(url, { headers });
-  const text = await r.text();
-  try { return { ok:true, json: JSON.parse(text), status: r.status }; }
-  catch {
-    return { ok:false, status: r.status, snippet: text.slice(0,200).replace(/\s+/g," "), ct: r.headers.get("content-type") || "" };
+  let lastErr = "unknown";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      logger?.debug(`HTTP attempt ${attempt} → ${label}`, { url });
+      const res = await fetch(url, { headers });
+      const ct  = res.headers.get("content-type") || "";
+      const text = await res.text();
+      if (ct.includes("application/json")) {
+        try { return JSON.parse(text); }
+        catch (e) { lastErr = "parse"; logger?.error("JSON parse failed", e, { label, preview: text.slice(0,200) }); }
+      } else {
+        const preview = text.slice(0,160).replace(/\s+/g, " ");
+        lastErr = `non-json:${ct}`;
+        logger?.warn("Non-JSON (fast-fail this host)", { label, status: res.status, ct, preview });
+        throw new Error("Non-JSON");
+      }
+    } catch (e) {
+      lastErr = e?.message || String(e);
+      logger?.debug("Attempt failed", { label, attempt, err: lastErr });
+      await new Promise(r => setTimeout(r, 220 * attempt));
+    }
   }
+  const err = new Error(`ESPN non-JSON for ${label}: ${lastErr}`);
+  logger?.error("All attempts failed", err, { label });
+  throw err;
 }
-async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false }) {
+
+
+async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false, logger }) {
   if (!leagueId || !seasonId || !view) throw new Error("Missing leagueId/seasonId/view");
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
   const bust = `&_=${Date.now()}`;
   const v = encodeURIComponent(view);
   const urls = [
-    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
     `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
-    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`
+    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
+    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`
   ];
-  let last = null;
-  for (const url of urls) {
-    const res = await tryFetchJSON(url, requireCookie, req);
-    if (res.ok) return res.json;
-    last = res;
+  let lastErr = null;
+  for (const u of urls) {
+    try {
+      const json = await fetchJSONWithRetry(u, { requireCookie, req, label: `${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}`, logger });
+      return json;
+    } catch (e) {
+      lastErr = e;
+      await new Promise(r => setTimeout(r, 200));
+    }
   }
-  throw new Error(`ESPN non-JSON for ${view}${scoringPeriodId?` (SP ${scoringPeriodId})`:""}; status ${last?.status}; ct ${last?.ct}; snippet: ${last?.snippet}`);
+  throw lastErr || new Error("Unknown ESPN error");
 }
+
+/* Pass-through endpoint used by the UI (set ?auth=1 to force cookies) */
 app.get("/api/espn", async (req, res) => {
+  const logger = new ProcessLogger();
   try {
-    const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
-    const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
+    const { leagueId, seasonId, view, scoringPeriodId, auth, debug } = req.query;
+    const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1", logger });
+    if (String(debug) === "1") {
+      await fs.mkdir(DEBUG_DIR, { recursive: true });
+      await fs.writeFile(ESPN_LOG, JSON.stringify({ logs: logger.logs }, null, 2), "utf8");
+      return res.json({ _debugFile: "data/last-espn-log.json", data: json });
+    }
     res.json(json);
-  } catch (e) { res.status(502).send(String(e.message || e)); }
+  } catch (e) {
+    await fs.mkdir(DEBUG_DIR, { recursive: true });
+    await fs.writeFile(ESPN_LOG, JSON.stringify({ error: String(e), logs: logger.logs }, null, 2), "utf8");
+    res.status(502).send(String(e.message || e));
+  }
 });
 
-// =========================
-// Transactions+report (3.5 behavior, restored)
-// =========================
+/* =========================
+   Polls API (code-based voting)
+   ========================= */
+const POLLS_FILE = "polls.json";
+const nid = () => Math.random().toString(36).slice(2, 10);
+
+app.get("/api/polls", async (_req, res) => {
+  const data = await readJson(POLLS_FILE, { polls: [] });
+  const safe = data.polls.map(p => ({
+    id: p.id, question: p.question, closed: !!p.closed,
+    options: (p.options||[]).map(o => ({ id:o.id, label:o.label, votes:o.votes|0 })),
+    codesUsed: (p.codes||[]).filter(c=>c.used).length,
+    codesTotal: (p.codes||[]).length
+  }));
+  res.json({ polls: safe });
+});
+
+app.post("/api/polls/create", async (req, res) => {
+  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const { question, options } = req.body || {};
+  if (!question || !Array.isArray(options) || options.length < 2) return res.status(400).send("Bad request");
+  const data = await readJson(POLLS_FILE, { polls: [] });
+  const poll = { id:nid(), question, closed:false, options: options.map(l=>({ id:nid(), label:l, votes:0 })), codes:[] };
+  data.polls.unshift(poll);
+  await writeJson(POLLS_FILE, data);
+  res.json({ ok:true, pollId: poll.id });
+});
+
+app.post("/api/polls/generate", async (req, res) => {
+  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const { pollId, codes } = req.body || {};
+  const data = await readJson(POLLS_FILE, { polls: [] });
+  const poll = data.polls.find(p => p.id === pollId);
+  if (!poll) return res.status(404).send("Not found");
+  poll.codes = (Array.isArray(codes)?codes:[]).map(c => ({
+    code: String(c.code||"").toUpperCase(), name: c.name||"", used:false
+  }));
+  await writeJson(POLLS_FILE, data);
+  res.json({ ok:true, total: poll.codes.length });
+});
+
+app.post("/api/polls/vote", async (req, res) => {
+  const { pollId, code, optionId } = req.body || {};
+  const data = await readJson(POLLS_FILE, { polls: [] });
+  const poll = data.polls.find(p => p.id === pollId);
+  if (!poll) return res.status(404).send("Not found");
+  if (poll.closed) return res.status(423).send("Poll closed");
+  const entry = (poll.codes||[]).find(c => c.code === String(code||"").toUpperCase());
+  if (!entry) return res.status(401).send("Invalid code");
+  if (entry.used) return res.status(409).send("Already used");
+  const opt = (poll.options||[]).find(o => o.id === optionId);
+  if (!opt) return res.status(400).send("Bad option");
+  opt.votes = (opt.votes|0) + 1;
+  entry.used = true;
+  await writeJson(POLLS_FILE, data);
+  res.json({ ok:true });
+});
+
+app.post("/api/polls/delete", async (req, res) => {
+  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const { pollId } = req.body || {};
+  const data = await readJson(POLLS_FILE, { polls: [] });
+  const before = data.polls.length;
+  data.polls = data.polls.filter(p => p.id !== pollId);
+  if (data.polls.length === before) return res.status(404).send("Not found");
+  await writeJson(POLLS_FILE, data);
+  res.json({ ok:true });
+});
+
+app.post("/api/polls/close", async (req, res) => {
+  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const { pollId, closed } = req.body || {};
+  const data = await readJson(POLLS_FILE, { polls: [] });
+  const poll = data.polls.find(p => p.id === pollId);
+  if (!poll) return res.status(404).send("Not found");
+  poll.closed = !!closed;
+  await writeJson(POLLS_FILE, data);
+  res.json({ ok:true });
+});
+
+/* =========================
+   Official Snapshot (commissioner builds once; league reads)
+   ========================= */
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
+function isWithinWaiverWindowPT(dateLike){
+  const z = toPT(new Date(dateLike));
+  if (z.getDay() !== 3) return false; // not Wed
+  const minutes = z.getHours()*60 + z.getMinutes();
+  return minutes <= 4*60 + 30; // <= 4:30am PT
+}
 function inferMethod(typeStr, typeNum, t, it){
   const s = String(typeStr ?? "").toUpperCase();
   const ts = normalizeEpoch(t?.processDate ?? t?.proposedDate ?? t?.executionDate ?? t?.date ?? Date.now());
@@ -297,11 +334,12 @@ function inferMethod(typeStr, typeNum, t, it){
   if ([5,7].includes(typeNum)) return "WAIVER";
   if (t?.waiverProcessDate || it?.waiverProcessDate) return "WAIVER";
   if (t?.bidAmount != null || t?.winningBid != null) return "WAIVER";
-  if (isWithinWaiverWindow(ts)) return "WAIVER";
+  if (isWithinWaiverWindowPT(ts)) return "WAIVER";
   return "FA";
 }
 const pickPlayerId   = (it)=> it?.playerId ?? it?.playerPoolEntry?.player?.id ?? it?.entityId ?? null;
 const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
+
 function extractMoves(json, src="tx"){
   const rows =
     (Array.isArray(json?.transactions) && json.transactions) ||
@@ -312,6 +350,7 @@ function extractMoves(json, src="tx"){
     (json?.events && typeof json.events === "object" ? Object.values(json.events) : null) ||
     (json && typeof json === "object" && !Array.isArray(json) ? Object.values(json) : null) ||
     [];
+
   const out = [];
   for (const t of rows){
     const when = new Date(normalizeEpoch(t.processDate ?? t.proposedDate ?? t.executionDate ?? t.date ?? t.timestamp ?? Date.now()));
@@ -322,6 +361,7 @@ function extractMoves(json, src="tx"){
                : (t.item ? [t.item] : []);
     const typeStr = t.type ?? t.moveType ?? t.status;
     const typeNum = Number.isFinite(t.type) ? t.type : null;
+
     if (!items.length) {
       const action = /DROP/i.test(typeStr) ? "DROP" : "ADD";
       const method = inferMethod(typeStr, typeNum, t, null);
@@ -376,46 +416,59 @@ function dedupeMoves(events){
   }
   return out;
 }
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
+async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress, logger }){
   const all = [];
   for (let sp=1; sp<=maxSp; sp++){
     onProgress?.(sp, maxSp, "Reading ESPN activity…");
-    try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"tx")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"recent")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMovesFromComm(j)); } catch {}
-    await sleep(120 + Math.floor(Math.random() * 120));
+    const before = all.length;
+    try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true, logger }); all.push(...extractMoves(j,"tx")); } catch {}
+    try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:false, logger }); all.push(...extractMoves(j,"tx")); } catch {}
+    try { const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true, logger }); all.push(...extractMoves(j,"recent")); } catch {}
+    try { const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true, logger }); all.push(...extractMovesFromComm(j)); } catch {}
+    await new Promise(r=>setTimeout(r, 120 + Math.floor(Math.random()*120)));
+    const added = all.length - before;
+    if (added < 6) {
+      try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:false, logger }); all.push(...extractMoves(j,"tx")); } catch {}
+      try { const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:false, logger }); all.push(...extractMoves(j,"recent")); } catch {}
+      try { const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:false, logger }); all.push(...extractMovesFromComm(j)); } catch {}
+      await new Promise(r=>setTimeout(r, 220));
+    }
   }
-  return all.map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
-            .sort((a,b)=> a.date - b.date);
+  return all.map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) })).sort((a,b)=> a.date - b.date);
 }
-async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress }){
-  const series = [];
-  let lastGood = {};
+async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress, logger }){
+  const series = []; let lastGood = {};
   for (let sp=1; sp<=maxSp; sp++){
     onProgress?.(sp, maxSp, "Building roster timeline…");
-    let byTeam = {};
-    try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
-      for (const t of (r?.teams || [])) {
-        const set = new Set();
-        for (const e of (t.roster?.entries || [])) {
-          const pid = e.playerPoolEntry?.player?.id;
-          if (pid) set.add(pid);
+    let attempt=0, done=false;
+    while(!done && attempt<3){
+      attempt++;
+      try{
+        const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie: attempt>1, logger });
+        const byTeam = {};
+        for (const t of (r?.teams || [])) {
+          const set = new Set();
+          for (const e of (t?.roster?.entries || [])) {
+            const pid = e?.playerPoolEntry?.player?.id;
+            if (pid) set.add(pid);
+          }
+          byTeam[t.id] = set;
         }
-        byTeam[t.id] = set;
+        if (Object.keys(byTeam).length>0){ series[sp]=byTeam; lastGood=byTeam; } else { series[sp]=lastGood; }
+        done = true;
+      } catch(e){
+        await new Promise(r=>setTimeout(r, 400 + attempt*250));
+        if (attempt>=3){ series[sp]=lastGood; done=true; }
       }
-    } catch {}
-    if (Object.keys(byTeam).length === 0) byTeam = lastGood;
-    else lastGood = byTeam;
-    series[sp] = byTeam;
+    }
+    await new Promise(r=>setTimeout(r, 150));
   }
   return series;
 }
 const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]?.[teamId]?.has(playerId));
 const spFromDate = (dateLike, seasonYear)=> Math.max(1, Math.min(25, (leagueWeekOf(new Date(dateLike), seasonYear).week || 1)));
 function isGenuineAddBySeries(row, series, seasonYear){
-  if (!row.playerId) return true; // lenient as in 3.5
+  if (!row.playerId) return true;
   const sp = spFromDate(row.date, seasonYear);
   const before = Math.max(1, sp - 1);
   const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
@@ -424,19 +477,18 @@ function isGenuineAddBySeries(row, series, seasonYear){
   return !wasBefore && appearsLater;
 }
 function isExecutedDropBySeries(row, series, seasonYear){
-  if (!row.playerId) return true; // lenient as in 3.5
+  if (!row.playerId) return false;
   const sp = spFromDate(row.date, seasonYear);
   const before = Math.max(1, sp - 1);
   const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId) || isOnRoster(series, sp, row.teamIdRaw, row.playerId);
+  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
   const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return wasBefore && !appearsLater;
 }
-async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
+async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25 }){
   const need = new Set((ids||[]).filter(Boolean));
   const map = {}; if (need.size===0) return map;
   for (let sp=1; sp<=maxSp; sp++){
-    onProgress?.(sp, maxSp, "Resolving player names…");
     try {
       const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
       for (const t of (r?.teams||[])) {
@@ -451,58 +503,67 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
   }
   return map;
 }
+
 async function buildOfficialReport({ leagueId, seasonId, req }){
+  // Team names — public in most leagues
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
+
+  // All raw moves from three sources (cookie-required)
   const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
+
+  // Roster series (public) to verify executed adds/drops and get names later
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
-  const deduped = dedupeMoves(all).map(e => ({ ...e, teamIdRaw: e.teamId, team: idToName[e.teamId] || `Team ${e.teamId}`, player: e.playerName || null }));
+
+  // Dedup → annotate
+  const deduped = dedupeMoves(all).map(e => ({
+    ...e,
+    teamIdRaw: e.teamId,
+    team: idToName[e.teamId] || `Team ${e.teamId}`,
+    player: e.playerName || null
+  }));
+
+  // Keep executed events only
   const adds  = deduped.filter(r => r.action === "ADD"  && isGenuineAddBySeries(r, series, seasonId));
   const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
+
+  // Backfill missing player names via roster snapshots
   const needIds = [...new Set([...adds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
   const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
   for (const r of [...adds, ...drops]) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
-  let rawMoves = [...adds, ...drops].map(r => {
-    const wb = weekBucket(r.date, seasonId);
-    return {
-      date: fmtPT(r.date),
-      ts: new Date(r.date).getTime(),
-      week: wb.week,
-      range: weekRangeLabelDisplay(wb.start),
-      team: r.team,
-      player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
-      action: r.action,
-      method: r.method,
-      source: r.src,
-      playerId: r.playerId || null
-    };
-  }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
-  const DEDUPE_WINDOW_MS = 3 * 60 * 1000;
-  const dedupedMoves = [];
-  const lastByKey = new Map();
-  for (const m of rawMoves) {
-    const key = `${m.team}|${m.playerId || m.player}`;
-    if (m.action === "DROP") {
-      const prev = lastByKey.get(key);
-      if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) continue;
-      lastByKey.set(key, { action: "DROP", ts: m.ts });
-    } else if (m.action === "ADD") {
-      lastByKey.set(key, { action: "ADD", ts: m.ts });
-    }
-    dedupedMoves.push(m);
-  }
-  rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
-  const perWeek = new Map();
+
+
+// Flatten for UI — definitive week math (avoids off-by-one)
+const rawMoves = [...adds, ...drops].map(r => {
+  const wb = weekBucketPT(r.date, seasonId); // <- NEW helper
+  return {
+    date: fmtPT(r.date),
+    week: wb.week,                              // 1-based, never 0
+    range: weekRangeLabelDisplay(wb.start),     // correct Wed→Tue label
+    team: r.team,
+    player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
+    action: r.action,            // ADD | DROP
+    method: r.method,            // WAIVER | FA (when we can infer it)
+    source: r.src,               // tx | recent | comm
+    playerId: r.playerId || null
+  };
+}).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
+  
+
+  // Dues: first 2 adds per team per week are free; $5 each afterwards
+  const perWeek = new Map(); // week -> Map(team -> count)
   for (const r of rawMoves) {
     if (r.action !== "ADD" || r.week <= 0) continue;
     if (!perWeek.has(r.week)) perWeek.set(r.week, new Map());
     const m = perWeek.get(r.week);
     m.set(r.team, (m.get(r.team) || 0) + 1);
   }
+
   const weekRows = [];
   const totals = new Map();
   const rangeByWeek = {};
   for (const r of rawMoves) if (r.week>0 && !rangeByWeek[r.week]) rangeByWeek[r.week] = r.range;
+
   for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
     const entries = [];
     const m = perWeek.get(w);
@@ -515,67 +576,52 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
     entries.sort((a,b)=> a.name.localeCompare(b.name));
     weekRows.push({ week:w, range: rangeByWeek[w] || "", entries });
   }
-  const totalsRows = [...totals.entries()].map(([name, v]) => ({ name, adds: v.adds, owes: v.owes }))
+
+  const totalsRows = [...totals.entries()]
+    .map(([name, v]) => ({ name, adds: v.adds, owes: v.owes }))
     .sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
+
   return { lastSynced: fmtPT(new Date()), totalsRows, weekRows, rawMoves };
 }
 
-// =========================
-// Snapshot routes
-// =========================
-app.get("/api/report", async (req, res) => {
-  const seasonId = req.query?.seasonId;
-  const preferred = seasonId ? await readJson(`report_${seasonId}.json`, null) : null;
-  const fallback  = await readJson(REPORT_FILE, null);
-  const report = preferred || fallback;
+/* Snapshot routes */
+app.get("/api/report", async (_req, res) => {
+  const report = await readJson("report.json", null);
   if (!report) return res.status(404).send("No report");
   res.json(report);
 });
+
 app.post("/api/report/update", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  if (ADMIN_PASSWORD && req.header("x-admin") !== ADMIN_PASSWORD)
+    return res.status(401).send("Unauthorized");
+  const logger = new ProcessLogger();
   const { leagueId, seasonId } = req.body || {};
-  if (!leagueId || !seasonId) return res.status(400).send("Missing leagueId or seasonId");
-  const jobId = (req.query?.jobId || `job_${Date.now()}`);
+  if (!leagueId || !seasonId) return res.status(400).send("Missing leagueId/seasonId");
   try {
-    setProgress(jobId, 5, "Fetching teams…");
-    await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false });
-    await fetchSeasonMovesAllSources({
-      leagueId, seasonId, req, maxSp: 25,
-      onProgress: (sp, max, msg) => setProgress(jobId, 10 + Math.round((sp / max) * 45), `${msg} (${sp}/${max})`)
-    });
-    await fetchRosterSeries({
-      leagueId, seasonId, req, maxSp: 25,
-      onProgress: (sp, max, msg) => setProgress(jobId, 55 + Math.round((sp / max) * 27), `${msg} (${sp}/${max})`)
-    });
-    setProgress(jobId, 92, "Computing official totals…");
-    const report = await buildOfficialReport({ leagueId, seasonId, req });
-    const snapshot = { seasonId, leagueId, ...report };
-    await writeJson(`report_${seasonId}.json`, snapshot);
-    await writeJson(REPORT_FILE, snapshot);
-    setProgress(jobId, 100, "Snapshot complete");
-    res.json({ ok: true, weeks: (report?.weekRows || []).length });
-  } catch (err) {
-    setProgress(jobId, 100, "Failed");
-    res.status(502).send(err?.message || String(err));
+    logger.info("BUILD start", { leagueId, seasonId });
+    const report = await buildOfficialReport({ leagueId, seasonId, req, logger });
+    await logger.persistBuild();
+    await writeJson("report.json", report);
+    res.json({ ok:true, lastSynced: report.lastSynced });
+  } catch (e) {
+    await logger.persistBuild();
+    res.status(502).send(String(e.message || e));
   }
 });
 
-// =========================
-// ESPN passthrough
-// =========================
-app.get("/api/espn", async (req, res) => {
-  try {
-    const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
-    const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
-    res.json(json);
-  } catch (e) { res.status(502).send(String(e.message || e)); }
+/* =========================
+   Start server
+   ========================= */
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
 });
 
-// =========================
-// Static hosting
-// =========================
-const CLIENT_DIR = path.join(__dirname, "dist");
-app.use(express.static(CLIENT_DIR));
-app.get(/^(?!\/api).*/, (_req, res) => { res.sendFile(path.join(CLIENT_DIR, "index.html")); });
-
-app.listen(PORT, () => { console.log(`Server running on http://localhost:${PORT}`); });
+// ===== Debug log endpoints =====
+app.get("/api/debug/build-log", async (_req, res) => {
+  try { const raw = await fs.readFile(BUILD_LOG, "utf8"); return res.type("application/json").send(raw); }
+  catch { return res.json({ logs: [], note: "no build log yet" }); }
+});
+app.get("/api/debug/espn-log", async (_req, res) => {
+  try { const raw = await fs.readFile(ESPN_LOG, "utf8"); return res.type("application/json").send(raw); }
+  catch { return res.json({ logs: [], note: "no espn log yet" }); }
+});

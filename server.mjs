@@ -168,6 +168,26 @@ async function writeJson(name, obj) {
 }
 
 // =========================
+// Announcements (persisted server-side)
+// =========================
+app.get("/api/state/announcements", async (_req, res) => {
+  const data = await readJson("announcements.json", { items: [] });
+  res.json(data);
+});
+
+app.post("/api/state/announcements", async (req, res) => {
+  // commissioner gate
+  if (req.header("x-admin") !== ADMIN_PASSWORD) {
+    return res.status(401).send("Unauthorized");
+  }
+  const items = (req.body && Array.isArray(req.body.items)) ? req.body.items : null;
+  if (!items) return res.status(400).send("items[] required");
+  await writeJson("announcements.json", { items });
+  res.json({ ok: true });
+});
+
+
+// =========================
 // Week helpers (NATIVE LOCAL TIME)
 // =========================
 const WEEK_START_DAY = 3; // Wednesday
@@ -569,21 +589,6 @@ app.get("/api/espn", async (req, res) => {
     const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
     res.json(json);
   } catch (e) { res.status(502).send(String(e.message || e)); }
-});
-
-// === Announcements (persisted) ===
-app.get("/api/state/announcements", async (req, res) => {
-  const data = await readJson("announcements.json", { items: [] });
-  res.json(data);
-});
-
-app.post("/api/state/announcements", async (req, res) => {
-  if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-  const body = req.body || {};
-  const items = body.items;
-  if (!Array.isArray(items)) return res.status(400).send("items[] required");
-  await writeJson("announcements.json", { items });
-  res.json({ ok: true, items });
 });
 
 // =========================

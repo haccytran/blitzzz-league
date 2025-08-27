@@ -25,42 +25,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-// --- v3.6 ADD: Minimal persistent storage helpers (no fancy syntax) ---
-import fs from "fs/promises";
-import path from "path";
-
-const DATA_DIR = path.join(process.cwd(), "data");
-async function readJson(file, fallback) {
-  try { return JSON.parse(await fs.readFile(path.join(DATA_DIR, file), "utf8")); }
-  catch { return fallback; }
-}
-async function writeJson(file, obj) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(path.join(DATA_DIR, file), JSON.stringify(obj, null, 2), "utf8");
-}
-function isAdmin(req) {
-  const want = process.env.ADMIN_PASSWORD || process.env.VITE_ADMIN_PASSWORD || "";
-  if (!want) return true; // if you didn’t set a server password, allow all
-  const got = req.header("x-admin");
-  return got === want;
-}
-
-// --- v3.6 ADD: Announcements endpoints ---
-app.get("/api/state/announcements", async (req, res) => {
-  const data = await readJson("announcements.json", { items: [] });
-  res.json(data);
-});
-
-app.post("/api/state/announcements", async (req, res) => {
-  if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-  const body = req.body || {};
-  const items = body.items;
-  if (!Array.isArray(items)) return res.status(400).send("items[] required");
-  await writeJson("announcements.json", { items });
-  res.json({ ok: true, items });
-});
-
-
 // =========================
 // Polls (v2.1)
 // =========================
@@ -605,6 +569,21 @@ app.get("/api/espn", async (req, res) => {
     const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
     res.json(json);
   } catch (e) { res.status(502).send(String(e.message || e)); }
+});
+
+// === Announcements (persisted) ===
+app.get("/api/state/announcements", async (req, res) => {
+  const data = await readJson("announcements.json", { items: [] });
+  res.json(data);
+});
+
+app.post("/api/state/announcements", async (req, res) => {
+  if (!isAdmin(req)) return res.status(401).send("Unauthorized");
+  const body = req.body || {};
+  const items = body.items;
+  if (!Array.isArray(items)) return res.status(400).send("items[] required");
+  await writeJson("announcements.json", { items });
+  res.json({ ok: true, items });
 });
 
 // =========================

@@ -536,7 +536,39 @@ function LeagueHub(){
 
   const [data,setData]=useState(load);
 
-  // --- Sync persistent server state into client on load/season change ---
+  
+
+
+
+
+  // Commissioner mode
+  const [isAdmin,setIsAdmin] = useState(localStorage.getItem("ffl_is_admin")==="1");
+  function nextRoast(){
+    const idx = Number(localStorage.getItem("ffl_roast_idx")||"0");
+    const msg = ROASTS[idx % ROASTS.length];
+    localStorage.setItem("ffl_roast_idx", String(idx+1));
+    return msg;
+  }
+  const login = ()=>{
+    const pass = prompt("Enter Commissioner Password:");
+    if(pass===ADMIN_ENV){
+      setIsAdmin(true);
+      localStorage.setItem("ffl_is_admin","1");
+      localStorage.setItem("adminPassword", pass); // for API headers
+      alert("Commissioner mode enabled");
+    } else {
+      alert(nextRoast());
+    }
+  };
+  const logout = ()=>{ setIsAdmin(false); localStorage.removeItem("ffl_is_admin"); };
+
+  useEffect(()=>{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
+
+  // ESPN config
+  const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: DEFAULT_SEASON });
+  const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
+
+// --- Sync persistent server state into client on load/season change ---
   useEffect(() => {
     (async () => {
       try {
@@ -572,36 +604,6 @@ function LeagueHub(){
       } catch {}
     })();
   }, [seasonYear]);
-
-
-
-
-  // Commissioner mode
-  const [isAdmin,setIsAdmin] = useState(localStorage.getItem("ffl_is_admin")==="1");
-  function nextRoast(){
-    const idx = Number(localStorage.getItem("ffl_roast_idx")||"0");
-    const msg = ROASTS[idx % ROASTS.length];
-    localStorage.setItem("ffl_roast_idx", String(idx+1));
-    return msg;
-  }
-  const login = ()=>{
-    const pass = prompt("Enter Commissioner Password:");
-    if(pass===ADMIN_ENV){
-      setIsAdmin(true);
-      localStorage.setItem("ffl_is_admin","1");
-      localStorage.setItem("adminPassword", pass); // for API headers
-      alert("Commissioner mode enabled");
-    } else {
-      alert(nextRoast());
-    }
-  };
-  const logout = ()=>{ setIsAdmin(false); localStorage.removeItem("ffl_is_admin"); };
-
-  useEffect(()=>{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
-
-  // ESPN config
-  const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: DEFAULT_SEASON });
-  const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
 
   // Weeks (respect season)
   const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), seasonYear));

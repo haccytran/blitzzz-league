@@ -33,12 +33,7 @@ export default function registerV37Routes(app, deps) {
     const data = await readJson("announcements.json", { items: [] });
     res.json(data);
   });
-  router.post("/announcements", async (req, res) => {
-    if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-    const { items } = req.body || {};
-    if (!Array.isArray(items)) return res.status(400).send("items[] required");
-    await writeJson("announcements.json", { items });
-    res.json({ ok: true });
+  router.post("/announcements", async (req, res) => { if (!isAdmin(req)) return res.status(401).send("Unauthorized"); const { items } = req.body || {}; if (!Array.isArray(items)) return res.status(400).send("items[] required"); await writeJson("announcements.json", { items }); res.json({ ok: true, items }); });
   });
 
   // ---------- Weekly challenges ----------
@@ -46,12 +41,7 @@ export default function registerV37Routes(app, deps) {
     const data = await readJson("weekly_challenges.json", { items: [] });
     res.json(data);
   });
-  router.post("/challenges", async (req, res) => {
-    if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-    const { items } = req.body || {};
-    if (!Array.isArray(items)) return res.status(400).send("items[] required");
-    await writeJson("weekly_challenges.json", { items });
-    res.json({ ok: true });
+  router.post("/challenges", async (req, res) => { if (!isAdmin(req)) return res.status(401).send("Unauthorized"); const { items } = req.body || {}; if (!Array.isArray(items)) return res.status(400).send("items[] required"); await writeJson("weekly_challenges.json", { items }); res.json({ ok: true, items }); });
   });
 
   // ---------- League settings (teams, venmo/zelle, qr, etc.) ----------
@@ -61,10 +51,16 @@ export default function registerV37Routes(app, deps) {
   });
   router.post("/league/settings", async (req, res) => {
     if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-    const { leagueId="", seasonId="", teams=[], venmoLink="", zelleEmail="", venmoQR="" } = req.body || {};
-    const data = { leagueId, seasonId, teams, venmoLink, zelleEmail, venmoQR };
-    await writeJson("league_settings.json", data);
-    res.json({ ok: true });
+    const incoming = req.body || {};
+    const prev = await readJson("league_settings.json", { leagueId: "", seasonId: "", teams: [], venmoLink: "", zelleEmail: "", venmoQR: "" });
+    const next = { ...prev };
+    for (const k of ["leagueId","seasonId","teams","venmoLink","zelleEmail","venmoQR"]) {
+      if (Object.prototype.hasOwnProperty.call(incoming, k) && incoming[k] !== undefined) {
+        next[k] = incoming[k];
+      }
+    }
+    await writeJson("league_settings.json", next);
+    res.json({ ok: true, saved: next });
   });
 
   // ---------- Buy-in checklist ----------
@@ -88,7 +84,13 @@ export default function registerV37Routes(app, deps) {
       let { leagueId, seasonId } = req.body || {};
       if (!leagueId || !seasonId) return res.status(400).send("leagueId, seasonId required");
       if (!espnFetch) return res.status(500).send("espnFetch not wired");
-      const j = await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false });
+      let j;
+      try {
+        j = await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false });
+      } catch (e) {
+        // fallback with cookie if needed
+        j = await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: true });
+      }
       const teams = (j?.teams || []).map(t => ({ id: String(t?.id ?? ""), name: String(t?.location || "") + " " + String(t?.nickname || "") })).filter(t => t.id);
       // Save to league_settings.json
       const prev = await readJson("league_settings.json", { leagueId, seasonId, teams: [], venmoLink:"", zelleEmail:"", venmoQR:"" });

@@ -21,55 +21,6 @@ const WEEK_START_DAY = 3; // 0=Sun..3=Wed
 
 const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
 
-// --- server-backed announcements helpers ---
-async function fetchAnnouncements() {
-  try {
-    const r = await fetch(API("/api/state/announcements"));
-    if (!r.ok) throw new Error("bad status");
-    return await r.json(); // { items: [...] }
-  } catch {
-    return { items: [] };
-  }
-}
-
-// --- server-backed league helpers (members, waivers, buyins) ---
-async function fetchLeagueState() {
-  try {
-    const r = await fetch(API("/api/state/league"));
-    if (!r.ok) throw new Error("bad status");
-    return await r.json(); // { members, waivers, buyins, lastSaved }
-  } catch {
-    return { members: [], waivers: [], buyins: {} };
-  }
-}
-async function saveLeagueState(patch) {
-  const r = await fetch(API("/api/state/league"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-admin": ADMIN_ENV || ""
-    },
-    body: JSON.stringify(patch || {})
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-
-async function saveAnnouncements(items) {
-  const r = await fetch(API("/api/state/announcements"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-admin": ADMIN_ENV || ""   // your build-time commissioner password
-    },
-    body: JSON.stringify({ items })
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-
 /* ---- playful (non-hateful) roasts for wrong commissioner password ---- */
 const ROASTS = [
   "Wrong again, champ. Try reading the group chat for once.",
@@ -465,6 +416,13 @@ function LeagueHub(){
 
   // URL -> state
   useEffect(() => {
+useEffect(()=>{
+  fetch(API("/api/announcements"))
+    .then(r=>r.json())
+    .then(j=> setData(d=>({...d, announcements:j.announcements||[]})))
+    .catch(()=>{});
+},[]);
+
     const onHash = () => {
       const h = (window.location.hash || "").replace("#","").trim();
       setActive(VALID_TABS.includes(h) ? h : "activity");
@@ -527,27 +485,6 @@ function LeagueHub(){
 
   const [data,setData]=useState(load);
 
-// hydrate announcements from server at startup
-useEffect(() => {
-  (async () => {
-    const j = await fetchAnnouncements();
-    setData(d => ({ ...d, announcements: Array.isArray(j.items) ? j.items : [] }));
-  })();
-}, []);
-
-// hydrate league members/waivers/buyins from server at startup
-useEffect(() => {
-  (async () => {
-    const j = await fetchLeagueState();
-    setData(d => ({
-      ...d,
-      members: Array.isArray(j.members) ? j.members : d.members,
-      waivers: Array.isArray(j.waivers) ? j.waivers : d.waivers,
-      buyins: (j.buyins && typeof j.buyins === "object") ? j.buyins : d.buyins
-    }));
-  })();
-}, []);
-
 
 
   // Commissioner mode
@@ -591,64 +528,25 @@ useEffect(() => {
   const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
   const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
 
- // CRUD (persist to server)
-const addAnnouncement = async (html) => {
-  const a = { id: Math.random().toString(36).slice(2), html, createdAt: Date.now() };
-  const next = [a, ...(data.announcements || [])];
+  // CRUD
+  const addAnnouncement = (html) =>
+  setData(d => ({
+    ...d,
+    announcements: [{ id: nid(), html, createdAt: Date.now() }, ...(d.announcements || [])],
+  }));
 
-  // optimistic UI
-  setData(d => ({ ...d, announcements: next }));
-
-  try {
-    await saveAnnouncements(next);
-  } catch (e) {
-    alert("Failed to save announcement: " + String(e?.message || e));
-  }
-};
-
-const deleteAnnouncement = async (id) => {
-  const next = (data.announcements || []).filter(x => x.id !== id);
-
-  // optimistic UI
-  setData(d => ({ ...d, announcements: next }));
-
-  try {
-    await saveAnnouncements(next);
-  } catch (e) {
-    alert("Failed to delete announcement: " + String(e?.message || e));
-  }
-};
-
+const deleteAnnouncement = (id) =>
+  setData(d => ({
+    ...d,
+    announcements: (d.announcements || []).filter(a => a.id !== id),
+  }));
 
   const addTrade = (t)=> setData(d=>({...d, tradeBlock:[{id:nid(), createdAt:Date.now(), ...t}, ...d.tradeBlock]}));
   const deleteTrade = (id)=> setData(d=>({...d, tradeBlock:d.tradeBlock.filter(t=>t.id!==id)}));
- 
-
-// Members
-const addMember = (name) => {
-  const newMember = { id: nid(), name };
-  const next = [...data.members, newMember];
-  setData(d => ({ ...d, members: next }));                // optimistic
-  saveLeagueState({ members: next }).catch(e => alert("Save members failed: " + (e?.message || e)));
-};
-const deleteMember = (id) => {
-  const nextMembers = data.members.filter(m => m.id !== id);
-  const nextWaivers = data.waivers.filter(w => w.userId !== id);
-  setData(d => ({ ...d, members: nextMembers, waivers: nextWaivers })); // optimistic
-  saveLeagueState({ members: nextMembers, waivers: nextWaivers }).catch(e => alert("Save members failed: " + (e?.message || e)));
-};
-
-// Waivers
-const addWaiver = (userId, player, date) => {
-  const next = [{ id: nid(), userId, player, date: date || today() }, ...data.waivers];
-  setData(d => ({ ...d, waivers: next }));                // optimistic
-  saveLeagueState({ waivers: next }).catch(e => alert("Save waivers failed: " + (e?.message || e)));
-};
-const deleteWaiver = (id) => {
-  const next = data.waivers.filter(w => w.id !== id);
-  setData(d => ({ ...d, waivers: next }));                // optimistic
-  saveLeagueState({ waivers: next }).catch(e => alert("Save waivers failed: " + (e?.message || e)));
-};
+    const addMember = (name)=> setData(d=>({...d, members:[...d.members, {id:nid(), name}]}));
+  const deleteMember = (id)=> setData(d=>({...d, members:d.members.filter(m=>m.id!==id), waivers:d.waivers.filter(w=>w.userId!==id)}));
+  const addWaiver = (userId, player, date)=> setData(d=>({...d, waivers:[{id:nid(), userId, player, date: date || today()}, ...d.waivers]}));
+  const deleteWaiver = (id)=> setData(d=>({...d, waivers:d.waivers.filter(w=>w.id!==id)}));
 
   // Import ESPN teams (public endpoint)
   const importEspnTeams = async ()=>{
@@ -658,12 +556,8 @@ const deleteWaiver = (id) => {
       const teams = json?.teams || [];
       if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
       const names = [...new Set(teams.map(t => teamName(t)))];
-
- const members = names.map(n => ({ id: nid(), name: n }));
-setData(d => ({ ...d, members }));                   // optimistic UI
-await saveLeagueState({ members });                   // persist to server
-alert(`Imported ${members.length} teams.`);
-
+      setData(d => ({ ...d, members: names.map(n => ({ id: nid(), name: n })) }));
+      alert(`Imported ${names.length} teams.`);
     } catch(e){ alert(e.message || "ESPN fetch failed. Check League/Season."); }
   };
 
@@ -817,7 +711,6 @@ alert(`Imported ${members.length} teams.`);
    data={data}
    setData={setData}
    seasonYear={seasonYear}
-   onSaveBuyins={(next) => saveLeagueState({ buyins: next }).catch(e => alert("Save buy-ins failed: " + (e?.message || e)))}
  />,
     transactions:   <TransactionsView report={espnReport} />,
     rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
@@ -1719,7 +1612,7 @@ function WaiverForm({members,onAdd,disabled}){ const [userId,setUserId]=useState
   );
 }
 
-function BuyInTracker({ isAdmin, members, seasonYear, data, setData, onSaveBuyins }) {
+function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
   const BUYIN = 200;
   const displayYear = new Date().getFullYear();
 
@@ -1733,16 +1626,11 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, onSaveBuyin
   };
 
   const patch = (p) => {
-  setData(d => {
-    const prev = (d.buyins && d.buyins[seasonKey]) || { paid:{}, hidden:false, venmoLink:"", zelleEmail:"", venmoQR:"" };
-    const nextSeason = { ...prev, ...p };
-    const nextBuyins = { ...(d.buyins||{}), [seasonKey]: nextSeason };
-    // save to server (uses onSaveBuyins passed from DuesView)
-    setTimeout(() => { onSaveBuyins && onSaveBuyins(nextBuyins); }, 0);
-    return { ...d, buyins: nextBuyins };
-  });
-};
-
+    setData(d => {
+      const prev = (d.buyins && d.buyins[seasonKey]) || { paid:{}, hidden:false, venmoLink:"", zelleEmail:"", venmoQR:"" };
+      return { ...d, buyins: { ...(d.buyins||{}), [seasonKey]: { ...prev, ...p } } };
+    });
+  };
 
   const togglePaid = (id) => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
   const markAll   = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
@@ -1879,135 +1767,78 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, onSaveBuyin
 
 /* ---- Dues view ---- */
 
-// Left/right table cell styles are already defined earlier as `td` and `th`.
-
-function DuesView({
-  report,            // official snapshot (may be undefined)
-  lastSynced,
-  loadOfficialReport,
-  updateOfficialSnapshot,
-  isAdmin,
-  data,
-  setData,
-  seasonYear,
-  onSaveBuyins,      // passed from views; used to persist buy-ins
-}) {
+function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear }){  
   return (
-    <Section
-      title="Dues (Official Snapshot)"
-      actions={
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn" style={btnSec} onClick={() => loadOfficialReport(false)}>
-            Refresh Snapshot
-          </button>
-          {isAdmin && (
-            <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>
-              Update Official Snapshot
-            </button>
-          )}
-          <button className="btn" style={btnSec} onClick={() => print()}>
-            Print
-          </button>
-
-          {report && (
-            <>
-              <button
-                className="btn"
-                style={btnSec}
-                onClick={() => {
-                  const rows = [["Team", "Adds", "Owes"], ...report.totalsRows.map(r => [r.name, r.adds, `$${r.owes}`])];
-                  downloadCSV("dues_totals.csv", rows);
-                }}
-              >
-                Download CSV (totals)
-              </button>
-
-              <button
-                className="btn"
-                style={btnSec}
-                onClick={() => {
-                  const rows = [["Week", "Range", "Team", "Adds", "Owes"]];
-                  report.weekRows.forEach(w =>
-                    w.entries.forEach(e => rows.push([w.week, w.range, e.name, e.count, `$${e.owes}`]))
-                  );
-                  downloadCSV("dues_by_week.csv", rows);
-                }}
-              >
-                Download CSV (by week)
-              </button>
-
-              <button
-                className="btn"
-                style={btnSec}
-                onClick={() => {
-                  const rows = [["Date (PT)", "Week", "Range", "Team", "Player", "Action", "Method", "Source", "PlayerId"]];
-                  (report.rawMoves || []).forEach(r =>
-                    rows.push([r.date, r.week, r.range, r.team, r.player, r.action, r.method, r.source, r.playerId])
-                  );
-                  downloadCSV("raw_events.csv", rows);
-                }}
-              >
-                Download raw events
-              </button>
-            </>
-          )}
-        </div>
-      }
-    >
-      <p style={{ marginTop: -8, color: "#64748b" }}>
+    <Section title="Dues (Official Snapshot)" actions={
+      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+        <button className="btn" style={btnSec} onClick={()=>loadOfficialReport(false)}>Refresh Snapshot</button>
+        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
+        <button className="btn" style={btnSec} onClick={()=>print()}>Print</button>
+        {report && <>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Team","Adds","Owes"], ...report.totalsRows.map(r=>[r.name,r.adds,`$${r.owes}`])];
+            downloadCSV("dues_totals.csv", rows);
+          }}>Download CSV (totals)</button>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Week","Range","Team","Adds","Owes"]];
+            report.weekRows.forEach(w=> w.entries.forEach(e=> rows.push([w.week,w.range,e.name,e.count,`$${e.owes}`])));
+            downloadCSV("dues_by_week.csv", rows);
+          }}>Download CSV (by week)</button>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Date (PT)","Week","Range","Team","Player","Action","Method","Source","PlayerId"]];
+            (report.rawMoves||[]).forEach(r=> rows.push([r.date, r.week, r.range, r.team, r.player, r.action, r.method, r.source, r.playerId]));
+            downloadCSV("raw_events.csv", rows);
+          }}>Download raw events</button>
+        </>}
+      </div>
+    }>
+      <p style={{marginTop:-8, color:"#64748b"}}>
         Last updated: <b>{lastSynced || "—"}</b>. Rule: first two transactions per Wed→Tue week are free, then $5 each.
       </p>
+      {!report && <p style={{color:"#64748b"}}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
 
-      <div className="dues-grid dues-tight">
-        {/* LEFT column (50%): League Owner Dues + Buy-In tracker stacked */}
-        <div className="dues-left">
-          {/* League owner dues table; shows snapshot if present, otherwise $0 rows so the table is always visible */}
-          <div className="card" style={{ padding: 12 }}>
-            <h3 style={{ marginTop: 0 }}>League Owner Dues</h3>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={th}>Team</th>
-                  <th style={th}>Adds</th>
-                  <th style={th}>Owes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(report
-                  ? report.totalsRows.map(r => ({ name: r.name, adds: r.adds, owes: r.owes }))
-                  : (data.members || []).map(m => ({ name: m.name, adds: 0, owes: 0 }))
-                ).map(r => (
-                  <tr key={r.name}>
-                    <td style={td}>{r.name}</td>
-                    <td style={td}>{r.adds}</td>
-                    <td style={td}>${r.owes}</td>
+      {report && (
+        <div className="dues-grid dues-tight">
+          {/* LEFT column (≤50%): Season-to-date + Buy-in tracker stacked */}
+          <div className="dues-left">
+            <div className="card" style={{padding:12}}>
+              <h3 style={{marginTop:0}}>League Owner Dues</h3>
+              <table style={{width:"100%", borderCollapse:"collapse"}}>
+                <thead>
+                  <tr>
+                    <th style={th}>Team</th>
+                    <th style={th}>Adds</th>
+                    <th style={th}>Owes</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {report.totalsRows.map(r=>(
+                    <tr key={r.name}>
+                      <td style={td}>{r.name}</td>
+                      <td style={td}>{r.adds}</td>
+                      <td style={td}>${r.owes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <BuyInTracker
+              isAdmin={isAdmin}
+              members={data.members}
+              seasonYear={seasonYear}
+              data={data}
+              setData={setData}
+            />
           </div>
 
-          <BuyInTracker
-            isAdmin={isAdmin}
-            members={data.members || []}
-            seasonYear={seasonYear}
-            data={data}
-            setData={setData}
-            onSaveBuyins={onSaveBuyins}
-          />
-        </div>
-
-        {/* RIGHT column (50%): By Week */}
-        <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
-          <h3 style={{ marginTop: 0 }}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
-          {!report && <p style={{ color: "#64748b" }}>No snapshot yet.</p>}
-          {report &&
-            report.weekRows.map(w => (
-              <div key={w.week} style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, margin: "6px 0" }}>
-                  Week {w.week} — {w.range}
-                </div>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          {/* RIGHT column (50%): By Week */}
+          <div className="card dues-week" style={{padding:12, minWidth:0}}>
+            <h3 style={{marginTop:0}}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
+            {report.weekRows.map(w=>(
+              <div key={w.week} style={{marginBottom:12}}>
+                <div style={{fontWeight:600, margin:"6px 0"}}>Week {w.week} — {w.range}</div>
+                <table style={{width:"100%", borderCollapse:"collapse"}}>
                   <thead>
                     <tr>
                       <th style={th}>Team</th>
@@ -2016,9 +1847,9 @@ function DuesView({
                     </tr>
                   </thead>
                   <tbody>
-                    {w.entries.map(e => (
+                    {w.entries.map(e=>(
                       <tr key={e.name}>
-                        <td style={{ ...td, whiteSpace: "normal" }}>{e.name}</td>
+                        <td style={{...td, whiteSpace:"normal"}}>{e.name}</td>
                         <td style={td}>{e.count}</td>
                         <td style={td}>${e.owes}</td>
                       </tr>
@@ -2027,184 +1858,13 @@ function DuesView({
                 </table>
               </div>
             ))}
+          </div>
         </div>
-      </div>
+      )}
     </Section>
   );
 }
 
-function BuyInTracker({ isAdmin, members, seasonYear, data, setData, onSaveBuyins }) {
-  const BUYIN = 200;
-  const displayYear = new Date().getFullYear();
-
-  const seasonKey = String(seasonYear);
-  const cur =
-    (data.buyins && data.buyins[seasonKey]) || {
-      paid: {},
-      hidden: false,
-      venmoLink: "",
-      zelleEmail: "",
-      venmoQR: "",
-    };
-
-  // Patch local state and persist to server (via onSaveBuyins passed from parent)
-  const patch = p => {
-    setData(d => {
-      const prev = (d.buyins && d.buyins[seasonKey]) || {
-        paid: {},
-        hidden: false,
-        venmoLink: "",
-        zelleEmail: "",
-        venmoQR: "",
-      };
-      const nextSeason = { ...prev, ...p };
-      const next = { ...(d.buyins || {}), [seasonKey]: nextSeason };
-      // persist (non-blocking)
-      setTimeout(() => { onSaveBuyins && onSaveBuyins(next); }, 0);
-      return { ...d, buyins: next };
-    });
-  };
-
-  const togglePaid = id => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
-  const markAll = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
-  const resetAll = () => patch({ paid: {} });
-
-  const paidCount = members.filter(m => cur.paid[m.id]).length;
-  const allPaid = members.length > 0 && paidCount === members.length;
-
-  if (cur.hidden && !isAdmin) return null;
-
-  const [venmo, setVenmo] = React.useState(cur.venmoLink || "");
-  const [zelle, setZelle] = React.useState(cur.zelleEmail || "");
-  React.useEffect(() => {
-    setVenmo(cur.venmoLink || "");
-    setZelle(cur.zelleEmail || "");
-  }, [seasonKey, data.buyins]);
-
-  const saveMeta = () => patch({ venmoLink: venmo.trim(), zelleEmail: zelle.trim() });
-
-  const onUploadQR = e => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => patch({ venmoQR: r.result || "" });
-    r.readAsDataURL(f);
-  };
-
-  const copyZelle = async () => {
-    const email = (cur.zelleEmail || "").trim();
-    if (!email) return alert("No Zelle email set yet.");
-    try {
-      await navigator.clipboard.writeText(email);
-      alert("Zelle username/email copied to clipboard! Paste into your Zelle app to Pay via Zelle!");
-    } catch {
-      alert("Could not copy. Long-press / right-click to copy instead: " + email);
-    }
-  };
-
-  return (
-    <div className="card" style={{ padding: 16, marginTop: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ marginTop: 0 }}>${BUYIN} Season Buy-In — {displayYear}</h3>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span className="badge">{paidCount} / {members.length} paid</span>
-          {isAdmin && (
-            cur.hidden
-              ? <button className="btn" onClick={() => patch({ hidden: false })}>Show tracker</button>
-              : allPaid ? <button className="btn" onClick={() => patch({ hidden: true })}>Hide (all paid)</button> : null
-          )}
-        </div>
-      </div>
-
-      {members.length === 0 && (
-        <p style={{ color: "#64748b", marginTop: 0 }}>
-          No members yet. Import teams in <b>League Settings</b> first.
-        </p>
-      )}
-
-      {members.length > 0 && (
-        <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 16 }}>
-          {/* LEFT: checklist */}
-          <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <strong>Buy-In Paid Checklist ✅</strong>
-              {isAdmin && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn" onClick={markAll}>Mark all paid</button>
-                  <button className="btn" onClick={resetAll}>Reset</button>
-                </div>
-              )}
-            </div>
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {members
-                .slice()
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map(m => (
-                  <li
-                    key={m.id}
-                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #e2e8f0" }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={!!cur.paid[m.id]}
-                      onChange={() => isAdmin && togglePaid(m.id)}
-                      disabled={!isAdmin}
-                    />
-                    <span style={{ textDecoration: cur.paid[m.id] ? "line-through" : "none" }}>{m.name}</span>
-                  </li>
-                ))}
-            </ul>
-          </div>
-
-          {/* RIGHT: payment links + QR (slim) */}
-          <div className="card buyin-pay" style={{ padding: 12 }}>
-            <h4 style={{ marginTop: 0 }}>Pay Dues</h4>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {cur.venmoLink && (
-                <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">
-                  Pay with Venmo
-                </a>
-              )}
-              {cur.zelleEmail && (
-                <button type="button" className="btn" onClick={copyZelle}>
-                  Pay with Zelle
-                </button>
-              )}
-            </div>
-
-            {(cur.venmoQR || cur.venmoLink || cur.zelleEmail) && (
-              <div style={{ marginTop: 8 }}>
-                <a
-                  href={cur.venmoLink || `mailto:${encodeURIComponent(cur.zelleEmail)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}
-                >
-                  {cur.venmoQR && <img src={cur.venmoQR} alt="Venmo QR" />}
-                </a>
-              </div>
-            )}
-
-            {isAdmin && (
-              <>
-                <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8, marginTop: 8 }}>
-                  <input className="input" placeholder="https://venmo.com/u/YourHandle" value={venmo} onChange={e => setVenmo(e.target.value)} />
-                  <input className="input" placeholder="Zelle email" value={zelle} onChange={e => setZelle(e.target.value)} />
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-                  <input type="file" accept="image/*" onChange={onUploadQR} />
-                  {cur.venmoQR && <button className="btn" onClick={() => patch({ venmoQR: "" })}>Remove QR</button>}
-                  <button className="btn primary" onClick={saveMeta}>Save links</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 /* ---- Transactions ---- */
 function TransactionsView({ report }){
   if (!report) {

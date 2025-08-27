@@ -32,6 +32,30 @@ async function fetchAnnouncements() {
   }
 }
 
+// --- server-backed league helpers (members, waivers, buyins) ---
+async function fetchLeagueState() {
+  try {
+    const r = await fetch(API("/api/state/league"));
+    if (!r.ok) throw new Error("bad status");
+    return await r.json(); // { members, waivers, buyins, lastSaved }
+  } catch {
+    return { members: [], waivers: [], buyins: {} };
+  }
+}
+async function saveLeagueState(patch) {
+  const r = await fetch(API("/api/state/league"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin": ADMIN_ENV || ""
+    },
+    body: JSON.stringify(patch || {})
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+
 async function saveAnnouncements(items) {
   const r = await fetch(API("/api/state/announcements"), {
     method: "POST",
@@ -511,6 +535,18 @@ useEffect(() => {
   })();
 }, []);
 
+// hydrate league members/waivers/buyins from server at startup
+useEffect(() => {
+  (async () => {
+    const j = await fetchLeagueState();
+    setData(d => ({
+      ...d,
+      members: Array.isArray(j.members) ? j.members : d.members,
+      waivers: Array.isArray(j.waivers) ? j.waivers : d.waivers,
+      buyins: (j.buyins && typeof j.buyins === "object") ? j.buyins : d.buyins
+    }));
+  })();
+}, []);
 
 
 
@@ -586,10 +622,33 @@ const deleteAnnouncement = async (id) => {
 
   const addTrade = (t)=> setData(d=>({...d, tradeBlock:[{id:nid(), createdAt:Date.now(), ...t}, ...d.tradeBlock]}));
   const deleteTrade = (id)=> setData(d=>({...d, tradeBlock:d.tradeBlock.filter(t=>t.id!==id)}));
-    const addMember = (name)=> setData(d=>({...d, members:[...d.members, {id:nid(), name}]}));
-  const deleteMember = (id)=> setData(d=>({...d, members:d.members.filter(m=>m.id!==id), waivers:d.waivers.filter(w=>w.userId!==id)}));
-  const addWaiver = (userId, player, date)=> setData(d=>({...d, waivers:[{id:nid(), userId, player, date: date || today()}, ...d.waivers]}));
-  const deleteWaiver = (id)=> setData(d=>({...d, waivers:d.waivers.filter(w=>w.id!==id)}));
+ 
+
+// Members
+const addMember = (name) => {
+  const newMember = { id: nid(), name };
+  const next = [...data.members, newMember];
+  setData(d => ({ ...d, members: next }));                // optimistic
+  saveLeagueState({ members: next }).catch(e => alert("Save members failed: " + (e?.message || e)));
+};
+const deleteMember = (id) => {
+  const nextMembers = data.members.filter(m => m.id !== id);
+  const nextWaivers = data.waivers.filter(w => w.userId !== id);
+  setData(d => ({ ...d, members: nextMembers, waivers: nextWaivers })); // optimistic
+  saveLeagueState({ members: nextMembers, waivers: nextWaivers }).catch(e => alert("Save members failed: " + (e?.message || e)));
+};
+
+// Waivers
+const addWaiver = (userId, player, date) => {
+  const next = [{ id: nid(), userId, player, date: date || today() }, ...data.waivers];
+  setData(d => ({ ...d, waivers: next }));                // optimistic
+  saveLeagueState({ waivers: next }).catch(e => alert("Save waivers failed: " + (e?.message || e)));
+};
+const deleteWaiver = (id) => {
+  const next = data.waivers.filter(w => w.id !== id);
+  setData(d => ({ ...d, waivers: next }));                // optimistic
+  saveLeagueState({ waivers: next }).catch(e => alert("Save waivers failed: " + (e?.message || e)));
+};
 
   // Import ESPN teams (public endpoint)
   const importEspnTeams = async ()=>{
@@ -600,6 +659,7 @@ const deleteAnnouncement = async (id) => {
       if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
       const names = [...new Set(teams.map(t => teamName(t)))];
       setData(d => ({ ...d, members: names.map(n => ({ id: nid(), name: n })) }));
+       await saveLeagueState({ members });   
       alert(`Imported ${names.length} teams.`);
     } catch(e){ alert(e.message || "ESPN fetch failed. Check League/Season."); }
   };
@@ -754,6 +814,7 @@ const deleteAnnouncement = async (id) => {
    data={data}
    setData={setData}
    seasonYear={seasonYear}
+   onSaveBuyins={(next) => saveLeagueState({ buyins: next }).catch(e => alert("Save buy-ins failed: " + (e?.message || e)))}
  />,
     transactions:   <TransactionsView report={espnReport} />,
     rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
@@ -1906,6 +1967,13 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       )}
     </Section>
   );
+}
+// Example inside DuesView when marking paid/unpaid:
+function setPaid(teamId, paid) {
+  const next = { ...(data.buyins || {}) };
+  next[teamId] = { ...(next[teamId] || {}), paid: !!paid, updatedAt: Date.now() };
+  setData(d => ({ ...d, buyins: next }));        // UI update
+  onSaveBuyins?.(next);                          // persist server-side
 }
 
 /* ---- Transactions ---- */

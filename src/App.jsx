@@ -1739,7 +1739,11 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
   const [zelle, setZelle] = React.useState(cur.zelleEmail || "");
   React.useEffect(() => { setVenmo(cur.venmoLink || ""); setZelle(cur.zelleEmail || ""); }, [seasonKey, data.buyins]);
 
-  const saveMeta = () => patch({ venmoLink: venmo.trim(), zelleEmail: zelle.trim() });
+  const saveMeta = async () => {
+    const payload = { venmoLink: venmo.trim(), zelleEmail: zelle.trim(), venmoQR: cur.venmoQR || "" };
+    try { await apiSaveLeagueSettings(payload); } catch {}
+    patch(payload);
+  };
 
   const onUploadQR = (e) => {
     const f = e.target.files?.[0];

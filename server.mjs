@@ -1,6 +1,4 @@
-// --- server.mjs (Version 3.6, with League Data API) ---
-// Uses host/local timezone (Render: set TZ=America/Los_Angeles).
-
+// --- server.mjs (Version 3.7, PostgreSQL + Fixes) ---
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -9,6 +7,8 @@ import cors from "cors";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import pkg from 'pg';
+const { Pool } = pkg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -22,16 +22,119 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 // =========================
-// File helpers
+// PostgreSQL Setup
+// =========================
+const DATABASE_URL = process.env.DATABASE_URL;
+let pool = null;
+
+if (DATABASE_URL) {
+  pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  });
+
+  // Initialize database tables
+  async function initDB() {
+    const client = await pool.connect();
+    try {
+      // League data table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS league_data (
+          id SERIAL PRIMARY KEY,
+          data_type VARCHAR(50) NOT NULL,
+          data_key VARCHAR(100),
+          data_value JSONB NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Polls table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS polls_data (
+          id SERIAL PRIMARY KEY,
+          polls JSONB DEFAULT '{}',
+          votes JSONB DEFAULT '{}',
+          team_codes JSONB DEFAULT '{}',
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Reports table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS reports (
+          season_id VARCHAR(20) PRIMARY KEY,
+          report_data JSONB NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Insert initial polls data if not exists
+      const pollsResult = await client.query('SELECT COUNT(*) FROM polls_data');
+      if (parseInt(pollsResult.rows[0].count) === 0) {
+        await client.query('INSERT INTO polls_data (polls, votes, team_codes) VALUES ($1, $2, $3)', 
+          ['{}', '{}', '{}']);
+      }
+
+      console.log('Database initialized successfully');
+    } catch (err) {
+      console.error('Database initialization error:', err);
+    } finally {
+      client.release();
+    }
+  }
+
+  initDB().catch(console.error);
+}
+
+// =========================
+// Data Storage Functions
 // =========================
 const fpath = (name) => path.join(DATA_DIR, name);
+
 async function readJson(name, fallback) {
-  try { return JSON.parse(await fs.readFile(fpath(name), "utf8")); }
-  catch { return fallback; }
+  if (DATABASE_URL) {
+    try {
+      const client = await pool.connect();
+      const result = await client.query(
+        'SELECT data_value FROM league_data WHERE data_type = $1 ORDER BY updated_at DESC LIMIT 1',
+        [name.replace('.json', '')]
+      );
+      client.release();
+      return result.rows.length > 0 ? result.rows[0].data_value : fallback;
+    } catch (err) {
+      console.error('Database read error:', err);
+      return fallback;
+    }
+  } else {
+    try { return JSON.parse(await fs.readFile(fpath(name), "utf8")); }
+    catch { return fallback; }
+  }
 }
+
 async function writeJson(name, obj) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
+  if (DATABASE_URL) {
+    try {
+      const client = await pool.connect();
+      const dataType = name.replace('.json', '');
+      await client.query(`
+        INSERT INTO league_data (data_type, data_value, updated_at) 
+        VALUES ($1, $2, CURRENT_TIMESTAMP)
+        ON CONFLICT (data_type) DO UPDATE SET 
+        data_value = $2, updated_at = CURRENT_TIMESTAMP
+      `, [dataType, JSON.stringify(obj)]);
+      client.release();
+    } catch (err) {
+      console.error('Database write error:', err);
+      // Fallback to file system
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
+    }
+  } else {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
+  }
 }
 
 // Authentication helper
@@ -56,11 +159,13 @@ async function getLeagueData() {
     buyins: {},
     leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
     tradeBlock: [],
-    rosters: {} // Add rosters storage by season
+    rosters: {},
+    lastUpdated: new Date().toISOString()
   });
 }
 
 async function saveLeagueData(data) {
+  data.lastUpdated = new Date().toISOString();
   await writeJson(LEAGUE_DATA_FILE, data);
 }
 
@@ -405,24 +510,51 @@ app.delete("/api/league-data/trading", requireAdmin, async (req, res) => {
 });
 
 // =========================
-// Polls (v2.1) - Keep existing implementation
+// Polls (v2.1) - PostgreSQL compatible
 // =========================
-const POLLS_FILE = path.join(DATA_DIR, "polls.json");
-let pollsState = { polls: {}, votes: {}, teamCodes: {} };
 async function loadPolls() {
-  try {
-    const raw = await fs.readFile(POLLS_FILE, "utf-8");
-    const data = JSON.parse(raw);
-    pollsState.polls     = data.polls     || {};
-    pollsState.votes     = data.votes     || {};
-    pollsState.teamCodes = data.teamCodes || {};
-  } catch {}
+  if (DATABASE_URL) {
+    try {
+      const client = await pool.connect();
+      const result = await client.query('SELECT * FROM polls_data ORDER BY updated_at DESC LIMIT 1');
+      client.release();
+      
+      if (result.rows.length > 0) {
+        return {
+          polls: result.rows[0].polls || {},
+          votes: result.rows[0].votes || {},
+          teamCodes: result.rows[0].team_codes || {}
+        };
+      }
+    } catch (err) {
+      console.error('Database polls load error:', err);
+    }
+  }
+  return await readJson("polls.json", { polls: {}, votes: {}, teamCodes: {} });
 }
-async function savePolls() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(POLLS_FILE, JSON.stringify(pollsState, null, 2), "utf-8");
+
+async function savePolls(pollsState) {
+  if (DATABASE_URL) {
+    try {
+      const client = await pool.connect();
+      await client.query(`
+        UPDATE polls_data SET 
+        polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP
+        WHERE id = (SELECT id FROM polls_data ORDER BY updated_at DESC LIMIT 1)
+      `, [
+        JSON.stringify(pollsState.polls),
+        JSON.stringify(pollsState.votes), 
+        JSON.stringify(pollsState.teamCodes)
+      ]);
+      client.release();
+    } catch (err) {
+      console.error('Database polls save error:', err);
+      await writeJson("polls.json", pollsState);
+    }
+  } else {
+    await writeJson("polls.json", pollsState);
+  }
 }
-await loadPolls();
 
 const FRIENDLY_WORDS = [
   "MANGO","FALCON","TIGER","ORCA","BISON","HAWK","PANDA","EAGLE","MAPLE","CEDAR","ONYX","ZINC",
@@ -437,8 +569,11 @@ app.post("/api/polls/issue-team-codes", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { seasonId, teams } = req.body || {};
   if (!seasonId || !Array.isArray(teams)) return res.status(400).send("Missing seasonId or teams[]");
+  
+  const pollsState = await loadPolls();
   const used = new Set(Object.values(pollsState.teamCodes || {}).map(v => v.code));
   const issued = [];
+  
   for (const t of teams) {
     const key = `${seasonId}:${t.id}`;
     if (!pollsState.teamCodes[key]) {
@@ -449,26 +584,38 @@ app.post("/api/polls/issue-team-codes", async (req, res) => {
     }
     issued.push({ teamId: t.id, teamName: t.name, code: pollsState.teamCodes[key].code });
   }
-  await savePolls();
+  
+  await savePolls(pollsState);
   res.json({ issued: issued.length, codes: issued });
 });
 
 app.post("/api/polls/vote", async (req, res) => {
   const { pollId, optionId, seasonId, teamCode } = req.body || {};
   if (!pollId || !optionId || !seasonId || !teamCode) return res.status(400).send("Missing fields");
+  
+  const pollsState = await loadPolls();
   let teamId = null;
+  
   for (const [k,v] of Object.entries(pollsState.teamCodes)) {
-    if (k.startsWith(`${seasonId}:`) && String(v.code).toUpperCase() === String(teamCode).toUpperCase()) { teamId = Number(k.split(":")[1]); break; }
+    if (k.startsWith(`${seasonId}:`) && String(v.code).toUpperCase() === String(teamCode).toUpperCase()) { 
+      teamId = Number(k.split(":")[1]); 
+      break; 
+    }
   }
+  
   if (!teamId) return res.status(403).send("Invalid code");
+  
   pollsState.votes[pollId] = pollsState.votes[pollId] || {};
   pollsState.votes[pollId][teamId] = optionId;
-  await savePolls();
+  
+  await savePolls(pollsState);
   res.json({ ok: true, byTeam: pollsState.votes[pollId] });
 });
 
-app.get("/api/polls", (req, res) => {
+app.get("/api/polls", async (req, res) => {
   const seasonId = String(req.query?.seasonId || "");
+  const pollsState = await loadPolls();
+  
   const out = Object.values(pollsState.polls || {}).map(p => {
     const byTeam = pollsState.votes?.[p.id] || {};
     const tally = {};
@@ -489,18 +636,29 @@ app.post("/api/polls/create", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { question, options } = req.body || {};
   if (!question || !Array.isArray(options) || options.length < 2) return res.status(400).send("Bad request");
+  
+  const pollsState = await loadPolls();
   const id = nid();
-  pollsState.polls[id] = { id, question: String(question), closed: false, options: options.map(label => ({ id: nid(), label: String(label) })) };
-  await savePolls();
+  pollsState.polls[id] = { 
+    id, 
+    question: String(question), 
+    closed: false, 
+    options: options.map(label => ({ id: nid(), label: String(label) })) 
+  };
+  
+  await savePolls(pollsState);
   res.json({ ok: true, pollId: id });
 });
 
 app.post("/api/polls/close", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { pollId, closed } = req.body || {};
+  
+  const pollsState = await loadPolls();
   if (!pollId || !pollsState.polls[pollId]) return res.status(404).send("Not found");
+  
   pollsState.polls[pollId].closed = !!closed;
-  await savePolls();
+  await savePolls(pollsState);
   res.json({ ok: true });
 });
 
@@ -508,20 +666,29 @@ app.post("/api/polls/delete", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { pollId } = req.body || {};
   if (!pollId) return res.status(400).send("Missing pollId");
+  
+  const pollsState = await loadPolls();
   if (pollsState.polls[pollId]) delete pollsState.polls[pollId];
   if (pollsState.votes[pollId]) delete pollsState.votes[pollId];
-  await savePolls();
+  
+  await savePolls(pollsState);
   res.json({ ok: true });
 });
 
-app.get("/api/polls/team-codes", (req, res) => {
+app.get("/api/polls/team-codes", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const seasonId = req.query?.seasonId;
   if (!seasonId) return res.status(400).send("Missing seasonId");
+  
+  const pollsState = await loadPolls();
   const rows = [];
+  
   for (const [k,v] of Object.entries(pollsState.teamCodes || {})) {
-    if (k.startsWith(`${seasonId}:`)) rows.push({ teamId: Number(k.split(":")[1]), code: v.code, createdAt: v.createdAt });
+    if (k.startsWith(`${seasonId}:`)) {
+      rows.push({ teamId: Number(k.split(":")[1]), code: v.code, createdAt: v.createdAt });
+    }
   }
+  
   res.json({ codes: rows });
 });
 
@@ -896,6 +1063,7 @@ app.get("/api/report", async (req, res) => {
   if (!report) return res.status(404).send("No report");
   res.json(report);
 });
+
 app.post("/api/report/update", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { leagueId, seasonId } = req.body || {};
@@ -924,14 +1092,6 @@ app.post("/api/report/update", async (req, res) => {
     res.status(502).send(err?.message || String(err));
   }
 });
-
-// Replace file storage with PostgreSQL if you add the addon
-const DATABASE_URL = process.env.DATABASE_URL;
-if (DATABASE_URL) {
-  // Use database instead of files
-} else {
-  // Keep current file system (will reset on deploy)
-}
 
 // Static hosting
 const CLIENT_DIR = path.join(__dirname, "dist");

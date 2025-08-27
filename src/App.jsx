@@ -1121,19 +1121,364 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
 
 function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, members, buyins, updateBuyins, seasonYear }) {
   return (
-    <Section title="Dues (Official Snapshot)">
+    <Section title="Dues (Official Snapshot)" actions={
+      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+        <button className="btn" style={btnSec} onClick={()=>loadOfficialReport(false)}>Refresh Snapshot</button>
+        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
+        <button className="btn" style={btnSec} onClick={()=>print()}>Print</button>
+        {report && <>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Team","Adds","Owes"], ...report.totalsRows.map(r=>[r.name,r.adds,`${r.owes}`])];
+            downloadCSV("dues_totals.csv", rows);
+          }}>Download CSV (totals)</button>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Week","Range","Team","Adds","Owes"]];
+            report.weekRows.forEach(w=> w.entries.forEach(e=> rows.push([w.week,w.range,e.name,e.count,`${e.owes}`])));
+            downloadCSV("dues_by_week.csv", rows);
+          }}>Download CSV (by week)</button>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Date (PT)","Week","Range","Team","Player","Action","Method","Source","PlayerId"]];
+            (report.rawMoves||[]).forEach(r=> rows.push([r.date, r.week, r.range, r.team, r.player, r.action, r.method, r.source, r.playerId]));
+            downloadCSV("raw_events.csv", rows);
+          }}>Download raw events</button>
+        </>}
+      </div>
+    }>
       <p style={{marginTop:-8, color:"#64748b"}}>
         Last updated: <b>{lastSynced || "—"}</b>. Rule: first two transactions per Wed→Tue week are free, then $5 each.
       </p>
       {!report && <p style={{color:"#64748b"}}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
+
+      {report && (
+        <div className="dues-grid dues-tight">
+          <div className="dues-left">
+            <div className="card" style={{padding:12}}>
+              <h3 style={{marginTop:0}}>League Owner Dues</h3>
+              <table style={{width:"100%", borderCollapse:"collapse"}}>
+                <thead>
+                  <tr>
+                    <th style={th}>Team</th>
+                    <th style={th}>Adds</th>
+                    <th style={th}>Owes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.totalsRows.map(r=>(
+                    <tr key={r.name}>
+                      <td style={td}>{r.name}</td>
+                      <td style={td}>{r.adds}</td>
+                      <td style={td}>${r.owes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <BuyInTracker
+              isAdmin={isAdmin}
+              members={members}
+              seasonYear={seasonYear}
+              buyins={buyins}
+              updateBuyins={updateBuyins}
+            />
+          </div>
+
+          <div className="card dues-week" style={{padding:12, minWidth:0}}>
+            <h3 style={{marginTop:0}}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
+            {report.weekRows.map(w=>(
+              <div key={w.week} style={{marginBottom:12}}>
+                <div style={{fontWeight:600, margin:"6px 0"}}>Week {w.week} — {w.range}</div>
+                <table style={{width:"100%", borderCollapse:"collapse"}}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Team</th>
+                      <th style={th}>Adds</th>
+                      <th style={th}>Owes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {w.entries.map(e=>(
+                      <tr key={e.name}>
+                        <td style={{...td, whiteSpace:"normal"}}>{e.name}</td>
+                        <td style={td}>{e.count}</td>
+                        <td style={td}>${e.owes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
 
-function TransactionsView({ report }) {
+function BuyInTracker({ isAdmin, members, seasonYear, buyins, updateBuyins }) {
+  const BUYIN = 200;
+  const displayYear = new Date().getFullYear();
+  const seasonKey = String(seasonYear);
+  const cur = buyins[seasonKey] || { paid: {}, hidden: false, venmoLink: "", zelleEmail: "", venmoQR: "" };
+
+  const patch = (p) => updateBuyins(seasonKey, { ...cur, ...p });
+  const togglePaid = (id) => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
+  const markAll = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
+  const resetAll = () => patch({ paid: {} });
+
+  const paidCount = members.filter(m => cur.paid[m.id]).length;
+  const allPaid = members.length > 0 && paidCount === members.length;
+
+  if (cur.hidden && !isAdmin) return null;
+
+  const [venmo, setVenmo] = useState(cur.venmoLink || "");
+  const [zelle, setZelle] = useState(cur.zelleEmail || "");
+  useEffect(() => { setVenmo(cur.venmoLink || ""); setZelle(cur.zelleEmail || ""); }, [seasonKey, cur]);
+
+  const saveMeta = () => patch({ venmoLink: venmo.trim(), zelleEmail: zelle.trim() });
+
+  const onUploadQR = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => patch({ venmoQR: r.result || "" });
+    r.readAsDataURL(f);
+  };
+
+  const copyZelle = async () => {
+    const email = (cur.zelleEmail || "").trim();
+    if (!email) return alert("No Zelle email set yet.");
+    try { 
+      await navigator.clipboard.writeText(email); 
+      alert("Zelle username/email copied to clipboard! Paste into your Zelle app to Pay via Zelle!"); 
+    } catch { 
+      alert("Could not copy. Long-press / right-click to copy instead: " + email); 
+    }
+  };
+
   return (
-    <Section title="Transactions">
-      <p style={{color:"#64748b"}}>No snapshot yet — go to <b>Dues</b> and refresh snapshot.</p>
+    <div className="card" style={{ padding:16, marginTop:16 }}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8}}>
+        <h3 style={{marginTop:0}}>${BUYIN} Season Buy-In — {displayYear}</h3>
+        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+          <span className="badge">{paidCount} / {members.length} paid</span>
+          {isAdmin && (
+            cur.hidden
+              ? <button className="btn" onClick={()=>patch({hidden:false})}>Show tracker</button>
+              : allPaid
+                ? <button className="btn" onClick={()=>patch({hidden:true})}>Hide (all paid)</button>
+                : null
+          )}
+        </div>
+      </div>
+
+      {members.length === 0 && (
+        <p style={{color:"#64748b", marginTop:0}}>
+          No members yet. Import teams in <b>League Settings</b> first.
+        </p>
+      )}
+
+      {members.length > 0 && (
+        <div className="grid" style={{gridTemplateColumns:"1fr", gap:16}}>
+          <div className="card" style={{ padding:12, background:"#f8fafc" }}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
+              <strong>Buy-In Paid Checklist ✅</strong>
+              {isAdmin && (
+                <div style={{display:"flex", gap:8}}>
+                  <button className="btn" onClick={markAll}>Mark all paid</button>
+                  <button className="btn" onClick={resetAll}>Reset</button>
+                </div>
+              )}
+            </div>
+            <ul style={{listStyle:"none", padding:0, margin:0}}>
+              {[...members].sort((a,b)=>a.name.localeCompare(b.name)).map(m => (
+                <li key={m.id} style={{display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid #e2e8f0"}}>
+                  <input
+                    type="checkbox"
+                    checked={!!cur.paid[m.id]}
+                    onChange={()=> isAdmin && togglePaid(m.id)}
+                    disabled={!isAdmin}
+                  />
+                  <span style={{textDecoration: cur.paid[m.id] ? "line-through" : "none"}}>{m.name}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="card buyin-pay" style={{ padding:12 }}>
+            <h4 style={{marginTop:0}}>Pay Dues</h4>
+            <div style={{display:"flex", flexDirection:"column", gap:8}}>
+              {cur.venmoLink && (
+                <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">Pay with Venmo</a>
+              )}
+              {cur.zelleEmail && (
+                <button type="button" className="btn" onClick={copyZelle}>Pay with Zelle</button>
+              )}
+            </div>
+            {(cur.venmoQR || cur.venmoLink || cur.zelleEmail) && (
+              <div style={{marginTop:8}}>
+                <a href={cur.venmoLink || `mailto:${encodeURIComponent(cur.zelleEmail)}`} target="_blank" rel="noreferrer" title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}>
+                  {cur.venmoQR && <img src={cur.venmoQR} alt="Venmo QR"/>}
+                </a>
+              </div>
+            )}
+            {isAdmin && (
+              <>
+                <div className="grid" style={{gridTemplateColumns:"1fr", gap:8, marginTop:8}}>
+                  <input className="input" placeholder="https://venmo.com/u/YourHandle" value={venmo} onChange={e=>setVenmo(e.target.value)}/>
+                  <input className="input" placeholder="Zelle email" value={zelle} onChange={e=>setZelle(e.target.value)}/>
+                </div>
+                <div style={{display:"flex", gap:8, alignItems:"center", marginTop:8, flexWrap:"wrap"}}>
+                  <input type="file" accept="image/*" onChange={onUploadQR}/>
+                  {cur.venmoQR && <button className="btn" onClick={()=>patch({venmoQR:""})}>Remove QR</button>}
+                  <button className="btn primary" onClick={saveMeta}>Save links</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TransactionsView({ report }){
+  if (!report) {
+    return (
+      <Section title="Transactions">
+        <p style={{color:"#64748b"}}>No snapshot yet — go to <b>Dues</b> and click <b>Refresh Snapshot</b> (or have the commissioner update it).</p>
+      </Section>
+    );
+  }
+
+  const SHOW_METHOD_COLUMN = false;
+  const METHOD_FOR_ADDS_ONLY = true;
+
+  const all = (report.rawMoves || report.rawAdds || []).map(r => ({
+  ...r,
+  week: Math.max(1, Number(r.week) || 1)
+}));
+
+  const teams = Array.from(new Set(all.map(r => r.team))).sort();
+
+  const [team, setTeam] = useState("");
+  const [method, setMethod] = useState(""); // WAIVER / FA
+  const [action, setAction] = useState(""); // ADD / DROP
+  const [q, setQ] = useState("");
+
+  const filtered = all.filter(r =>
+    (!team || r.team === team) &&
+    (!action || r.action === action) &&
+    (!method || r.method === method) &&
+    (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
+  );
+
+  const weeksSorted = Array.from(new Set(filtered.map(r => Math.max(1, Number(r.week) || 1))))
+  .sort((a, b) => a - b);
+
+const rangeByWeek = {};
+for (const r of filtered) {
+  const w = Math.max(1, Number(r.week) || 1);
+  if (!rangeByWeek[w]) rangeByWeek[w] = r.range;
+}
+
+const byWeek = new Map();
+for (const r of filtered) {
+  const w = Math.max(1, Number(r.week) || 1);
+  if (!byWeek.has(w)) byWeek.set(w, []);
+  byWeek.get(w).push({ ...r, week: w });
+}
+
+  const [openWeeks, setOpenWeeks] = useState(() => new Set(weeksSorted));
+  useEffect(() => { setOpenWeeks(new Set(weeksSorted)); }, [q, team, method, action]);
+  const toggleWeek = (w)=> setOpenWeeks(s => { const n=new Set(s); n.has(w)?n.delete(w):n.add(w); return n; });
+
+  return (
+    <Section title="Transactions" actions={
+      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+        <select className="input" value={team} onChange={e=>setTeam(e.target.value)}>
+          <option value="">All teams</option>
+          {teams.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select className="input" value={action} onChange={e=>setAction(e.target.value)}>
+          <option value="">All actions</option>
+          <option value="ADD">ADD</option>
+          <option value="DROP">DROP</option>
+        </select>
+        <select className="input" value={method} onChange={e=>setMethod(e.target.value)}>
+          <option value="">All methods</option>
+          <option value="WAIVER">WAIVER</option>
+          <option value="FA">FA</option>
+        </select>
+        <input className="input" placeholder="Search player/team…" value={q} onChange={e=>setQ(e.target.value)} />
+        <button className="btn" style={btnSec} onClick={()=>setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
+        <button className="btn" style={btnSec} onClick={()=>setOpenWeeks(new Set())}>Collapse all</button>
+        <button className="btn" style={btnSec} onClick={()=>{
+          const rows=[["Date (PT)","Week","Range","Team","Player","Action", ...(SHOW_METHOD_COLUMN?["Method"]:[]), "Source","PlayerId"]];
+          filtered.forEach(r=> rows.push([
+            r.date, r.week, r.range, r.team, r.player, r.action,
+            ...(SHOW_METHOD_COLUMN ? [ (METHOD_FOR_ADDS_ONLY && r.action==="DROP") ? "" : r.method ] : []),
+            r.source, r.playerId
+          ]));
+          downloadCSV("transactions_filtered.csv", rows);
+        }}>Download CSV (filtered)</button>
+      </div>
+    }>
+      {weeksSorted.length === 0 && (
+        <p style={{color:"#64748b"}}>No transactions match your filters.</p>
+      )}
+
+      {weeksSorted.map(week => {
+        const rows = byWeek.get(week) || [];
+        const open = openWeeks.has(week);
+        return (
+          <div key={week} className="card" style={{padding:12, marginBottom:12}}>
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer"}}
+                 onClick={()=>toggleWeek(week)}>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                <span style={{fontWeight:700}}>Week {week}</span>
+                <span style={{color:"#64748b"}}>{rangeByWeek[week] || ""}</span>
+              </div>
+              <span style={{color:"#64748b"}}>{open ? "Hide ▲" : "Show ▼"}</span>
+            </div>
+            {open && (
+              <div style={{marginTop:8, overflowX:"auto"}}>
+                <table style={{width:"100%", borderCollapse:"collapse"}}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Date (PT)</th>
+                      <th style={th}>Team</th>
+                      <th style={th}>Player</th>
+                      <th style={th}>Action</th>
+                      {SHOW_METHOD_COLUMN && <th style={th}>Method</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r,i)=>(
+                      <tr key={i}>
+                        <td style={td}>{r.date}</td>
+                        <td style={td}>{r.team}</td>
+                        <td style={{ ...td, color: r.action==="ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                          {r.player || (r.playerId ? `#${r.playerId}` : "—")}
+                        </td>
+                        <td style={td}>{r.action}</td>
+                        {SHOW_METHOD_COLUMN && (
+                          <td style={td}>
+                            {(METHOD_FOR_ADDS_ONLY && r.action === "DROP") ? "" : (r.method || "")}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    {rows.length===0 && (
+                      <tr><td style={td} colSpan={SHOW_METHOD_COLUMN ? 5 : 4}>&nbsp;No transactions in this week.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </Section>
   );
 }

@@ -1,170 +1,51 @@
-﻿:root{
-  --brand-primary:#00e887;
-  --brand-accent:#46a0ff;
-  --brand-secondary:#0b1220;
-  --bg:#f6f8fb; --ink:#0b1220; --panel:#ffffff; --border:#e5e7eb;
-}
-*{ box-sizing:border-box; }
-body{ margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; background:var(--bg); color:var(--ink);}
-.container{ max-width:1200px; margin:0 auto; padding:24px; }
-.card{ background:var(--panel); border:1px solid var(--border); border-radius:20px; }
-.sidebar{ background:var(--brand-secondary); color:#fff }
-.brand{ display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:.2px; }
-.brand span{ color:var(--brand-primary) }
-.btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:8px 12px; border-radius:12px; border:1px solid #cbd5e1; background:var(--brand-secondary); color:#fff; cursor:pointer }
-.btn.secondary{ background:#fff; color:var(--brand-secondary) }
-.btn.primary{ background:var(--brand-accent); color:#fff; border-color:transparent }
-.input{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid #cbd5e1; background:#fff }
-.grid{ display:grid; gap:16px }
-.prose h2{ margin:6px 0; font-size:18px } .prose ul{ margin:6px 0; padding-left:20px }
-.badge{ display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:999px; background:rgba(70,160,255,.12); color:var(--brand-accent); }
+﻿/* Add this CSS to fix the Dues page mobile layout */
 
-:root{
-  --bg:#f8fafc;            /* page background */
-  --surface:#ffffff;       /* cards */
-  --ink:#0f172a;           /* primary text */
-  --muted:#64748b;         /* secondary text */
-  --primary:#1e3a8a;       /* deep blue */
-  --primary-600:#1d4ed8;   /* link/button hover */
-  --accent:#60a5fa;        /* light blue accent */
+.dues-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
 }
 
-body{ background:var(--bg); color:var(--ink); }
-
-.container{ max-width:1100px; margin:28px auto; padding:0 16px; }
-.card{ background:var(--surface); border:1px solid #e5e7eb; border-radius:16px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
-.sidebar{ background:#0f172a; color:#e2e8f0; border-right:1px solid rgba(255,255,255,.06); }
-.sidebar .brand{ display:flex; align-items:center; gap:10px; font-weight:700; margin-bottom:10px; }
-.sidebar .brand span{ color:#93c5fd; }
-
-/* App shell responsive grid */
-.app-shell{ display:grid; grid-template-columns:280px 1fr; }
-@media (max-width: 900px){
-  .app-shell{ grid-template-columns:1fr; }
-  .sidebar{ border-bottom:1px solid rgba(255,255,255,.08); }
+/* Desktop: 50-50 split */
+@media (min-width: 768px) {
+  .dues-grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
-/* Buttons / inputs */
-.btn{ border:1px solid #e5e7eb; padding:8px 12px; border-radius:10px; background:#fff; cursor:pointer; }
-.btn.primary{ background:var(--primary); color:#fff; border-color:transparent; }
-.btn.primary:hover{ background:var(--primary-600); }
-.btn.secondary{ background:#eef2ff; color:#0b2a6f; border-color:#c7d2fe; }
-.input{ width:100%; border:1px solid #e5e7eb; padding:10px 12px; border-radius:10px; }
-.grid{ display:grid; gap:16px; }
-.badge{ padding:4px 8px; background:#eef2ff; border:1px solid #c7d2fe; color:#0b2a6f; border-radius:999px; font-size:12px; }
-
-/* Fullscreen splash logo */
-.splash{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
-  background:#0f172a; z-index:9999; animation:blitzFade 3.2s ease forwards; }
-.splash svg{ width:96vmin; height:auto; animation:pop .9s ease both; } /* ~100% of the short side */
-@keyframes blitzFade { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0; visibility:hidden} }
-@keyframes pop { 0%{ transform:scale(.85); filter:blur(2px); } 100%{ transform:scale(1); filter:blur(0); } }
-
-/* Smaller cards stack nicely on phones */
-@media (max-width: 760px){
-  .grid[style*="grid-template-columns:1fr 1fr"]{ grid-template-columns:1fr !important; }
+.dues-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-/* Sidebar brand stacked + centered */
-.sidebar .brand{
-  display:flex; flex-direction:column; align-items:center; gap:8px; margin-bottom:14px;
-}
-.sidebar .brand-title{
-  text-align:center; line-height:1.2; font-weight:700;
-}
-.sidebar .brand-title span{ color:#93c5fd; }
-
-
-/* Button safety net: readable defaults everywhere */
-button { color: var(--ink); }
-
-/* Our themed buttons */
-.btn { background:#fff; color:var(--ink); border:1px solid #e5e7eb; }
-.btn.primary { background: var(--primary); color:#fff; border-color:transparent; }
-.btn.secondary { background:#eef2ff; color:#0b2a6f; border-color:#c7d2fe; }
-
-.sidebar button:hover {
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.12);
+.dues-week {
+  /* Force the By Week table to stay in right column on mobile */
+  min-width: 0; /* Allows content to shrink */
 }
 
-/* Base link pill */
-.sidebar .navlink {
-  border: 1px solid rgba(255,255,255,0.12);
-  background: transparent;
-  transition: background 150ms ease, border-color 150ms ease;
-  font-size: 14px;            /* <- optional: smaller menu text */
-}
-
-/* Hover */
-.sidebar .navlink:hover {
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.18);
-}
-
-/* ACTIVE (current page) — baby blue */
-.sidebar .navlink.nav-active {
-  background: rgba(56,189,248,0.20);     /* ~#38bdf8 at 20% */
-  border-color: rgba(56,189,248,0.55);
-  color: #eaf6ff;
-}
-
-.sidebar .btn-commish {
-  background:#0ea5e9; color:#fff; border-color:transparent;
-}
-.sidebar .btn-commish:hover {
-  background:#0284c7;            /* darker on hover */
-}
-
-
-/* === Dues page layout: 2 equal columns === */
-.dues-grid{
-  display:grid;
-  grid-template-columns: minmax(0,1fr) minmax(0,1fr); /* 50/50 and allow shrink */
-  gap:16px;
-  align-items:start;
-}
-
-.dues-left, .dues-week{ min-width:0; } /* let both columns shrink instead of forcing overflow */
-
-/* Right column must *not* be fixed-width. Wipe any old widths. */
-.dues-week{
-  width:auto !important;
-  max-width:none !important;
-  overflow-x:auto;
-}
-
-/* Slightly tighter typography so more fits */
-.dues-tight h3{ font-size:18px; }
-.dues-tight table{ font-size:14px; }
-.dues-tight th, .dues-tight td{ padding:6px 8px; }
-
-/* Mobile: stack left over right */
-@media (max-width: 980px){
-  .dues-grid{ grid-template-columns: 1fr; }
-}
-
-
-/* Buy-in tracker: slim Pay Dues card */
-.buyin-pay{
-  max-width: 260px;                 /* keeps it skinny */
-}
-
-.buyin-pay .btn{
-  width:100%;                       /* full-width buttons */
-  justify-content:center;
-}
-
-.buyin-pay img{
-  max-width:200px;
-  border-radius:12px;
-  border:1px solid #e5e7eb;
-  display:block;
-}
-
-/* Keep the sidebar on the left even on small screens */
-@media (max-width: 900px){
-  .app-shell{
-    grid-template-columns: 220px minmax(0,1fr); /* narrower sidebar to fit phones */
+/* Mobile: Keep By Week tables in right position */
+@media (max-width: 767px) {
+  .dues-grid.dues-tight {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* Force 50-50 even on mobile */
+    gap: 8px;
+  }
+  
+  .dues-left {
+    min-width: 0;
+  }
+  
+  .dues-week {
+    min-width: 0;
+    font-size: 0.875rem; /* Slightly smaller text on mobile */
+  }
+  
+  .dues-week h3 {
+    font-size: 1rem;
+  }
+  
+  .dues-week table {
+    font-size: 0.8rem;
   }
 }

@@ -20,6 +20,44 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
+// ===== ENHANCED LOGGING SYSTEM =====
+class ProcessLogger {
+  constructor() {
+    this.logs = [];
+    this.stats = {
+      totalRawTransactions: 0,
+      transactionsBySource: {},
+      transactionsBySP: {},
+      filteredOut: { dedup: 0, verification: 0, finalDedup: 0 },
+      errors: []
+    };
+  }
+  log(level, message, data = {}) {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      data: JSON.stringify(data, null, 2)
+    };
+    this.logs.push(entry);
+    console.log(`[${level.toUpperCase()}] ${message}`, data);
+  }
+  error(message, error, data = {}) {
+    const errorEntry = {
+      message,
+      error: error?.message || String(error),
+      stack: error?.stack,
+      data
+    };
+    this.stats.errors.push(errorEntry);
+    this.log('ERROR', message, errorEntry);
+  }
+  info(message, data = {}) { this.log('INFO', message, data); }
+  debug(message, data = {}) { this.log('DEBUG', message, data); }
+  getFullLog() { return { stats: this.stats, logs: this.logs, totalLogs: this.logs.length }; }
+}
+
+
 
 
 
@@ -157,11 +195,37 @@ async function writeJson(name, obj) {
   await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
 }
 
+
 /* =========================
-   Time helpers (Wed→Tue league week)
+   Time helpers (Wed→Tue league week) — robust PT conversion
    ========================= */
-function toPT(d) { return new Date(d.toLocaleString("en-US", { timeZone: LEAGUE_TZ })); }
-function fmtPT(d) { return toPT(d).toLocaleString(); }
+const dtfPT = new Intl.DateTimeFormat("en-US", {
+  timeZone: LEAGUE_TZ,               // "America/Los_Angeles"
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+/** Return a Date whose clock reflects PT (no locale string parsing). */
+function toPT(dateLike) {
+  const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  const parts = Object.fromEntries(dtfPT.formatToParts(d).map(p => [p.type, p.value]));
+  // Build a UTC timestamp that represents the PT wall clock time.
+  return new Date(Date.UTC(
+    +parts.year, +parts.month - 1, +parts.day,
+    +parts.hour, +parts.minute, +parts.second
+  ));
+}
+
+/** Pretty-print a timestamp in PT for labels/debug. */
+function fmtPT(dateLike) {
+  return new Date(dateLike).toLocaleString("en-US", { timeZone: LEAGUE_TZ });
+}
+
 
 const WEEK_START_DAY = 3; // Wednesday
 function startOfLeagueWeekPT(date){
@@ -247,63 +311,106 @@ const BROWSER_HEADERS = {
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
   "Origin": "https://fantasy.espn.com",
-  "Referer": "https://fantasy.espn.com/",
+  // A referer that looks like a human browsing your league helps avoid bot pages:
+  "Referer": "https://fantasy.espn.com/football/team",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
 };
 
-async function tryFetchJSON(url, requireCookie, req) {
+// Robust fetch that retries when ESPN sends HTML / bot pages / 429s.
+async function fetchJSONWithRetry(url, { requireCookie, req, label, logger }) {
   const headers = { ...BROWSER_HEADERS };
   if (requireCookie) {
     const ck = buildCookie(req);
-    if (ck) headers.Cookie = ck;
+    if (ck) { headers.Cookie = ck; logger?.debug(`Cookie attached for ${label}`, { len: ck.length }); }
+    else { logger?.error(`Missing cookie for ${label}`); }
   }
-  const r = await fetch(url, { headers });
-  const text = await r.text();
-  try { return { ok:true, json: JSON.parse(text), status: r.status }; }
-  catch {
-    return {
-      ok:false, status: r.status,
-      snippet: text.slice(0,200).replace(/\s+/g," "),
-      ct: r.headers.get("content-type") || ""
-    };
+
+  let lastErr = "";
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      logger?.debug(`HTTP attempt ${attempt} → ${label}`, { url });
+      const res = await fetch(url, { headers });
+      const ct  = res.headers.get("content-type") || "";
+      const txt = await res.text();
+
+      logger?.debug(`Response ${res.status} for ${label}`, { ct, bodyLen: txt.length, attempt });
+
+      if (ct.includes("application/json")) {
+        try { return JSON.parse(txt); }
+        catch (e) {
+          lastErr = `JSON parse failed: ${e?.message || e}`;
+          logger?.error(`Parse failed for ${label}`, e, { preview: txt.slice(0, 200) });
+        }
+      } else {
+        lastErr = `status ${res.status}, ct ${ct}, body: ${txt.slice(0,160).replace(/\s+/g," ")}`;
+        logger?.error(`Non-JSON for ${label}`, { status: res.status, ct, preview: txt.slice(0, 200) });
+      }
+
+      // backoff + jitter
+      await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt) + Math.random() * 1000));
+    } catch (e) {
+      lastErr = `Network error: ${e?.message || e}`;
+      logger?.error(`Network error for ${label}`, e, { attempt });
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
   }
+  const err = new Error(`ESPN non-JSON for ${label}: ${lastErr}`);
+  logger?.error(`All attempts failed for ${label}`, err);
+  throw err;
 }
 
-async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false }) {
+async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false, logger }) {
   if (!leagueId || !seasonId || !view) throw new Error("Missing leagueId/seasonId/view");
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
   const bust = `&_=${Date.now()}`;
-  const viewEnc = encodeURIComponent(view);
+  const v = encodeURIComponent(view);
 
-  // Public-friendly → lm-api-reads → site.web fallback
   const urls = [
-    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
-    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
-    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`
+    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
+    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
+    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`
   ];
 
   let last = null;
-  for (const url of urls) {
-    const res = await tryFetchJSON(url, requireCookie, req);
-    if (res.ok) return res.json;
-    last = res;
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      logger?.debug(`Trying ESPN URL ${i+1}/${urls.length} for ${view}`, { url: urls[i].split("?")[0], sp: scoringPeriodId ?? null });
+      const json = await fetchJSONWithRetry(urls[i], { requireCookie, req, label: `${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}`, logger });
+      logger?.debug(`Success with URL ${i+1} for ${view}`);
+      return json;
+    } catch (e) {
+      last = e; logger?.debug(`URL ${i+1} failed for ${view}`, { error: e.message });
+      await new Promise(r => setTimeout(r, 200));
+    }
   }
-  throw new Error(
-    `ESPN returned non-JSON for ${view}${scoringPeriodId?` (SP ${scoringPeriodId})`:""}. ` +
-    `Status ${last?.status||"?"}, ct ${last?.ct||"?"}. Snippet: ${last?.snippet||""}`
-  );
+  const err = new Error(last?.message || "Unknown ESPN error");
+  logger?.error(`All ESPN URLs failed for ${view}`, err);
+  throw err;
 }
 
 /* Pass-through endpoint used by the UI (set ?auth=1 to force cookies) */
 app.get("/api/espn", async (req, res) => {
+  const logger = new ProcessLogger();
   try {
-    const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
+    const { leagueId, seasonId, view, scoringPeriodId, auth, debug } = req.query;
+    logger.info("ESPN proxy request", { leagueId, seasonId, view, scoringPeriodId, auth });
+
     const json = await espnFetch({
       leagueId, seasonId, view, scoringPeriodId, req,
-      requireCookie: auth === "1"
+      requireCookie: auth === "1",
+      logger
     });
+
+    if (debug === "1") {
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      await fs.writeFile(path.join(DATA_DIR, "last-espn-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
+      return res.json({ _debugFile: "data/last-espn-log.json", data: json });
+    }
+
     res.json(json);
   } catch (e) {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(path.join(DATA_DIR, "last-espn-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
     res.status(502).send(String(e.message || e));
   }
 });
@@ -405,6 +512,8 @@ app.post("/api/polls/close", async (req, res) => {
 /* =========================
    Official Snapshot (commissioner builds once; league reads)
    ========================= */
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
@@ -424,8 +533,20 @@ function inferMethod(typeStr, typeNum, t, it){
   if (isWithinWaiverWindowPT(ts)) return "WAIVER";
   return "FA";
 }
-const pickPlayerId   = (it)=> it?.playerId ?? it?.playerPoolEntry?.player?.id ?? it?.entityId ?? null;
-const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
+const pickPlayerId   = (it)=> it?.playerId
+ ?? it?.playerPoolEntry?.player?.id
+  ?? it?.player?.id
+  ?? it?.athleteId
+?? it?.entityId 
+?? null;
+
+
+const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName 
+|| it?.player?.fullName 
+|| it?.athlete?.fullName
+|| t?.playerPoolEntry?.player?.fullName 
+|| t?.player?.fullName 
+|| null;
 
 function extractMoves(json, src="tx"){
   const rows =
@@ -503,64 +624,157 @@ function dedupeMoves(events){
   }
   return out;
 }
-async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
+// Build a full list of moves from all sources across scoring periods
+async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25, onProgress, logger }) {
   const all = [];
-  for (let sp=1; sp<=maxSp; sp++){
-onProgress?.(sp, maxSp, "Reading ESPN activity…");
-    try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"tx")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"recent")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMovesFromComm(j)); } catch {}
-  }
-  return all.map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
-            .sort((a,b)=> a.date - b.date);
-}
-async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress }){
-  const series = [];
-  for (let sp=1; sp<=maxSp; sp++){
-onProgress?.(sp, maxSp, "Building roster timeline…");
+
+  for (let sp = 1; sp <= maxSp; sp++) {
+    onProgress?.(sp, maxSp, "Reading ESPN activity…");
+
+    const before = all.length;
+
+    // --- First pass (cookie = true) ---
     try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
-      const byTeam = {};
-      for (const t of (r?.teams || [])) {
-        const set = new Set();
-        for (const e of (t.roster?.entries || [])) {
-          const pid = e.playerPoolEntry?.player?.id;
-          if (pid) set.add(pid);
-        }
-        byTeam[t.id] = set;
-      }
-      series[sp] = byTeam;
-    } catch { series[sp] = {}; }
+      const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true, logger });
+      all.push(...extractMoves(j, "tx"));
+    } catch {}
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true, logger });
+      all.push(...extractMoves(j, "recent"));
+    } catch {}
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true, logger });
+      all.push(...extractMovesFromComm(j));
+    } catch {}
+
+    // small pause between weeks
+    await sleep(120 + Math.floor(Math.random() * 120));
+
+    // If this week looks “thin”, try a rescue pass with cookie = false.
+    // (On some Render IPs, cookie-auth can trigger anti-bot; the no-cookie
+    // site endpoints sometimes succeed for the same week.)
+    const addedFirstPass = all.length - before;
+    if (addedFirstPass < 6) { // tweak threshold if you like
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: false, logger });
+        all.push(...extractMoves(j, "tx"));
+      } catch {}
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: false, logger });
+        all.push(...extractMoves(j, "recent"));
+      } catch {}
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: false, logger });
+        all.push(...extractMovesFromComm(j));
+      } catch {}
+
+      await sleep(220);
+    }
   }
+
+  return all
+    .map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
+    .sort((a, b) => a.date - b.date);
+}
+
+
+async function fetchRosterSeries({ leagueId, seasonId, req, maxSp = 25, onProgress, logger }) {
+  const series = [];
+  let lastGood = {}; // carry-forward fallback if a week fails
+
+  for (let sp = 1; sp <= maxSp; sp++) {
+    onProgress?.(sp, maxSp, "Building roster timeline…");
+
+    // up to 3 tries: vanilla → cookie → cookie (with small backoff)
+    let attempt = 0, done = false;
+    while (!done && attempt < 3) {
+      attempt++;
+      try {
+        const r = await espnFetch({
+          leagueId, seasonId, view: "mRoster", scoringPeriodId: sp, req, logger, 
+          requireCookie: attempt > 1 // try cookie on retries
+        });
+
+        const byTeam = {};
+        for (const t of (r?.teams || [])) {
+          const set = new Set();
+          for (const e of (t?.roster?.entries || [])) {
+            const pid = e?.playerPoolEntry?.player?.id;
+            if (pid) set.add(pid);
+          }
+          byTeam[t.id] = set;
+        }
+
+        if (Object.keys(byTeam).length > 0) {
+          series[sp] = byTeam;
+          lastGood = byTeam; // remember last good snapshot
+        } else {
+          // API returned no teams — use previous good snapshot
+          series[sp] = lastGood;
+        }
+        done = true;
+      } catch {
+        // small backoff before next attempt
+        await new Promise(r => setTimeout(r, 400 + attempt * 250));
+        if (attempt >= 3) {
+          // still failing — use last good snapshot so we don't drop moves
+          series[sp] = lastGood;
+          done = true;
+        }
+
+  await sleep(150);
+
+      }
+    }
+  }
+
   return series;
 }
+
+
 const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]?.[teamId]?.has(playerId));
 const spFromDate = (dateLike, seasonYear)=> Math.max(1, Math.min(25, (leagueWeekOf(new Date(dateLike), seasonYear).week || 1)));
-function isGenuineAddBySeries(row, series, seasonYear){
+
+
+function isGenuineAddBySeries(row, series, seasonYear) {
+  // If we don't know the player, let it count (cannot verify)
+  if (!row.playerId) return true;
+
+  // Only verify WAIVER adds. FA adds can be added/dropped same week and should still count.
+  if (String(row.method).toUpperCase() !== "WAIVER") return true;
+
+  const sp = spFromDate(row.date, seasonYear);  // 1..25
+  const teamId = Number(row.teamIdRaw ?? row.teamId); // <- numeric!
+
+  const before = Math.max(1, sp - 1);
+  const later  = [sp, sp + 1, sp + 2].filter(n => n < series.length);
+
+  const wasBefore    = isOnRoster(series, before, teamId, row.playerId);
+  const appearsLater = later.some(n => isOnRoster(series, teamId, row.playerId));
+
+  return !wasBefore && appearsLater;
+}
+
+
+function isExecutedDropBySeries(row, series, seasonYear){
+  // If the transaction JSON didn’t carry a playerId (common on site.web.api),
+  // assume the drop was executed rather than silently discarding it.
   if (!row.playerId) return true;
   const sp = spFromDate(row.date, seasonYear);
   const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
+  // look ahead a touch more so re-adds in the same/later week don’t erase the drop
+  const later = [sp, sp+1, sp+2, sp+3].filter(n=> n < series.length);
   const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
-  return !wasBefore && appearsLater;
-}
-function isExecutedDropBySeries(row, series, seasonYear){
-  if (!row.playerId) return false;
-  const sp = spFromDate(row.date, seasonYear);
-  const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
+  const appearsLater = later.some(n => isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return wasBefore && !appearsLater;
 }
-async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
+async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress, logger }){
   const need = new Set((ids||[]).filter(Boolean));
   const map = {}; if (need.size===0) return map;
   for (let sp=1; sp<=maxSp; sp++){
 onProgress?.(sp, maxSp, "Resolving player names…");
     try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
+      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false, logger });
       for (const t of (r?.teams||[])) {
         for (const e of (t.roster?.entries||[])) {
           const p = e.playerPoolEntry?.player;
@@ -570,13 +784,17 @@ onProgress?.(sp, maxSp, "Resolving player names…");
       }
       if (need.size===0) break;
     } catch {}
+
+  await sleep(150);
+
+
   }
   return map;
 }
 
 async function buildOfficialReport({ leagueId, seasonId, req }){
   // Team names — public in most leagues
-  const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
+  const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false, logger });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
   // All raw moves from three sources (cookie-required)
@@ -585,25 +803,64 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   // Roster series (public) to verify executed adds/drops and get names later
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
 
-  // Dedup → annotate
-  const deduped = dedupeMoves(all).map(e => ({
-    ...e,
-    teamIdRaw: e.teamId,
-    team: idToName[e.teamId] || `Team ${e.teamId}`,
-    player: e.playerName || null
-  }));
+ // Dedup → annotate (make teamIdRaw a Number!)
+const deduped = dedupeMoves(all).map(e => ({
+  ...e,
+  teamIdRaw: Number(e.teamId),
+  team: idToName[e.teamId] || `Team ${e.teamId}`,
+  player: e.playerName || null
+}));
 
-  // Keep executed events only
-  const adds  = deduped.filter(r => r.action === "ADD"  && isGenuineAddBySeries(r, series, seasonId));
-  const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
 
-  // Backfill missing player names via roster snapshots
-  const needIds = [...new Set([...adds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
-  const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
-  for (const r of [...adds, ...drops]) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
+// Verify against roster snapshots to keep only *winning* waiver adds and *executed* drops.
+const verified = [];
+for (const r of deduped) {
+  if (r.action === "ADD") {
+  // If we don't know the player, skip — we can't prove it was a winning add.
+  if (!r.playerId) continue;
+
+  const sp  = spFromDate(r.date, seasonId);
+  const tid = r.teamIdRaw;
+
+  // must NOT be on the roster the week before (avoid counting bids / no-ops)
+  const wasBefore =
+    isOnRoster(series, Math.max(1, sp - 1), tid, r.playerId);
+
+  // MUST appear soon after (handles waiver posting lag)
+  const appears =
+    isOnRoster(series, sp,   tid, r.playerId) ||
+    isOnRoster(series, sp+1, tid, r.playerId) ||
+    isOnRoster(series, sp+2, tid, r.playerId);
+
+  if (!wasBefore && appears) verified.push(r);
+}
+
+ else if (r.action === "DROP") {
+    // Only count executed drops (player was on the roster before, and gone after).
+    if (!r.playerId) continue;
+
+    const sp  = spFromDate(r.date, seasonId);
+    const tid = r.teamIdRaw;
+
+    const wasBefore =
+      isOnRoster(series, Math.max(1, sp-1), tid, r.playerId) ||
+      isOnRoster(series, sp,              tid, r.playerId);
+
+    const appearsLater =
+      isOnRoster(series, sp+1, tid, r.playerId) ||
+      isOnRoster(series, sp+2, tid, r.playerId);
+
+    if (wasBefore && !appearsLater) verified.push(r);
+  }
+}
+
+// Backfill missing player names for verified events
+const needIds = [...new Set(verified.map(r => r.player ? null : r.playerId).filter(Boolean))];
+const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
+for (const r of verified) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
 
 // Flatten for UI — definitive week math (avoids off-by-one) + de-dupe repeated DROPs
-let rawMoves = [...adds, ...drops].map(r => {
+let rawMoves = verified.map(r => {
   const wb = weekBucketPT(r.date, seasonId);
   return {
     date: fmtPT(r.date),
@@ -619,8 +876,7 @@ let rawMoves = [...adds, ...drops].map(r => {
   };
 }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
 
-// Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
-// unless there was an ADD for that player by that team in between.
+// Collapse duplicate DROP lines (same as before)
 const DEDUPE_WINDOW_MS = 3 * 60 * 1000;
 const dedupedMoves = [];
 const lastByKey = new Map(); // key -> {action, ts}
@@ -631,12 +887,10 @@ for (const m of rawMoves) {
   if (m.action === "DROP") {
     const prev = lastByKey.get(key);
     if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) {
-      // Same team dropped same player at the same moment: skip duplicate
       continue;
     }
     lastByKey.set(key, { action: "DROP", ts: m.ts });
   } else if (m.action === "ADD") {
-    // If the team re-ADDs, we reset the chain so a later DROP will show again
     lastByKey.set(key, { action: "ADD", ts: m.ts });
   }
 
@@ -646,7 +900,10 @@ for (const m of rawMoves) {
 // Replace rawMoves with the cleaned list (and strip helper field)
 rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
 
-  
+// Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
+// unless there was an ADD for that player by that team in between.
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   // Dues: first 2 adds per team per week are free; $5 each afterwards
   const perWeek = new Map(); // week -> Map(team -> count)
@@ -692,7 +949,25 @@ app.get("/api/report", async (req, res) => {
   res.json(report);
 
 });
+
 app.post("/api/report/update", async (req, res) => {
+  const logger = new ProcessLogger();
+  try {
+    // …
+    const moves = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25, onProgress:…, logger });
+    const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25, onProgress:…, logger });
+    const needIds = [...new Set(moves.map(m => m.playerId).filter(Boolean))];
+    const nameMap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25, onProgress:…, logger });
+    // …
+  } catch (err) {
+    // before sending the error, persist the debug log:
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(path.join(DATA_DIR, "last-espn-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
+    // …
+  }
+});
+
+ console.log("[REPORT/UPDATE] start", req.body);
   // gate: only commissioner can run the official snapshot
   if (req.header("x-admin") !== ADMIN_PASSWORD) {
     return res.status(401).send("Unauthorized");
@@ -710,7 +985,7 @@ app.post("/api/report/update", async (req, res) => {
     // 5% — starting
     setProgress(jobId, 5, "Fetching teams…");
     const mTeam = await espnFetch({
-      leagueId, seasonId, view: "mTeam", req, requireCookie: false
+      leagueId, seasonId, view: "mTeam", req, requireCookie: false, logger
     });
 
     // 10% → 55% — transactions across scoring periods
@@ -758,11 +1033,98 @@ await writeJson("report.json", snapshot);
 
 setProgress(jobId, 100, "Snapshot complete");
 res.json({ ok: true, weeks: (report?.weekRows || []).length });
-
+console.log("[REPORT/UPDATE] done"); 
   } catch (err) {
     setProgress(jobId, 100, "Failed");
     res.status(502).send(err?.message || String(err));
   }
+});
+
+app.get("/api/debug/last-espn-log", async (_req, res) => {
+  try {
+    const p = path.join(DATA_DIR, "last-espn-log.json");
+    const raw = await fs.readFile(p, "utf8");
+    res.type("application/json").send(raw);
+  } catch {
+    res.status(404).send("No log yet");
+  }
+});
+
+app.get("/api/debug/trans-check", async (req, res) => {
+  const leagueId = req.query.leagueId;
+  const seasonId = req.query.seasonId;
+  if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
+
+  const rows = [];
+  for (let sp = 1; sp <= 25; sp++) {
+    const row = { sp };
+    for (const [view, tag] of [
+      ["mTransactions2", "tx"],
+      ["recentActivity", "recent"],
+      ["kona_league_communication", "comm"]
+    ]) {
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view, scoringPeriodId: sp, req, requireCookie: true, logger });
+        const count =
+          (Array.isArray(j?.transactions) && j.transactions.length) ||
+          (Array.isArray(j?.events) && j.events.length) ||
+          (Array.isArray(j?.messages) && j.messages.length) ||
+          (Array.isArray(j?.topics) && j.topics.length) ||
+          (Array.isArray(j) && j.length) ||
+          0;
+        row[tag] = count;
+      } catch {
+        row[tag] = "ERR";
+      }
+      await sleep(120);
+    }
+    rows.push(row);
+  }
+  res.json(rows);
+});
+
+/* ===== Debug endpoint: mRoster availability by scoring period ===== */
+app.get("/api/debug/roster-check", async (req, res) => {
+  const { leagueId, seasonId } = req.query || {};
+  if (!leagueId || !seasonId) return res.status(400).send("leagueId and seasonId required");
+
+  const out = [];
+  for (let sp = 1; sp <= 25; sp++) {
+    const row = { sp };
+    try {
+      const r = await espnFetch({ leagueId, seasonId, view: "mRoster", scoringPeriodId: sp, req, requireCookie: false, logger });
+      const teamCount = Array.isArray(r?.teams) ? r.teams.length : 0;
+      const playerSlots = (r?.teams || []).reduce((n, t) => n + (t?.roster?.entries?.length || 0), 0);
+      row.teams = teamCount;    // should be 10 for your league
+      row.entries = playerSlots; // total roster entries that week
+    } catch (e) {
+      row.teams = "ERR";
+      row.entries = 0;
+    }
+    out.push(row);
+  }
+  res.json(out);
+});
+
+app.get("/api/debug/sp-health", async (req, res) => {
+  const { leagueId, seasonId } = req.query || {};
+  if (!leagueId || !seasonId) return res.status(400).send("leagueId & seasonId required");
+
+  const out = [];
+  for (let sp = 1; sp <= 25; sp++) {
+    const row = { sp, tx: "ok", recent: "ok", comm: "ok" };
+    try { await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true, logger }); }
+    catch (e) { row.tx = (e.message || "").slice(0, 120); }
+    await sleep(80);
+    try { await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true, logger }); }
+    catch (e) { row.recent = (e.message || "").slice(0, 120); }
+    await sleep(80);
+    try { await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true, logger }); }
+    catch (e) { row.comm = (e.message || "").slice(0, 120); }
+    await sleep(120);
+    out.push(row);
+  }
+  res.json(out);
 });
 
 
@@ -773,6 +1135,77 @@ app.use(express.static(CLIENT_DIR));
 app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(CLIENT_DIR, "index.html"));
 });
+
+
+// --- BEGIN: add/dedupe helpers ---
+
+// true only for *real* adds: winning waiver adds or free-agent adds.
+// (ignore draft, trade, and non-winning waiver attempts)
+function isActualAdd(txn) {
+  if (!txn || !Array.isArray(txn.items)) return false;
+
+  // ESPN sends waivers with type "WAIVER" and status "EXECUTED"
+  // Free agent adds are type "FREEAGENT" and status "EXECUTED"
+  const isWaiverWinner =
+    txn.type === "WAIVER" &&
+    txn.status === "EXECUTED" &&
+    txn.items.some(it => it.type === "ADD");
+
+  const isFreeAgentAdd =
+    txn.type === "FREEAGENT" &&
+    txn.status === "EXECUTED" &&
+    txn.items.some(it => it.type === "ADD");
+
+  return isWaiverWinner || isFreeAgentAdd;
+}
+
+// turn raw ESPN txns into our flat rows array,
+// counting only real adds once (per player+team+scoringPeriod),
+// but including every DROP (they don't affect dues but you log them).
+function buildRowsDedupeWaivers(transactions) {
+  const rows = [];
+  const seenAdd = new Set(); // key: playerId@teamId@sp
+
+  for (const t of transactions || []) {
+    const sp = t.scoringPeriodId;
+    const when = t.processDate ?? t.proposedDate ?? 0;
+
+    // include all DROPs (useful for history)
+    for (const d of (t.items || []).filter(i => i.type === "DROP")) {
+      rows.push({
+        type: "DROP",
+        teamId: d.fromTeamId ?? t.teamId ?? 0,
+        playerId: d.playerId,
+        scoringPeriodId: sp,
+        ts: when
+      });
+    }
+
+    // include only real ADDs (FA + winning waivers), one per player/team/period
+    if (isActualAdd(t)) {
+      for (const a of t.items.filter(i => i.type === "ADD")) {
+        const key = `${a.playerId}@${a.toTeamId}@${sp}`;
+        if (!seenAdd.has(key)) {
+          seenAdd.add(key);
+          rows.push({
+            type: "ADD",
+            teamId: a.toTeamId,
+            playerId: a.playerId,
+            scoringPeriodId: sp,
+            ts: when
+          });
+        }
+      }
+    }
+  }
+
+  // keep rows in time order so your UI feels right
+  rows.sort((x, y) => (x.ts ?? 0) - (y.ts ?? 0));
+  return rows;
+}
+
+// --- END: add/dedupe helpers ---
+
 
 
 /* =========================

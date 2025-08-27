@@ -544,12 +544,6 @@ const deleteAnnouncement = async (id) => {
 };
 
 
-const deleteAnnouncement = (id) =>
-  setData(d => ({
-    ...d,
-    announcements: (d.announcements || []).filter(a => a.id !== id),
-  }));
-
   const addTrade = (t)=> setData(d=>({...d, tradeBlock:[{id:nid(), createdAt:Date.now(), ...t}, ...d.tradeBlock]}));
   const deleteTrade = (id)=> setData(d=>({...d, tradeBlock:d.tradeBlock.filter(t=>t.id!==id)}));
     const addMember = (name)=> setData(d=>({...d, members:[...d.members, {id:nid(), name}]}));

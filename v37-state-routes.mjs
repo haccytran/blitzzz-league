@@ -1,154 +1,186 @@
-// v37-state-routes.mjs
-// Drop-in routes for persistent admin data (announcements, challenges, teams/buy-in, league settings, venmo/zelle, trading block, polls).
-// Public GET; admin-only POST/PATCH guarded by x-admin header. No changes to transactions/waivers logic.
-
-// --- Dependencies (use existing imports if available) ---
+// v37-state-routes.mjs (SAFE MODE)
 import fs from "fs/promises";
 import path from "path";
 import express from "express";
 
-// --- Data dir & helpers ---
 const DATA_DIR = path.join(process.cwd(), "data");
+
 async function readJson(file, fallback) {
-  try { return JSON.parse(await fs.readFile(path.join(DATA_DIR, file), "utf8")); }
-  catch { return fallback; }
+  try {
+    const txt = await fs.readFile(path.join(DATA_DIR, file), "utf8");
+    return JSON.parse(txt);
+  } catch (e) {
+    return fallback;
+  }
 }
+
 async function writeJson(file, obj) {
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(path.join(DATA_DIR, file), JSON.stringify(obj, null, 2), "utf8");
 }
+
 function isAdmin(req) {
   const want = process.env.ADMIN_PASSWORD || globalThis.ADMIN_PASSWORD;
-  if (!want) return true; // if no admin password configured, allow (dev)
+  if (!want) return true;
   const got = req.header("x-admin");
   return got === want;
 }
 
 export default function registerV37Routes(app, deps) {
   const router = express.Router();
-  const espnFetch = deps?.espnFetch; // optional; only used by /league/teams/import
+  const espnFetch = deps && deps.espnFetch ? deps.espnFetch : null;
 
   // ---------- Announcements ----------
-  router.get("/announcements", async (_req, res) => {
+  router.get("/announcements", async function (_req, res) {
     const data = await readJson("announcements.json", { items: [] });
     res.json(data);
   });
-  router.post("/announcements", async (req, res) => { if (!isAdmin(req)) return res.status(401).send("Unauthorized"); const { items } = req.body || {}; if (!Array.isArray(items)) return res.status(400).send("items[] required"); await writeJson("announcements.json", { items }); res.json({ ok: true, items }); });
+  router.post("/announcements", async function (req, res) {
+    if (!isAdmin(req)) return res.status(401).send("Unauthorized");
+    const body = req.body || {};
+    const items = body.items;
+    if (!Array.isArray(items)) return res.status(400).send("items[] required");
+    await writeJson("announcements.json", { items: items });
+    res.json({ ok: true, items: items });
   });
 
   // ---------- Weekly challenges ----------
-  router.get("/challenges", async (_req, res) => {
+  router.get("/challenges", async function (_req, res) {
     const data = await readJson("weekly_challenges.json", { items: [] });
     res.json(data);
   });
-  router.post("/challenges", async (req, res) => { if (!isAdmin(req)) return res.status(401).send("Unauthorized"); const { items } = req.body || {}; if (!Array.isArray(items)) return res.status(400).send("items[] required"); await writeJson("weekly_challenges.json", { items }); res.json({ ok: true, items }); });
+  router.post("/challenges", async function (req, res) {
+    if (!isAdmin(req)) return res.status(401).send("Unauthorized");
+    const body = req.body || {};
+    const items = body.items;
+    if (!Array.isArray(items)) return res.status(400).send("items[] required");
+    await writeJson("weekly_challenges.json", { items: items });
+    res.json({ ok: true, items: items });
   });
 
   // ---------- League settings (teams, venmo/zelle, qr, etc.) ----------
-  router.get("/league/settings", async (_req, res) => {
+  router.get("/league/settings", async function (_req, res) {
     const data = await readJson("league_settings.json", { leagueId: "", seasonId: "", teams: [], venmoLink: "", zelleEmail: "", venmoQR: "" });
     res.json(data);
   });
-  router.post("/league/settings", async (req, res) => {
+  router.post("/league/settings", async function (req, res) {
     if (!isAdmin(req)) return res.status(401).send("Unauthorized");
     const incoming = req.body || {};
     const prev = await readJson("league_settings.json", { leagueId: "", seasonId: "", teams: [], venmoLink: "", zelleEmail: "", venmoQR: "" });
-    const next = { ...prev };
-    for (const k of ["leagueId","seasonId","teams","venmoLink","zelleEmail","venmoQR"]) {
-      if (Object.prototype.hasOwnProperty.call(incoming, k) && incoming[k] !== undefined) {
+    const next = {
+      leagueId: prev.leagueId,
+      seasonId: prev.seasonId,
+      teams: Array.isArray(prev.teams) ? prev.teams : [],
+      venmoLink: prev.venmoLink || "",
+      zelleEmail: prev.zelleEmail || "",
+      venmoQR: prev.venmoQR || ""
+    };
+    ["leagueId","seasonId","teams","venmoLink","zelleEmail","venmoQR"].forEach(function(k){
+      if (Object.prototype.hasOwnProperty.call(incoming, k) && typeof incoming[k] !== "undefined") {
         next[k] = incoming[k];
       }
-    }
+    });
     await writeJson("league_settings.json", next);
     res.json({ ok: true, saved: next });
   });
 
   // ---------- Buy-in checklist ----------
-  router.get("/league/buyin", async (_req, res) => {
-    // shape: { paid: { [teamId]: true/false } }
+  router.get("/league/buyin", async function (_req, res) {
     const data = await readJson("buyin.json", { paid: {} });
     res.json(data);
   });
-  router.post("/league/buyin", async (req, res) => {
+  router.post("/league/buyin", async function (req, res) {
     if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-    const { paid } = req.body || {};
+    const body = req.body || {};
+    const paid = body.paid;
     if (!paid || typeof paid !== "object") return res.status(400).send("paid map required");
-    await writeJson("buyin.json", { paid });
+    await writeJson("buyin.json", { paid: paid });
     res.json({ ok: true });
   });
 
-  // When admin imports ESPN teams, also persist them and initialize buy-in map if missing.
-  router.post("/league/teams/import", async (req, res) => {
+  // Import teams + initialize buy-in entries
+  router.post("/league/teams/import", async function (req, res) {
     if (!isAdmin(req)) return res.status(401).send("Unauthorized");
     try {
-      let { leagueId, seasonId } = req.body || {};
+      const body = req.body || {};
+      const leagueId = body.leagueId;
+      const seasonId = body.seasonId;
       if (!leagueId || !seasonId) return res.status(400).send("leagueId, seasonId required");
       if (!espnFetch) return res.status(500).send("espnFetch not wired");
+
       let j;
       try {
-        j = await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false });
+        j = await espnFetch({ leagueId: leagueId, seasonId: seasonId, view: "mTeam", req: req, requireCookie: false });
       } catch (e) {
-        // fallback with cookie if needed
-        j = await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: true });
+        j = await espnFetch({ leagueId: leagueId, seasonId: seasonId, view: "mTeam", req: req, requireCookie: true });
       }
-      const teams = (j?.teams || []).map(t => ({ id: String(t?.id ?? ""), name: String(t?.location || "") + " " + String(t?.nickname || "") })).filter(t => t.id);
-      // Save to league_settings.json
-      const prev = await readJson("league_settings.json", { leagueId, seasonId, teams: [], venmoLink:"", zelleEmail:"", venmoQR:"" });
-      const next = { ...prev, leagueId, seasonId, teams };
+
+      const teams = Array.isArray(j && j.teams) ? j.teams.map(function(t){
+        const id = String((t && t.id) || "");
+        const name = String((t && t.location) || "") + " " + String((t && t.nickname) || "");
+        return { id: id, name: name };
+      }).filter(function (t){ return t.id; }) : [];
+
+      const prev = await readJson("league_settings.json", { leagueId: leagueId, seasonId: seasonId, teams: [], venmoLink:"", zelleEmail:"", venmoQR:"" });
+      const next = { leagueId: leagueId, seasonId: seasonId, teams: teams, venmoLink: prev.venmoLink || "", zelleEmail: prev.zelleEmail || "", venmoQR: prev.venmoQR || "" };
       await writeJson("league_settings.json", next);
-      // Ensure buy-in map has an entry for each team
+
       const buyPrev = await readJson("buyin.json", { paid: {} });
-      const paid = { ...buyPrev.paid };
-      for (const t of teams) if (!(t.id in paid)) paid[t.id] = false;
-      await writeJson("buyin.json", { paid });
-      res.json({ ok: true, teamsCount: teams.length, teams });
+      const paid = Object.assign({}, buyPrev.paid || {});
+      teams.forEach(function(t){ if (!Object.prototype.hasOwnProperty.call(paid, t.id)) paid[t.id] = false; });
+      await writeJson("buyin.json", { paid: paid });
+
+      res.json({ ok: true, teamsCount: teams.length, teams: teams });
     } catch (e) {
-      res.status(502).send(String(e?.message || e));
+      res.status(502).send(String((e && e.message) || e));
     }
   });
 
   // ---------- Trading block ----------
-  router.get("/trading-block", async (_req, res) => {
+  router.get("/trading-block", async function (_req, res) {
     const data = await readJson("trading_block.json", { items: [] });
     res.json(data);
   });
-  router.post("/trading-block", async (req, res) => {
+  router.post("/trading-block", async function (req, res) {
     if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-    const { items } = req.body || {};
+    const body = req.body || {};
+    const items = body.items;
     if (!Array.isArray(items)) return res.status(400).send("items[] required");
-    await writeJson("trading_block.json", { items });
+    await writeJson("trading_block.json", { items: items });
     res.json({ ok: true });
   });
 
-  // ---------- Polls (server-side password check) ----------
-  // Shape: { polls: [ { id, question, options:[{id,text,votes}], passwords:[string] } ] }
-  router.get("/polls", async (_req, res) => {
+  // ---------- Polls ----------
+  router.get("/polls", async function (_req, res) {
     const data = await readJson("polls.json", { polls: [] });
     res.json(data);
   });
-  router.post("/polls", async (req, res) => {
+  router.post("/polls", async function (req, res) {
     if (!isAdmin(req)) return res.status(401).send("Unauthorized");
-    const { polls } = req.body || {};
+    const body = req.body || {};
+    const polls = body.polls;
     if (!Array.isArray(polls)) return res.status(400).send("polls[] required");
-    await writeJson("polls.json", { polls });
+    await writeJson("polls.json", { polls: polls });
     res.json({ ok: true });
   });
-  router.post("/polls/:id/vote", async (req, res) => {
-    const { id } = req.params;
-    const { optionId, password } = req.body || {};
+  router.post("/polls/:id/vote", async function (req, res) {
+    const id = req.params.id;
+    const body = req.body || {};
+    const optionId = body.optionId;
+    const password = body.password;
     if (!id || !optionId || !password) return res.status(400).send("id, optionId, password required");
+
     const data = await readJson("polls.json", { polls: [] });
-    const poll = data.polls.find(p => String(p.id) == String(id));
+    const poll = (data.polls || []).find(function(p){ return String(p.id) === String(id); });
     if (!poll) return res.status(404).send("poll not found");
-    const ok = (poll.passwords || []).some(pw => String(pw) === String(password));
+    const ok = Array.isArray(poll.passwords) && poll.passwords.some(function(pw){ return String(pw) === String(password); });
     if (!ok) return res.status(403).send("bad password");
-    const opt = (poll.options || []).find(o => String(o.id) == String(optionId));
+    const opt = (poll.options || []).find(function(o){ return String(o.id) === String(optionId); });
     if (!opt) return res.status(404).send("option not found");
     opt.votes = (opt.votes|0) + 1;
     await writeJson("polls.json", data);
     res.json({ ok: true, tally: poll.options });
   });
 
-  // Mount under /api/v37
   app.use("/api/v37", router);
 }

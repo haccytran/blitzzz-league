@@ -1,166 +1,89 @@
-// --- standard header (keep exactly one copy) ---
+// --- server-merged.mjs ---
+// Built by combining the robust fetch/logging skeleton from the "Error Free Fetching"
+// server with the ESPN transactions/filtering/calculation logic from "Version 3.5",
+// and adding the robust, explicit Pacific Time (PT) helpers to avoid host TZ issues.
+//
+// Drop-in replacement: rename this file to `server.mjs` in your project.
+//
+// Env you can set (all optional):
+//   PORT, VITE_ADMIN_PASSWORD, SWID, ESPN_S2 (or S2), ESPN_COOKIE, TZ (ignored by our PT helpers)
+//   LEAGUE_TZ (defaults to America/Los_Angeles)
+
 import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
 import cors from "cors";
-import fs from "fs/promises";           // use fs/promises (no readFileSync)
+import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const DATA_DIR   = path.join(__dirname, "data");   // one declaration only
+const DATA_DIR   = path.join(__dirname, "data");
 
 const PORT           = process.env.PORT || 8787;
 const ADMIN_PASSWORD = process.env.VITE_ADMIN_PASSWORD || "changeme";
-const LEAGUE_TZ      = "America/Los_Angeles"; // PT
+const LEAGUE_TZ      = process.env.LEAGUE_TZ || "America/Los_Angeles";
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-
-
-
-
-// ===== POLLS v2.1 — state + save/load (BEGIN) =====
-
-// Keep one shared state for polls; persist to data/polls.json
-const POLLS_FILE = path.join(DATA_DIR, "polls.json");
-
-let pollsState = { polls: {}, votes: {}, teamCodes: {} };
-
-async function loadPolls21() {
-  try {
-    const raw = await fs.readFile(POLLS_FILE, "utf-8");
-    const data = JSON.parse(raw);
-    pollsState.polls     = data.polls     || {};
-    pollsState.votes     = data.votes     || {};
-    pollsState.teamCodes = data.teamCodes || {};
-  } catch { /* first run is fine */ }
-}
-async function savePolls21() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(POLLS_FILE, JSON.stringify(pollsState, null, 2), "utf-8");
-}
-
-// friendly short word code; one per team per season
-
-await loadPolls21();
-// ===== POLLS v2.1 — state + save/load (END) =====
-
-
-
-function codeKey(seasonId, teamId){ return `${seasonId}:${teamId}`; }
-
-// --- Season-wide team codes (one per team, reused across all polls) ---
-
-// friendly single-word codes; add/remove to taste
-const FRIENDLY_WORDS = [
-  "MANGO","FALCON","TIGER","ORCA","BISON","HAWK","PANDA","EAGLE","MAPLE","CEDAR","ONYX","ZINC",
-  "SAPPHIRE","COBALT","QUARTZ","NEON","NOVA","COMET","BOLT","BLITZ","STORM","GLACIER","RAPTOR",
-  "VIPER","COUGAR","WOLF","SHARK","LYNX","OTTER","MOOSE","BEAR","FOX","RAVEN","ROBIN","DRAGON",
-  "PHOENIX","ORBIT","ROCKET","ATLAS","APEX","DELTA","OMEGA","THUNDER","SURGE","WAVE","EMBER",
-  "FROST","POLAR","COSMIC","SHADOW","AQUA"
-];
-
-function randomFriendlyCode() {
-  return FRIENDLY_WORDS[Math.floor(Math.random() * FRIENDLY_WORDS.length)];
-}
-
-// make sure containers exist
-pollsState.teamCodes = pollsState.teamCodes || {};
-pollsState.votes     = pollsState.votes     || {};
-
-// Commissioner: generate (or ensure) a code for every team in the season
-app.post("/api/polls/issue-team-codes", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { seasonId, teams } = req.body || {};
-  if (!seasonId || !Array.isArray(teams)) return res.status(400).send("Missing seasonId or teams[]");
-
-  // keep codes stable if already created; otherwise assign a new friendly word
-  const used = new Set(Object.values(pollsState.teamCodes).map(v => v.code));
-  const issued = [];
-  for (const t of teams) {
-    const key = `${seasonId}:${t.id}`;
-    if (!pollsState.teamCodes[key]) {
-      let code;
-      // avoid accidental duplicates
-      do { code = randomFriendlyCode(); } while (used.has(code));
-      used.add(code);
-      pollsState.teamCodes[key] = { code, createdAt: Date.now() };
-    }
-    issued.push({ teamId: t.id, teamName: t.name, code: pollsState.teamCodes[key].code });
-  }
-  await savePolls21();
-
-  res.json({ issued: issued.length, codes: issued });
-});
-
-// Vote using the season-wide team code (one vote per poll per team)
-app.post("/api/polls/vote", async (req, res) => {
-  const { pollId, optionId, seasonId, teamCode } = req.body || {};
-  if (!pollId || !optionId || !seasonId || !teamCode) {
-    return res.status(400).send("Missing pollId/optionId/seasonId/teamCode");
-  }
-
-  // resolve teamId from code for this season
-  let teamId = null;
-  for (const [k, v] of Object.entries(pollsState.teamCodes)) {
-    if (k.startsWith(`${seasonId}:`) && String(v.code).toUpperCase() === String(teamCode).toUpperCase()) {
-      teamId = Number(k.split(":")[1]);
-      break;
-    }
-  }
-  if (!teamId) return res.status(403).send("Invalid code");
-
-  pollsState.votes[pollId] = pollsState.votes[pollId] || {};
-  // allow changing your vote; uncomment next line and remove overwrite if you want “locked” votes
-  // if (pollsState.votes[pollId][teamId]) return res.status(409).send("Already voted");
-  pollsState.votes[pollId][teamId] = optionId;
-
-  await savePolls21();
-
-  res.json({ ok: true, byTeam: pollsState.votes[pollId] });
-});
-
-/* =========================
-   Setup
-   ========================= */
-
-
-/* ===== Progress (in-memory) ===== */
+// ========== Lightweight progress tracker ==========
 const jobProgress = new Map(); // jobId -> { pct, msg, t }
 function setProgress(jobId, pct, msg) {
   if (!jobId) return;
-  jobProgress.set(jobId, { pct: Math.max(0, Math.min(100, Math.round(pct))), msg: String(msg || ""), t: Date.now() });
+  jobProgress.set(jobId, {
+    pct: Math.max(0, Math.min(100, Math.round(pct))),
+    msg: String(msg || ""),
+    t: Date.now()
+  });
 }
-// lightweight polling endpoint
 app.get("/api/progress", (req, res) => {
   const { jobId } = req.query || {};
-  const v = jobProgress.get(jobId);
-  res.json(v || { pct: 0, msg: "" });
+  res.json(jobProgress.get(jobId) || { pct: 0, msg: "" });
 });
 
-/* =========================
-   File helpers
-   ========================= */
+// ========== File helpers ==========
 const fpath = (name) => path.join(DATA_DIR, name);
-
 async function readJson(name, fallback) {
   try { return JSON.parse(await fs.readFile(fpath(name), "utf8")); }
   catch { return fallback; }
 }
 async function writeJson(name, obj) {
+  await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
 }
 
-/* =========================
-   Time helpers (Wed→Tue league week)
-   ========================= */
-function toPT(d) { return new Date(d.toLocaleString("en-US", { timeZone: LEAGUE_TZ })); }
-function fmtPT(d) { return toPT(d).toLocaleString(); }
+// ========== Robust PT timezone helpers (explicit zone; host TZ independent) ==========
+// We DO NOT rely on system TZ. We compute PT wall-clock with Intl.DateTimeFormat(timeZone).
+const dtfPT = new Intl.DateTimeFormat("en-US", {
+  timeZone: LEAGUE_TZ,   // "America/Los_Angeles"
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false
+});
+
+/** Return a Date whose clock reflects PT (no locale string parsing). */
+export function toPT(dateLike) {
+  const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  const parts = Object.fromEntries(dtfPT.formatToParts(d).map(p => [p.type, p.value]));
+  // Build a UTC timestamp that represents the PT wall clock time.
+  return new Date(Date.UTC(
+    +parts.year, +parts.month - 1, +parts.day,
+    +parts.hour, +parts.minute, +parts.second
+  ));
+}
+
+/** Pretty-print a timestamp in PT for labels/debug. */
+export function fmtPT(dateLike) {
+  return new Date(dateLike).toLocaleString("en-US", { timeZone: LEAGUE_TZ });
+}
 
 const WEEK_START_DAY = 3; // Wednesday
 function startOfLeagueWeekPT(date){
@@ -183,7 +106,7 @@ function firstWednesdayOfSeptemberPT(year){
 const DAY = 24*60*60*1000;
 const WAIVER_EARLY_WED_SHIFT_MS = 5 * 60 * 60 * 1000; // 5 hours
 
-function weekBucketPT(date, seasonYear) {
+export function weekBucketPT(date, seasonYear) {
   // Normalize to PT
   const z0 = toPT(new Date(date));
 
@@ -206,30 +129,64 @@ function weekBucketPT(date, seasonYear) {
   const start = new Date(w1.getTime() + (week - 1) * 7 * DAY);
   return { week, start };
 }
-
-function leagueWeekOf(date, seasonYear){
+export function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeekPT(date);
   const week1 = startOfLeagueWeekPT(firstWednesdayOfSeptemberPT(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0; // preseason bucket
   return { week, start };
 }
-function weekRangeLabelDisplay(startPT){
+export function weekRangeLabelDisplay(startPT){
   const wed = new Date(startPT); wed.setHours(0,0,0,0);
   const tue = new Date(wed); tue.setDate(tue.getDate()+6); tue.setHours(23,59,0,0);
   const short = (d)=> toPT(d).toLocaleDateString(undefined,{month:"short", day:"numeric"});
   return `${short(wed)}–${short(tue)} (cutoff Tue 11:59 PM PT)`;
 }
-function normalizeEpoch(x){
+export function normalizeEpoch(x){
   if (x == null) return Date.now();
   if (typeof x === "string") x = Number(x);
   if (x > 0 && x < 1e11) return x * 1000; // seconds → ms
   return x;
 }
 
-/* =========================
-   ESPN proxy (cookie-optional, multi-host fallback)
-   ========================= */
+// ========== Process logger (for rich debug logs) ==========
+class ProcessLogger {
+  constructor() {
+    this.logs = [];
+    this.stats = {
+      totalRawTransactions: 0,
+      transactionsBySource: {},
+      transactionsBySP: {},
+      filteredOut: { dedup: 0, verification: 0, finalDedup: 0 },
+      errors: []
+    };
+  }
+  log(level, message, data = {}) {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      data: JSON.stringify(data, null, 2)
+    };
+    this.logs.push(entry);
+    console.log(`[${level.toUpperCase()}] ${message}`, data);
+  }
+  error(message, error, data = {}) {
+    const errorEntry = {
+      message,
+      error: error?.message || String(error),
+      stack: error?.stack,
+      data
+    };
+    this.stats.errors.push(errorEntry);
+    this.log('ERROR', message, errorEntry);
+  }
+  info(message, data = {}) { this.log('INFO', message, data); }
+  debug(message, data = {}) { this.log('DEBUG', message, data); }
+  getFullLog() { return { stats: this.stats, logs: this.logs, totalLogs: this.logs.length }; }
+}
+
+// ========== ESPN proxy (cookie-optional, multi-host fallback) ==========
 function buildCookie(req) {
   const hdr = req.headers["x-espn-cookie"];
   if (hdr) return String(hdr);
@@ -246,164 +203,118 @@ const BROWSER_HEADERS = {
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
   "Origin": "https://fantasy.espn.com",
-  "Referer": "https://fantasy.espn.com/",
+  "Referer": "https://fantasy.espn.com/football/team",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
 };
 
-async function tryFetchJSON(url, requireCookie, req) {
+// Robust fetch that retries when ESPN sends HTML / bot pages / 429s.
+async function fetchJSONWithRetry(url, { requireCookie, req, label, logger }) {
   const headers = { ...BROWSER_HEADERS };
   if (requireCookie) {
     const ck = buildCookie(req);
-    if (ck) headers.Cookie = ck;
+    if (ck) { headers.Cookie = ck; logger?.debug(`Cookie attached for ${label}`, { len: ck.length }); }
+    else { logger?.error(`Missing cookie for ${label}`); }
   }
-  const r = await fetch(url, { headers });
-  const text = await r.text();
-  try { return { ok:true, json: JSON.parse(text), status: r.status }; }
-  catch {
-    return {
-      ok:false, status: r.status,
-      snippet: text.slice(0,200).replace(/\s+/g," "),
-      ct: r.headers.get("content-type") || ""
-    };
+
+  let lastErr = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {  // fewer retries per host
+    try {
+      logger?.debug(`HTTP attempt ${attempt} → ${label}`, { url });
+      const res = await fetch(url, { headers });
+      const ct  = res.headers.get("content-type") || "";
+      const txt = await res.text();
+
+      logger?.debug(`Response ${res.status} for ${label}`, { ct, bodyLen: txt.length, attempt });
+
+      if (ct.includes("application/json")) {
+        try { return JSON.parse(txt); }
+        catch (e) {
+          lastErr = `JSON parse failed: ${e?.message || e}`;
+          logger?.error(`Parse failed for ${label}`, e, { preview: txt.slice(0, 200) });
+        }
+      } else {
+        // Bot/HTML page—don’t burn more retries on this host.
+        const preview = txt.slice(0, 160).replace(/\s+/g, " ");
+        lastErr = `status ${res.status}, ct ${ct}, body: ${preview}`;
+        logger?.error(`Non-JSON for ${label} (fast-fail)`, { status: res.status, ct, preview });
+        throw new Error(`Non-JSON (${ct})`);
+      }
+
+      // backoff + jitter
+      await new Promise(r => setTimeout(r, 300 * Math.pow(2, attempt) + Math.random() * 400));
+    } catch (e) {
+      lastErr = `Network error: ${e?.message || e}`;
+      logger?.error(`Network error for ${label}`, e, { attempt });
+      await new Promise(r => setTimeout(r, 400 * attempt));
+    }
   }
+  const err = new Error(`ESPN non-JSON for ${label}: ${lastErr}`);
+  logger?.error(`All attempts failed for ${label}`, err);
+  throw err;
 }
 
-async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false }) {
+async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false, logger }) {
   if (!leagueId || !seasonId || !view) throw new Error("Missing leagueId/seasonId/view");
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
   const bust = `&_=${Date.now()}`;
-  const viewEnc = encodeURIComponent(view);
+  const v = encodeURIComponent(view);
 
-  // Public-friendly → lm-api-reads → site.web fallback
   const urls = [
-    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
-    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`,
-    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${viewEnc}${sp}${bust}`
+    // This one is consistently JSON
+    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
+    // Secondary JSON source
+    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
+    // Last: main site (often returns HTML bot page on Render IPs)
+    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`
   ];
 
   let last = null;
-  for (const url of urls) {
-    const res = await tryFetchJSON(url, requireCookie, req);
-    if (res.ok) return res.json;
-    last = res;
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      logger?.debug(`Trying ESPN URL ${i+1}/${urls.length} for ${view}`, { url: urls[i].split("?")[0], sp: scoringPeriodId ?? null });
+      const json = await fetchJSONWithRetry(urls[i], { requireCookie, req, label: `${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}`, logger });
+      logger?.debug(`Success with URL ${i+1} for ${view}`);
+      return json;
+    } catch (e) {
+      last = e; logger?.debug(`URL ${i+1} failed for ${view}`, { error: e.message });
+      await new Promise(r => setTimeout(r, 200));
+    }
   }
-  throw new Error(
-    `ESPN returned non-JSON for ${view}${scoringPeriodId?` (SP ${scoringPeriodId})`:""}. ` +
-    `Status ${last?.status||"?"}, ct ${last?.ct||"?"}. Snippet: ${last?.snippet||""}`
-  );
+  const err = new Error(last?.message || "Unknown ESPN error");
+  logger?.error(`All ESPN URLs failed for ${view}`, err);
+  throw err;
 }
 
 /* Pass-through endpoint used by the UI (set ?auth=1 to force cookies) */
 app.get("/api/espn", async (req, res) => {
+  const logger = new ProcessLogger();
   try {
-    const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
+    const { leagueId, seasonId, view, scoringPeriodId, auth, debug } = req.query;
+    logger.info("ESPN proxy request", { leagueId, seasonId, view, scoringPeriodId, auth });
+
     const json = await espnFetch({
       leagueId, seasonId, view, scoringPeriodId, req,
-      requireCookie: auth === "1"
+      requireCookie: auth === "1",
+      logger
     });
+
+    if (debug === "1") {
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      await fs.writeFile(path.join(DATA_DIR, "last-espn-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
+      return res.json({ _debugFile: "data/last-espn-log.json", data: json });
+    }
+
     res.json(json);
   } catch (e) {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(path.join(DATA_DIR, "last-espn-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
     res.status(502).send(String(e.message || e));
   }
 });
 
+// ========== ESPN transactions — taken from Version 3.5 (normalized) ==========
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// ===== POLLS v2.1 — routes (tallies use season team codes) =====
-const nid = () => Math.random().toString(36).slice(2, 10);
-
-// Return all polls with live tallies (by season team codes)
-app.get("/api/polls", (req, res) => {
-  const seasonId = String(req.query?.seasonId || "");
-
-  function tallied(p) {
-    const byTeam = pollsState.votes?.[p.id] || {};   // { teamId: optionId }
-    const tally = {};
-    Object.values(byTeam).forEach(opt => {
-      tally[opt] = (tally[opt] || 0) + 1;
-    });
-
-    const codesTotal = seasonId
-      ? Object.keys(pollsState.teamCodes || {}).filter(k => k.startsWith(`${seasonId}:`)).length
-      : Object.keys(pollsState.teamCodes || {}).length;
-
-    return {
-      id: p.id,
-      question: p.question,
-      closed: !!p.closed,
-      options: (p.options || []).map(o => ({
-        id: o.id,
-        label: o.label,
-        votes: tally[o.id] || 0
-      })),
-      codesUsed: Object.keys(byTeam).length,
-      codesTotal
-    };
-  }
-
-  const out = Object.values(pollsState.polls || {}).map(tallied);
-  res.json({ polls: out });
-});
-
-// Create a poll (stores in pollsState.polls)
-app.post("/api/polls/create", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { question, options } = req.body || {};
-  if (!question || !Array.isArray(options) || options.length < 2) return res.status(400).send("Bad request");
-
-  const id = nid();
-  pollsState.polls[id] = {
-    id,
-    question: String(question),
-    closed: false,
-    options: options.map(label => ({ id: nid(), label: String(label) }))
-  };
-  await savePolls21();
-  res.json({ ok: true, pollId: id });
-});
-
-// Delete a poll
-app.post("/api/polls/delete", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-
-  const { pollId } = req.body || {};
-  if (!pollId) return res.status(400).send("Missing pollId");
-
-  // v2 store: pollsState
-  if (pollsState?.polls && pollsState.polls[pollId]) {
-    delete pollsState.polls[pollId];   // remove the poll
-    delete pollsState.votes[pollId];   // remove all its votes
-    await savePolls21();               // persist v2 store
-    return res.json({ ok: true });
-  }
-
-  // Fallback: legacy file-based polls.json (only if you still have old polls there)
-  try {
-    const data = await readJson("polls.json", { polls: [] });
-    const before = data.polls.length;
-    data.polls = data.polls.filter(p => p.id !== pollId);
-    if (data.polls.length === before) return res.status(404).send("Not found");
-    await writeJson("polls.json", data);
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(500).send(String(e.message || e));
-  }
-});
-
-// Close/reopen a poll
-app.post("/api/polls/close", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { pollId, closed } = req.body || {};
-  if (!pollId || !pollsState.polls[pollId]) return res.status(404).send("Not found");
-
-  pollsState.polls[pollId].closed = !!closed;
-  await savePolls21();
-  res.json({ ok: true });
-});
-
-
-/* =========================
-   Official Snapshot (commissioner builds once; league reads)
-   ========================= */
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
@@ -423,8 +334,19 @@ function inferMethod(typeStr, typeNum, t, it){
   if (isWithinWaiverWindowPT(ts)) return "WAIVER";
   return "FA";
 }
-const pickPlayerId   = (it)=> it?.playerId ?? it?.playerPoolEntry?.player?.id ?? it?.entityId ?? null;
-const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
+const pickPlayerId   = (it)=> it?.playerId
+  ?? it?.playerPoolEntry?.player?.id
+  ?? it?.player?.id
+  ?? it?.athleteId
+  ?? it?.entityId 
+  ?? null;
+
+const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName 
+  || it?.player?.fullName 
+  || it?.athlete?.fullName
+  || t?.playerPoolEntry?.player?.fullName 
+  || t?.player?.fullName 
+  || null;
 
 function extractMoves(json, src="tx"){
   const rows =
@@ -502,64 +424,164 @@ function dedupeMoves(events){
   }
   return out;
 }
-async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
+
+// Build a full list of moves from all sources across scoring periods
+async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp = 25, onProgress, logger }) {
   const all = [];
-  for (let sp=1; sp<=maxSp; sp++){
-onProgress?.(sp, maxSp, "Reading ESPN activity…");
-    try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"tx")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"recent")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMovesFromComm(j)); } catch {}
-  }
-  return all.map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
-            .sort((a,b)=> a.date - b.date);
-}
-async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress }){
-  const series = [];
-  for (let sp=1; sp<=maxSp; sp++){
-onProgress?.(sp, maxSp, "Building roster timeline…");
+
+  for (let sp = 1; sp <= maxSp; sp++) {
+    onProgress?.(sp, maxSp, "Reading ESPN activity…");
+
+    const before = all.length;
+
+    // --- First pass (cookie = true) ---
     try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
-      const byTeam = {};
-      for (const t of (r?.teams || [])) {
-        const set = new Set();
-        for (const e of (t.roster?.entries || [])) {
-          const pid = e.playerPoolEntry?.player?.id;
-          if (pid) set.add(pid);
-        }
-        byTeam[t.id] = set;
-      }
-      series[sp] = byTeam;
-    } catch { series[sp] = {}; }
+      const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: true, logger });
+      all.push(...extractMoves(j, "tx"));
+    } catch {}
+    // Quick no-cookie follow-up (many hosts allow this and return JSON)
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: false, logger });
+      all.push(...extractMoves(j, "tx"));
+    } catch {}
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: true, logger });
+      all.push(...extractMoves(j, "recent"));
+    } catch {}
+    try {
+      const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: true, logger });
+      all.push(...extractMovesFromComm(j));
+    } catch {}
+
+    // small pause between weeks
+    await sleep(120 + Math.floor(Math.random() * 120));
+
+    // If this week looks “thin”, try a rescue pass with cookie = false.
+    // (On some Render IPs, cookie-auth can trigger anti-bot; the no-cookie
+    // site endpoints sometimes succeed for the same week.)
+    const addedFirstPass = all.length - before;
+    if (addedFirstPass < 6) { // tweak threshold if you like
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: sp, req, requireCookie: false, logger });
+        all.push(...extractMoves(j, "tx"));
+      } catch {}
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "recentActivity", scoringPeriodId: sp, req, requireCookie: false, logger });
+        all.push(...extractMoves(j, "recent"));
+      } catch {}
+      try {
+        const j = await espnFetch({ leagueId, seasonId, view: "kona_league_communication", scoringPeriodId: sp, req, requireCookie: false, logger });
+        all.push(...extractMovesFromComm(j));
+      } catch {}
+
+      await sleep(220);
+    }
   }
+
+  return all
+    .map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
+    .sort((a, b) => a.date - b.date);
+}
+
+// Build roster snapshots for each scoring period (with carry-forward fallback)
+async function fetchRosterSeries({ leagueId, seasonId, req, maxSp = 25, onProgress, logger }) {
+  const series = [];
+  let lastGood = {}; // carry-forward fallback if a week fails
+
+  for (let sp = 1; sp <= maxSp; sp++) {
+    onProgress?.(sp, maxSp, "Building roster timeline…");
+
+    // up to 3 tries: vanilla → cookie → cookie (with small backoff)
+    let attempt = 0, done = false;
+    while (!done && attempt < 3) {
+      attempt++;
+      try {
+        const r = await espnFetch({
+          leagueId, seasonId, view: "mRoster", scoringPeriodId: sp, req, logger, 
+          requireCookie: attempt > 1 // try cookie on retries
+        });
+
+        const byTeam = {};
+        for (const t of (r?.teams || [])) {
+          const set = new Set();
+          for (const e of (t?.roster?.entries || [])) {
+            const pid = e?.playerPoolEntry?.player?.id;
+            if (pid) set.add(pid);
+          }
+          byTeam[t.id] = set;
+        }
+
+        if (Object.keys(byTeam).length > 0) {
+          series[sp] = byTeam;
+          lastGood = byTeam; // remember last good snapshot
+        } else {
+          // API returned no teams — use previous good snapshot
+          series[sp] = lastGood;
+        }
+        done = true;
+      } catch {
+        // small backoff before next attempt
+        await new Promise(r => setTimeout(r, 400 + attempt * 250));
+        if (attempt >= 3) {
+          // still failing — use last good snapshot so we don't drop moves
+          series[sp] = lastGood;
+          done = true;
+        }
+
+        await sleep(150);
+      }
+    }
+  }
+
   return series;
 }
+
 const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]?.[teamId]?.has(playerId));
 const spFromDate = (dateLike, seasonYear)=> Math.max(1, Math.min(25, (leagueWeekOf(new Date(dateLike), seasonYear).week || 1)));
-function isGenuineAddBySeries(row, series, seasonYear){
+
+function isGenuineAddBySeries(row, series, seasonYear) {
+  // If we don't know the player, let it count (cannot verify)
   if (!row.playerId) return true;
-  const sp = spFromDate(row.date, seasonYear);
+
+  // Only verify WAIVER adds. FA adds can be added/dropped same week and should still count.
+  if (String(row.method).toUpperCase() !== "WAIVER") return true;
+
+  const sp = spFromDate(row.date, seasonYear);  // 1..25
+  const teamId = Number(row.teamIdRaw ?? row.teamId); // <- numeric!
+
   const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
+  const later  = [sp, sp + 1, sp + 2].filter(n => n < series.length);
+
+  const wasBefore    = isOnRoster(series, before, teamId, row.playerId);
+  const appearsLater = later.some(n => isOnRoster(series, n, teamId, row.playerId));
+
   return !wasBefore && appearsLater;
 }
 function isExecutedDropBySeries(row, series, seasonYear){
-  if (!row.playerId) return false;
+  // If the transaction JSON didn’t carry a playerId (common on site.web.api),
+  // assume the drop was executed rather than silently discarding it.
+  if (!row.playerId) return true;
+
   const sp = spFromDate(row.date, seasonYear);
+  const teamId = Number(row.teamIdRaw ?? row.teamId);
+
   const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
+  const later  = [sp, sp + 1, sp + 2].filter(n => n < series.length);
+
+  const wasBefore    = isOnRoster(series, before, teamId, row.playerId) || isOnRoster(series, sp, teamId, row.playerId);
+  const appearsLater = later.some(n => isOnRoster(series, n, teamId, row.playerId));
+
   return wasBefore && !appearsLater;
 }
-async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
+
+// Resolve player names when missing (look across roster snapshots)
+async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress, logger }){
   const need = new Set((ids||[]).filter(Boolean));
   const map = {}; if (need.size===0) return map;
   for (let sp=1; sp<=maxSp; sp++){
-onProgress?.(sp, maxSp, "Resolving player names…");
+    onProgress?.(sp, maxSp, "Resolving player names…");
     try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
+      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false, logger });
       for (const t of (r?.teams||[])) {
         for (const e of (t.roster?.entries||[])) {
           const p = e.playerPoolEntry?.player;
@@ -573,293 +595,154 @@ onProgress?.(sp, maxSp, "Resolving player names…");
   return map;
 }
 
-async function buildOfficialReport({ leagueId, seasonId, req }){
+// Build the definitive report JSON
+async function buildOfficialReport({ leagueId, seasonId, req, logger }){
   // Team names — public in most leagues
-  const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
+  const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false, logger });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
-  // All raw moves from three sources (cookie-required)
-  const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
+  // All raw moves from three sources
+  const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25, logger });
 
   // Roster series (public) to verify executed adds/drops and get names later
-  const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
+  const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25, logger });
 
-  // Dedup → annotate
+  // Dedup → annotate (make teamIdRaw a Number!)
   const deduped = dedupeMoves(all).map(e => ({
     ...e,
-    teamIdRaw: e.teamId,
+    teamIdRaw: Number(e.teamId),
     team: idToName[e.teamId] || `Team ${e.teamId}`,
     player: e.playerName || null
   }));
 
-  // Keep executed events only
-  const adds  = deduped.filter(r => r.action === "ADD"  && isGenuineAddBySeries(r, series, seasonId));
-  const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
+  // Verify against roster snapshots to keep only *winning* waiver adds and *executed* drops.
+  const verified = [];
+  for (const r of deduped) {
+    if (r.action === "ADD") {
+      if (!isGenuineAddBySeries(r, series, seasonId)) continue;
+      verified.push(r);
+    } else if (r.action === "DROP") {
+      if (!isExecutedDropBySeries(r, series, seasonId)) continue;
+      verified.push(r);
+    }
+  }
 
-  // Backfill missing player names via roster snapshots
-  const needIds = [...new Set([...adds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
-  const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
-  for (const r of [...adds, ...drops]) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
+  // Backfill missing player names for verified events
+  const needIds = [...new Set(verified.map(r => r.player ? null : r.playerId).filter(Boolean))];
+  const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25, logger });
+  for (const r of verified) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
 
-// Flatten for UI — definitive week math (avoids off-by-one) + de-dupe repeated DROPs
-let rawMoves = [...adds, ...drops].map(r => {
-  const wb = weekBucketPT(r.date, seasonId);
+  // Flatten for UI — definitive week math (avoids off-by-one) + de-dupe repeated DROPs
+  let rawMoves = verified.map(r => {
+    const wb = weekBucketPT(r.date, seasonId);
+    return {
+      date: fmtPT(r.date),
+      ts: toPT(new Date(r.date)).getTime(),          // raw PT timestamp (ms) for de-dupe
+      week: wb.week,                                 // 1-based, never 0
+      range: weekRangeLabelDisplay(wb.start),        // correct Wed→Tue label
+      team: r.team,
+      player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
+      action: r.action,                              // ADD | DROP
+      method: r.method,                              // WAIVER | FA (inferred)
+      source: r.src,                                 // tx | recent | comm
+      playerId: r.playerId || null
+    };
+  }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
+
+  // Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
+  // unless there was an ADD for that player by that team in between.
+  const DEDUPE_WINDOW_MS = 3 * 60 * 1000;
+  const dedupedMoves = [];
+  const lastByKey = new Map(); // key -> {action, ts}
+
+  for (const m of rawMoves) {
+    const key = `${m.team}|${m.playerId || m.player}`;
+
+    if (m.action === "DROP") {
+      const prev = lastByKey.get(key);
+      if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) {
+        // Same team dropped same player at the same moment: skip duplicate
+        continue;
+      }
+      lastByKey.set(key, { action: "DROP", ts: m.ts });
+    } else if (m.action === "ADD") {
+      // If the team re-ADDs, we reset the chain so a later DROP will show again
+      lastByKey.set(key, { action: "ADD", ts: m.ts });
+    }
+
+    dedupedMoves.push(m);
+  }
+
+  // Replace rawMoves with the cleaned list (and strip helper field)
+  rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
+
+  // Build weekly rows (with totals) for UI
+  const weeks = new Map();
+  for (const row of rawMoves) {
+    const key = `${row.week}|${row.range}`;
+    if (!weeks.has(key)) weeks.set(key, { week: row.week, range: row.range, rows: [], adds: 0, drops: 0 });
+    const W = weeks.get(key);
+    W.rows.push(row);
+    if (row.action === "ADD") W.adds++;
+    if (row.action === "DROP") W.drops++;
+  }
+  const weekRows = [...weeks.values()].sort((a,b)=> a.week - b.week);
+
   return {
-    date: fmtPT(r.date),
-    ts: toPT(new Date(r.date)).getTime(),          // raw PT timestamp (ms) for de-dupe
-    week: wb.week,                                 // 1-based, never 0
-    range: weekRangeLabelDisplay(wb.start),        // correct Wed→Tue label
-    team: r.team,
-    player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
-    action: r.action,                              // ADD | DROP
-    method: r.method,                              // WAIVER | FA (when inferred)
-    source: r.src,                                 // tx | recent | comm
-    playerId: r.playerId || null
+    seasonId: seasonId,
+    builtAt: new Date().toISOString(),
+    weeks: weekRows,
+    totalAdds: rawMoves.filter(r=>r.action==="ADD").length,
+    totalDrops: rawMoves.filter(r=>r.action==="DROP").length,
+    rows: rawMoves
   };
-}).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
-
-// Collapse duplicate DROP lines: same team + same player repeated within ~3 min,
-// unless there was an ADD for that player by that team in between.
-const DEDUPE_WINDOW_MS = 3 * 60 * 1000;
-const dedupedMoves = [];
-const lastByKey = new Map(); // key -> {action, ts}
-
-for (const m of rawMoves) {
-  const key = `${m.team}|${m.playerId || m.player}`;
-
-  if (m.action === "DROP") {
-    const prev = lastByKey.get(key);
-    if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) {
-      // Same team dropped same player at the same moment: skip duplicate
-      continue;
-    }
-    lastByKey.set(key, { action: "DROP", ts: m.ts });
-  } else if (m.action === "ADD") {
-    // If the team re-ADDs, we reset the chain so a later DROP will show again
-    lastByKey.set(key, { action: "ADD", ts: m.ts });
-  }
-
-  dedupedMoves.push(m);
 }
 
-// Replace rawMoves with the cleaned list (and strip helper field)
-rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
-
-  
-
-  // Dues: first 2 adds per team per week are free; $5 each afterwards
-  const perWeek = new Map(); // week -> Map(team -> count)
-  for (const r of rawMoves) {
-    if (r.action !== "ADD" || r.week <= 0) continue;
-    if (!perWeek.has(r.week)) perWeek.set(r.week, new Map());
-    const m = perWeek.get(r.week);
-    m.set(r.team, (m.get(r.team) || 0) + 1);
-  }
-
-  const weekRows = [];
-  const totals = new Map();
-  const rangeByWeek = {};
-  for (const r of rawMoves) if (r.week>0 && !rangeByWeek[r.week]) rangeByWeek[r.week] = r.range;
-
-  for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
-    const entries = [];
-    const m = perWeek.get(w);
-    for (const [team, count] of m.entries()) {
-      const owes = Math.max(0, count - 2) * 5;
-      entries.push({ name: team, count, owes });
-      const t = totals.get(team) || { adds:0, owes:0 };
-      t.adds += count; t.owes += owes; totals.set(team, t);
-    }
-    entries.sort((a,b)=> a.name.localeCompare(b.name));
-    weekRows.push({ week:w, range: rangeByWeek[w] || "", entries });
-  }
-
-  const totalsRows = [...totals.entries()]
-    .map(([name, v]) => ({ name, adds: v.adds, owes: v.owes }))
-    .sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
-
-  return { lastSynced: fmtPT(new Date()), totalsRows, weekRows, rawMoves };
-}
-
-/* Snapshot routes */
-app.get("/api/report", async (req, res) => {
-  const seasonId = req.query?.seasonId;
-  const preferred = seasonId ? await readJson(`report_${seasonId}.json`, null) : null;
-  const fallback  = await readJson("report.json", null); // legacy fallback
-  const report = preferred || fallback;
-  if (!report) return res.status(404).send("No report");
-  res.json(report);
-
-});
-app.post("/api/report/update", async (req, res) => {
-  // gate: only commissioner can run the official snapshot
-  if (req.header("x-admin") !== ADMIN_PASSWORD) {
-    return res.status(401).send("Unauthorized");
-  }
-
-  const { leagueId, seasonId } = req.body || {};
-  if (!leagueId || !seasonId) {
-    return res.status(400).send("Missing leagueId or seasonId");
-  }
-
-  // the UI passes a jobId in the query for progress polling
-  const jobId = (req.query?.jobId || `job_${Date.now()}`);
-
+// ========== Build/serve report endpoints ==========
+app.post("/api/build", async (req, res) => {
+  const logger = new ProcessLogger();
   try {
-    // 5% — starting
-    setProgress(jobId, 5, "Fetching teams…");
-    const mTeam = await espnFetch({
-      leagueId, seasonId, view: "mTeam", req, requireCookie: false
-    });
-
-    // 10% → 55% — transactions across scoring periods
-    const moves = await fetchSeasonMovesAllSources({
-      leagueId, seasonId, req, maxSp: 25,
-      onProgress: (sp, max, msg) => {
-        const pct = 10 + Math.round((sp / max) * 45);
-        setProgress(jobId, pct, `${msg} (${sp}/${max})`);
-      }
-    });
-
-    // 55% → 82% — roster snapshots (used by your downstream logic)
-    const series = await fetchRosterSeries({
-      leagueId, seasonId, req, maxSp: 25,
-      onProgress: (sp, max, msg) => {
-        const pct = 55 + Math.round((sp / max) * 27);
-        setProgress(jobId, pct, `${msg} (${sp}/${max})`);
-      }
-    });
-
-    // 82% → 92% — resolve any missing playerId → name
-    const needIds = [...new Set(moves.map(m => m.playerId).filter(Boolean))];
-    const nameMap = await buildPlayerMap({
-      leagueId, seasonId, req, ids: needIds, maxSp: 25,
-      onProgress: (sp, max, msg) => {
-        const pct = 82 + Math.round((sp / max) * 10);
-        setProgress(jobId, pct, `${msg} (${sp}/${max})`);
-      }
-    });
-
-    // 92% → 100% — your existing report builder
-    setProgress(jobId, 92, "Computing official totals…");
-
-    // If your build function needs series/nameMap, pass them;
-    // if it already pulls from ESPN internally, just ignore these locals.
+    const { leagueId, seasonId, jobId } = req.body || {};
+    if (!leagueId || !seasonId) return res.status(400).send("Missing leagueId/seasonId");
+    setProgress(jobId, 2, "Starting…");
     const report = await buildOfficialReport({
-      leagueId, seasonId, req,
-      // series, nameMap    // uncomment if your builder expects them
+      leagueId: String(leagueId),
+      seasonId: Number(seasonId),
+      req,
+      logger
     });
-
-// persist per-season (also update legacy report.json for compatibility)
-const snapshot = { seasonId, leagueId, ...report };
-await writeJson(`report_${seasonId}.json`, snapshot);
-await writeJson("report.json", snapshot);
-
-setProgress(jobId, 100, "Snapshot complete");
-res.json({ ok: true, weeks: (report?.weekRows || []).length });
-
-
-    setProgress(jobId, 100, "Snapshot complete");
-    res.json({ ok: true, weeks: (report?.weeks || []).length });
-  } catch (err) {
-    setProgress(jobId, 100, "Failed");
-    res.status(502).send(err?.message || String(err));
+    setProgress(jobId, 98, "Saving…");
+    await writeJson(REPORT_FILE, report);
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(path.join(DATA_DIR, "last-build-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
+    setProgress(jobId, 100, "Done");
+    res.json({ ok: true, saved: `data/${REPORT_FILE}`, _debugLog: "data/last-build-log.json" });
+  } catch (e) {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(path.join(DATA_DIR, "last-build-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
+    res.status(500).send(String(e.message || e));
   }
 });
 
-// Admin: create/refresh team codes for a season
-app.post("/api/polls/issue-team-codes", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) {
-    return res.status(401).send("Unauthorized");
-  }
-
-  const { seasonId, teams } = req.body || {};
-  if (!seasonId || !Array.isArray(teams)) {
-    return res.status(400).send("Missing seasonId or teams[]");
-  }
-
-  const out = [];
-  for (const t of teams) {
-    const k = codeKey(seasonId, t.id);
-    // create once if missing; comment the 'if' below to always regenerate
-    if (!pollsState.teamCodes[k]) {
-      pollsState.teamCodes[k] = {
-        code: randomFriendlyCode(t.name || `TEAM${t.id}`),
-        createdAt: Date.now(),
-      };
-    }
-    out.push({ teamId: t.id, teamName: t.name, code: pollsState.teamCodes[k].code });
-  }
-
-  await savePolls(pollsState);
-  res.json({ issued: out.length, codes: out });
+app.get("/api/report", async (req, res) => {
+  const data = await readJson(REPORT_FILE, null);
+  if (!data) return res.status(404).send("No report yet");
+  res.json(data);
 });
 
-// Vote: one vote per poll per team (using the season’s team code)
-app.post("/api/polls/vote", async (req, res) => {
-  const { pollId, optionId, seasonId, teamCode } = req.body || {};
-  if (!pollId || !optionId || !seasonId || !teamCode) {
-    return res.status(400).send("Missing pollId/optionId/seasonId/teamCode");
+// ========== Static hosting (optional) ==========
+const DIST_DIR = path.join(__dirname, "dist");
+app.use(express.static(DIST_DIR));
+app.get(/^(?!\/api\/).*/, async (req, res, next) => {
+  try {
+    const indexPath = path.join(DIST_DIR, "index.html");
+    await fs.access(indexPath);
+    res.sendFile(indexPath);
+  } catch {
+    next();
   }
-
-  // resolve teamId from teamCode for this season
-  let teamId = null;
-  for (const [k, v] of Object.entries(pollsState.teamCodes)) {
-    if (k.startsWith(`${seasonId}:`) && v.code === teamCode) {
-      teamId = Number(k.split(":")[1]);
-      break;
-    }
-  }
-  if (!teamId) return res.status(403).send("Invalid team code for this season");
-
-  // enforce one vote per poll per team
-  pollsState.votes[pollId] = pollsState.votes[pollId] || {};
-  // allow revote to change selection OR block — choose one behavior:
-  pollsState.votes[pollId][teamId] = optionId; // (overwrite = allow change)
-  // If you want to block changes, use instead:
-  // if (pollsState.votes[pollId][teamId]) return res.status(409).send("Already voted");
-
-  await savePolls(pollsState);
-
-  // return tallies
-  const tally = {};
-  for (const tid in pollsState.votes[pollId]) {
-    const choice = pollsState.votes[pollId][tid];
-    tally[choice] = (tally[choice] || 0) + 1;
-  }
-  res.json({ ok: true, tally, byTeam: pollsState.votes[pollId] });
 });
 
-// Admin: list issued team codes for a season
-app.get("/api/polls/team-codes", (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) {
-    return res.status(401).send("Unauthorized");
-  }
-  const seasonId = req.query?.seasonId;
-  if (!seasonId) return res.status(400).send("Missing seasonId");
-
-  const rows = [];
-  for (const [k, v] of Object.entries(pollsState.teamCodes)) {
-    if (k.startsWith(`${seasonId}:`)) {
-      const teamId = Number(k.split(":")[1]);
-      rows.push({ teamId, code: v.code, createdAt: v.createdAt });
-    }
-  }
-  res.json({ codes: rows });
-});
-
-// serve the built client (Vite "dist" folder)
-const CLIENT_DIR = path.join(__dirname, "dist");
-app.use(express.static(CLIENT_DIR));
-// Serve the SPA for anything that's NOT /api/*
-app.get(/^(?!\/api).*/, (_req, res) => {
-  res.sendFile(path.join(CLIENT_DIR, "index.html"));
-});
-
-
-/* =========================
-   Start server
-   ========================= */
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

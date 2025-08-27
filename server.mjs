@@ -1,6 +1,5 @@
-// --- server.mjs (Version 3.5, NATIVE TZ ONLY) ---
+// --- server.mjs (Version 3.6, with League Data API) ---
 // Uses host/local timezone (Render: set TZ=America/Los_Angeles).
-// No robust PT conversion. Transactions/polls logic matches 3.5 behavior.
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -18,15 +17,364 @@ const DATA_DIR   = path.join(__dirname, "data");
 const PORT           = process.env.PORT || 8787;
 const ADMIN_PASSWORD = process.env.VITE_ADMIN_PASSWORD || "changeme";
 
-// ---- IMPORTANT: rely on native local time ----
-// Make sure your environment sets TZ=America/Los_Angeles (Render dashboard)
-
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 // =========================
-// Polls (v2.1)
+// File helpers
+// =========================
+const fpath = (name) => path.join(DATA_DIR, name);
+async function readJson(name, fallback) {
+  try { return JSON.parse(await fs.readFile(fpath(name), "utf8")); }
+  catch { return fallback; }
+}
+async function writeJson(name, obj) {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
+}
+
+// Authentication helper
+const requireAdmin = (req, res, next) => {
+  if (req.header("x-admin") !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+};
+
+// =========================
+// League Data Storage
+// =========================
+const LEAGUE_DATA_FILE = "league_data.json";
+
+async function getLeagueData() {
+  return await readJson(LEAGUE_DATA_FILE, {
+    announcements: [],
+    weeklyList: [],
+    members: [],
+    waivers: [],
+    buyins: {},
+    leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
+    tradeBlock: []
+  });
+}
+
+async function saveLeagueData(data) {
+  await writeJson(LEAGUE_DATA_FILE, data);
+}
+
+// Helper for generating IDs
+const nid = () => Math.random().toString(36).slice(2, 9);
+const today = () => new Date().toISOString().slice(0, 10);
+
+// =========================
+// League Data API Routes
+// =========================
+
+// GET all league data
+app.get("/api/league-data", async (req, res) => {
+  try {
+    const data = await getLeagueData();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load league data" });
+  }
+});
+
+// === ANNOUNCEMENTS ===
+app.get("/api/league-data/announcements", async (req, res) => {
+  try {
+    const data = await getLeagueData();
+    res.json({ announcements: data.announcements || [] });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load announcements" });
+  }
+});
+
+app.post("/api/league-data/announcements", requireAdmin, async (req, res) => {
+  try {
+    const { html } = req.body;
+    if (!html || !html.trim()) {
+      return res.status(400).json({ error: "HTML content required" });
+    }
+
+    const data = await getLeagueData();
+    const newAnnouncement = {
+      id: nid(),
+      html: html.trim(),
+      createdAt: Date.now()
+    };
+    
+    data.announcements = data.announcements || [];
+    data.announcements.unshift(newAnnouncement);
+    await saveLeagueData(data);
+
+    res.json({ success: true, announcement: newAnnouncement });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to create announcement" });
+  }
+});
+
+app.delete("/api/league-data/announcements", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Announcement ID required" });
+    }
+
+    const data = await getLeagueData();
+    data.announcements = (data.announcements || []).filter(a => a.id !== id);
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete announcement" });
+  }
+});
+
+// === WEEKLY CHALLENGES ===
+app.get("/api/league-data/weekly", async (req, res) => {
+  try {
+    const data = await getLeagueData();
+    res.json({ weeklyList: data.weeklyList || [] });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load weekly challenges" });
+  }
+});
+
+app.post("/api/league-data/weekly", requireAdmin, async (req, res) => {
+  try {
+    const { entry } = req.body;
+    if (!entry) {
+      return res.status(400).json({ error: "Entry required" });
+    }
+
+    const data = await getLeagueData();
+    const newEntry = { ...entry, id: entry.id || nid(), createdAt: entry.createdAt || Date.now() };
+    
+    data.weeklyList = data.weeklyList || [];
+    data.weeklyList.unshift(newEntry);
+    await saveLeagueData(data);
+
+    res.json({ success: true, entry: newEntry });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to create weekly challenge" });
+  }
+});
+
+app.delete("/api/league-data/weekly", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Challenge ID required" });
+    }
+
+    const data = await getLeagueData();
+    data.weeklyList = (data.weeklyList || []).filter(w => w.id !== id);
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete weekly challenge" });
+  }
+});
+
+// === MEMBERS ===
+app.post("/api/league-data/members", requireAdmin, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Member name required" });
+    }
+
+    const data = await getLeagueData();
+    const newMember = { id: nid(), name: name.trim() };
+    
+    data.members = data.members || [];
+    data.members.push(newMember);
+    await saveLeagueData(data);
+
+    res.json({ success: true, member: newMember });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to add member" });
+  }
+});
+
+app.delete("/api/league-data/members", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Member ID required" });
+    }
+
+    const data = await getLeagueData();
+    data.members = (data.members || []).filter(m => m.id !== id);
+    data.waivers = (data.waivers || []).filter(w => w.userId !== id);
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete member" });
+  }
+});
+
+app.post("/api/league-data/import-teams", requireAdmin, async (req, res) => {
+  try {
+    const { teams } = req.body;
+    if (!Array.isArray(teams)) {
+      return res.status(400).json({ error: "Teams array required" });
+    }
+
+    const data = await getLeagueData();
+    data.members = teams.map(name => ({ id: nid(), name }));
+    await saveLeagueData(data);
+
+    res.json({ success: true, imported: teams.length });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to import teams" });
+  }
+});
+
+// === WAIVERS ===
+app.post("/api/league-data/waivers", requireAdmin, async (req, res) => {
+  try {
+    const { userId, player, date } = req.body;
+    if (!userId || !player) {
+      return res.status(400).json({ error: "User ID and player required" });
+    }
+
+    const data = await getLeagueData();
+    const newWaiver = {
+      id: nid(),
+      userId,
+      player: player.trim(),
+      date: date || today()
+    };
+    
+    data.waivers = data.waivers || [];
+    data.waivers.unshift(newWaiver);
+    await saveLeagueData(data);
+
+    res.json({ success: true, waiver: newWaiver });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to add waiver" });
+  }
+});
+
+app.delete("/api/league-data/waivers", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Waiver ID required" });
+    }
+
+    const data = await getLeagueData();
+    data.waivers = (data.waivers || []).filter(w => w.id !== id);
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete waiver" });
+  }
+});
+
+app.post("/api/league-data/reset-waivers", requireAdmin, async (req, res) => {
+  try {
+    const data = await getLeagueData();
+    data.waivers = [];
+    await saveLeagueData(data);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to reset waivers" });
+  }
+});
+
+// === BUY-INS ===
+app.post("/api/league-data/buyins", requireAdmin, async (req, res) => {
+  try {
+    const { seasonKey, updates } = req.body;
+    if (!seasonKey || !updates) {
+      return res.status(400).json({ error: "Season key and updates required" });
+    }
+
+    const data = await getLeagueData();
+    data.buyins = data.buyins || {};
+    data.buyins[seasonKey] = updates;
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update buy-ins" });
+  }
+});
+
+// === LEAGUE SETTINGS ===
+app.post("/api/league-data/settings", requireAdmin, async (req, res) => {
+  try {
+    const { html } = req.body;
+    if (!html) {
+      return res.status(400).json({ error: "HTML content required" });
+    }
+
+    const data = await getLeagueData();
+    data.leagueSettingsHtml = html.trim();
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save league settings" });
+  }
+});
+
+// === TRADING BLOCK ===
+app.get("/api/league-data/trading", async (req, res) => {
+  try {
+    const data = await getLeagueData();
+    res.json({ tradeBlock: data.tradeBlock || [] });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load trades" });
+  }
+});
+
+app.post("/api/league-data/trading", requireAdmin, async (req, res) => {
+  try {
+    const { trade } = req.body;
+    if (!trade) {
+      return res.status(400).json({ error: "Trade data required" });
+    }
+
+    const data = await getLeagueData();
+    const newTrade = { ...trade, id: nid(), createdAt: Date.now() };
+    
+    data.tradeBlock = data.tradeBlock || [];
+    data.tradeBlock.unshift(newTrade);
+    await saveLeagueData(data);
+
+    res.json({ success: true, trade: newTrade });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to add trade" });
+  }
+});
+
+app.delete("/api/league-data/trading", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Trade ID required" });
+    }
+
+    const data = await getLeagueData();
+    data.tradeBlock = (data.tradeBlock || []).filter(t => t.id !== id);
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete trade" });
+  }
+});
+
+// =========================
+// Polls (v2.1) - Keep existing implementation
 // =========================
 const POLLS_FILE = path.join(DATA_DIR, "polls.json");
 let pollsState = { polls: {}, votes: {}, teamCodes: {} };
@@ -73,6 +421,7 @@ app.post("/api/polls/issue-team-codes", async (req, res) => {
   await savePolls();
   res.json({ issued: issued.length, codes: issued });
 });
+
 app.post("/api/polls/vote", async (req, res) => {
   const { pollId, optionId, seasonId, teamCode } = req.body || {};
   if (!pollId || !optionId || !seasonId || !teamCode) return res.status(400).send("Missing fields");
@@ -86,6 +435,7 @@ app.post("/api/polls/vote", async (req, res) => {
   await savePolls();
   res.json({ ok: true, byTeam: pollsState.votes[pollId] });
 });
+
 app.get("/api/polls", (req, res) => {
   const seasonId = String(req.query?.seasonId || "");
   const out = Object.values(pollsState.polls || {}).map(p => {
@@ -103,7 +453,7 @@ app.get("/api/polls", (req, res) => {
   });
   res.json({ polls: out });
 });
-const nid = () => Math.random().toString(36).slice(2, 10);
+
 app.post("/api/polls/create", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { question, options } = req.body || {};
@@ -113,6 +463,7 @@ app.post("/api/polls/create", async (req, res) => {
   await savePolls();
   res.json({ ok: true, pollId: id });
 });
+
 app.post("/api/polls/close", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { pollId, closed } = req.body || {};
@@ -121,6 +472,7 @@ app.post("/api/polls/close", async (req, res) => {
   await savePolls();
   res.json({ ok: true });
 });
+
 app.post("/api/polls/delete", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { pollId } = req.body || {};
@@ -130,6 +482,7 @@ app.post("/api/polls/delete", async (req, res) => {
   await savePolls();
   res.json({ ok: true });
 });
+
 app.get("/api/polls/team-codes", (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const seasonId = req.query?.seasonId;
@@ -142,8 +495,10 @@ app.get("/api/polls/team-codes", (req, res) => {
 });
 
 // =========================
-// Progress
+// Keep existing ESPN/Report functionality
 // =========================
+
+// Progress
 const jobProgress = new Map();
 function setProgress(jobId, pct, msg) {
   if (!jobId) return;
@@ -154,22 +509,7 @@ app.get("/api/progress", (req, res) => {
   res.json(jobProgress.get(jobId) || { pct: 0, msg: "" });
 });
 
-// =========================
-// File helpers
-// =========================
-const fpath = (name) => path.join(DATA_DIR, name);
-async function readJson(name, fallback) {
-  try { return JSON.parse(await fs.readFile(fpath(name), "utf8")); }
-  catch { return fallback; }
-}
-async function writeJson(name, obj) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
-}
-
-// =========================
 // Week helpers (NATIVE LOCAL TIME)
-// =========================
 const WEEK_START_DAY = 3; // Wednesday
 function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
 function normalizeEpoch(x){
@@ -224,9 +564,7 @@ function weekRangeLabelDisplay(start){
   return `${short(wed)}–${short(tue)} (cutoff Tue 11:59 PM PT)`;
 }
 
-// =========================
 // ESPN proxy (3.5 behavior)
-// =========================
 function buildCookie(req) {
   const hdr = req.headers["x-espn-cookie"];
   if (hdr) return String(hdr);
@@ -284,9 +622,7 @@ app.get("/api/espn", async (req, res) => {
   } catch (e) { res.status(502).send(String(e.message || e)); }
 });
 
-// =========================
 // Transactions+report (3.5 behavior, restored)
-// =========================
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
@@ -520,9 +856,7 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   return { lastSynced: fmtPT(new Date()), totalsRows, weekRows, rawMoves };
 }
 
-// =========================
 // Snapshot routes
-// =========================
 app.get("/api/report", async (req, res) => {
   const seasonId = req.query?.seasonId;
   const preferred = seasonId ? await readJson(`report_${seasonId}.json`, null) : null;
@@ -560,20 +894,7 @@ app.post("/api/report/update", async (req, res) => {
   }
 });
 
-// =========================
-// ESPN passthrough
-// =========================
-app.get("/api/espn", async (req, res) => {
-  try {
-    const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
-    const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
-    res.json(json);
-  } catch (e) { res.status(502).send(String(e.message || e)); }
-});
-
-// =========================
 // Static hosting
-// =========================
 const CLIENT_DIR = path.join(__dirname, "dist");
 app.use(express.static(CLIENT_DIR));
 app.get(/^(?!\/api).*/, (_req, res) => { res.sendFile(path.join(CLIENT_DIR, "index.html")); });

@@ -20,6 +20,64 @@ const LEAGUE_TZ = "America/Los_Angeles";           // Pacific Time
 const WEEK_START_DAY = 3; // 0=Sun..3=Wed
 
 const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
+/* ===== v37 server API helpers (persistent cross-device state) ===== */
+const ADMIN_HEADER = () => {
+  const pwd = localStorage.getItem("adminPassword") || ADMIN_ENV;
+  return pwd ? { "x-admin": pwd } : {};
+};
+const j = (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
+
+// Announcements
+async function apiGetAnnouncements(){ return fetch(API("/api/v37/announcements")).then(j); }
+async function apiSaveAnnouncements(items){
+  return fetch(API("/api/v37/announcements"), {
+    method: "POST", headers: { "Content-Type":"application/json", ...ADMIN_HEADER() },
+    body: JSON.stringify({ items })
+  }).then(j);
+}
+
+// Weekly challenges
+async function apiGetChallenges(){ return fetch(API("/api/v37/challenges")).then(j); }
+async function apiSaveChallenges(items){
+  return fetch(API("/api/v37/challenges"), {
+    method: "POST", headers: { "Content-Type":"application/json", ...ADMIN_HEADER() },
+    body: JSON.stringify({ items })
+  }).then(j);
+}
+
+// League settings
+async function apiGetLeagueSettings(){ return fetch(API("/api/v37/league/settings")).then(j); }
+async function apiSaveLeagueSettings(data){
+  return fetch(API("/api/v37/league/settings"), {
+    method: "POST", headers: { "Content-Type":"application/json", ...ADMIN_HEADER() },
+    body: JSON.stringify(data)
+  }).then(j);
+}
+async function apiImportTeams(leagueId, seasonId){
+  return fetch(API("/api/v37/league/teams/import"), {
+    method: "POST", headers: { "Content-Type":"application/json", ...ADMIN_HEADER() },
+    body: JSON.stringify({ leagueId, seasonId })
+  }).then(j);
+}
+
+// Buy-in
+async function apiGetBuyin(){ return fetch(API("/api/v37/league/buyin")).then(j); }
+async function apiSaveBuyin(paid){
+  return fetch(API("/api/v37/league/buyin"), {
+    method: "POST", headers: { "Content-Type":"application/json", ...ADMIN_HEADER() },
+    body: JSON.stringify({ paid })
+  }).then(j);
+}
+
+// Trading block
+async function apiGetTrading(){ return fetch(API("/api/v37/trading-block")).then(j); }
+async function apiSaveTrading(items){
+  return fetch(API("/api/v37/trading-block"), {
+    method: "POST", headers: { "Content-Type":"application/json", ...ADMIN_HEADER() },
+    body: JSON.stringify({ items })
+  }).then(j);
+}
+
 
 /* ---- playful (non-hateful) roasts for wrong commissioner password ---- */
 const ROASTS = [
@@ -478,6 +536,44 @@ function LeagueHub(){
 
   const [data,setData]=useState(load);
 
+  // --- Sync persistent server state into client on load/season change ---
+  useEffect(() => {
+    (async () => {
+      try {
+        const [ann, ch, ls, bi, tb] = await Promise.all([
+          apiGetAnnouncements().catch(()=>({items:[]})),
+          apiGetChallenges().catch(()=>({items:[]})),
+          apiGetLeagueSettings().catch(()=>({teams:[], venmoLink:"", zelleEmail:"", venmoQR:""})),
+          apiGetBuyin().catch(()=>({paid:{}})),
+          apiGetTrading().catch(()=>({items:[]}))
+        ]);
+        setData(d => {
+          const members = (ls.teams || []).map(t => ({ id: String(t.id), name: t.name }));
+          const seasonKey = String(seasonYear);
+          const curBuy = d.buyins?.[seasonKey] || {};
+          return {
+            ...d,
+            announcements: ann.items || d.announcements || [],
+            weeklyList: ch.items || d.weeklyList || [],
+            tradeBlock: tb.items || d.tradeBlock || [],
+            members: members.length ? members : d.members,
+            buyins: {
+              ...(d.buyins||{}),
+              [seasonKey]: {
+                paid: bi.paid || curBuy.paid || {},
+                hidden: curBuy.hidden || false,
+                venmoLink: ls.venmoLink || curBuy.venmoLink || "",
+                zelleEmail: ls.zelleEmail || curBuy.zelleEmail || "",
+                venmoQR: ls.venmoQR || curBuy.venmoQR || ""
+              }
+            }
+          };
+        });
+      } catch {}
+    })();
+  }, [seasonYear]);
+
+
 
 
   // Commissioner mode
@@ -493,6 +589,7 @@ function LeagueHub(){
     if(pass===ADMIN_ENV){
       setIsAdmin(true);
       localStorage.setItem("ffl_is_admin","1");
+      localStorage.setItem("adminPassword", pass); // for API headers
       alert("Commissioner mode enabled");
     } else {
       alert(nextRoast());
@@ -542,17 +639,17 @@ const deleteAnnouncement = (id) =>
   const deleteWaiver = (id)=> setData(d=>({...d, waivers:d.waivers.filter(w=>w.id!==id)}));
 
   // Import ESPN teams (public endpoint)
-  const importEspnTeams = async ()=>{
-    if(!espn.leagueId) return alert("Enter League ID");
-    try{
-      const json = await fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" });
-      const teams = json?.teams || [];
-      if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
-      const names = [...new Set(teams.map(t => teamName(t)))];
-      setData(d => ({ ...d, members: names.map(n => ({ id: nid(), name: n })) }));
-      alert(`Imported ${names.length} teams.`);
-    } catch(e){ alert(e.message || "ESPN fetch failed. Check League/Season."); }
-  };
+  const importEspnTeams = async () => {
+  if(!espn.leagueId) return alert("Enter League ID");
+  try{
+    const r = await apiImportTeams(espn.leagueId, espn.seasonId);
+    const teams = r.teams || [];
+    if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
+    const members = teams.map(t => ({ id: String(t.id), name: t.name }));
+    setData(d => ({ ...d, members }));
+    alert(`Imported ${members.length} teams.`);
+  } catch(e){ alert(e.message || "Import failed."); }
+};
 
   /* ---- Sync overlay state ---- */
   const [syncing, setSyncing] = useState(false);
@@ -1517,20 +1614,18 @@ function WeeklyView({ isAdmin, data, setData, seasonYear }) {
     return 0;
   });
 
-  const addWeekly = (entry) => {
-    setData(d => ({
-      ...d,
-      weeklyList: [entry, ...(d.weeklyList || [])]
-    }));
-  };
+  const addWeekly = async (entry) => {
+  const next = [entry, ...(data.weeklyList || [])];
+  setData(d => ({ ...d, weeklyList: next }));
+  try { await apiSaveChallenges(next); } catch {}
+};
 
-  const deleteWeekly = (id) => {
-    if (!confirm("Delete this challenge?")) return;
-    setData(d => ({
-      ...d,
-      weeklyList: (d.weeklyList || []).filter(x => x.id !== id)
-    }));
-  };
+  const deleteWeekly = async (id) => {
+  if (!confirm("Delete this challenge?")) return;
+  const next = (data.weeklyList || []).filter(x => x.id !== id);
+  setData(d => ({ ...d, weeklyList: next }));
+  try { await apiSaveChallenges(next); } catch {}
+};
 
   return (
     <Section title="Weekly Challenges">
@@ -1625,6 +1720,10 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
     });
   };
 
+  const savePaid = async () => {
+    try { await apiSaveBuyin(cur.paid || {}); alert("Buy-in saved."); } catch(e){ alert(e.message || "Save failed"); }
+  };
+
   const togglePaid = (id) => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
   const markAll   = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
   const resetAll  = () => patch({ paid: {} });
@@ -1687,6 +1786,7 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
                 <div style={{display:"flex", gap:8}}>
                   <button className="btn" onClick={markAll}>Mark all paid</button>
                   <button className="btn" onClick={resetAll}>Reset</button>
+                  <button className="btn" onClick={savePaid}>Save</button>
                 </div>
               )}
             </div>

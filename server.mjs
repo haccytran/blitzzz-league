@@ -699,6 +699,47 @@ async function buildOfficialReport({ leagueId, seasonId, req, logger }){
 }
 
 // ========== Build/serve report endpoints ==========
+
+// Legacy endpoint used by the UI button "Update Official Snapshot"
+// This mirrors /api/build but matches the older route the client expects.
+app.post("/api/report/update", async (req, res) => {
+  try {
+    if (req.header("x-admin") !== ADMIN_PASSWORD) {
+      return res.status(401).send("Unauthorized");
+    }
+    const { leagueId, seasonId } = req.body || {};
+    if (!leagueId || !seasonId) {
+      return res.status(400).send("Missing leagueId/seasonId");
+    }
+    const jobId = (req.query?.jobId || `job_${Date.now()}`);
+    setProgress(jobId, 2, "Starting…");
+
+    const logger = new ProcessLogger();
+    const report = await buildOfficialReport({
+      leagueId: String(leagueId),
+      seasonId: Number(seasonId),
+      req,
+      logger
+    });
+
+    // Persist
+    await writeJson("report.json", report);
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(path.join(DATA_DIR, "last-build-log.json"), JSON.stringify(logger.getFullLog(), null, 2), "utf8");
+
+    setProgress(jobId, 100, "Done");
+    res.json({ ok: true, weeks: (report?.weeks || []).length });
+  } catch (e) {
+    setProgress(String(req.query?.jobId || ""), 100, "Failed");
+    res.status(500).send(String(e.message || e));
+  }
+});
+
+// Some older clients used /api/report/update2 — include an alias
+app.post("/api/report/update2", async (req, res) => {
+  req.url = req.url.replace("/api/report/update2", "/api/report/update");
+  return app._router.handle(req, res);
+});
 app.post("/api/build", async (req, res) => {
   const logger = new ProcessLogger();
   try {

@@ -1,4 +1,785 @@
-// src/App.jsx
+buyins={buyins}
+              updateBuyins={updateBuyins}
+            />
+          </div>
+
+          <div className="card dues-week" style={{padding:12, minWidth:0}}>
+            <h3 style={{marginTop:0}}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
+            {report.weekRows.map(w=>(
+              <div key={w.week} style={{marginBottom:12}}>
+                <div style={{fontWeight:600, margin:"6px 0"}}>Week {w.week} — {w.range}</div>
+                <table style={{width:"100%", borderCollapse:"collapse"}}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Team</th>
+                      <th style={th}>Adds</th>
+                      <th style={th}>Owes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {w.entries.map(e=>(
+                      <tr key={e.name}>
+                        <td style={{...td, whiteSpace:"normal"}}>{e.name}</td>
+                        <td style={td}>{e.count}</td>
+                        <td style={td}>${e.owes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function BuyInTracker({ isAdmin, members, seasonYear, buyins, updateBuyins }) {
+  const BUYIN = 200;
+  const displayYear = new Date().getFullYear();
+  const seasonKey = String(seasonYear);
+  const cur = buyins[seasonKey] || { paid: {}, hidden: false, venmoLink: "", zelleEmail: "", venmoQR: "" };
+
+  const patch = (p) => updateBuyins(seasonKey, { ...cur, ...p });
+  const togglePaid = (id) => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
+  const markAll = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
+  const resetAll = () => patch({ paid: {} });
+
+  const paidCount = members.filter(m => cur.paid[m.id]).length;
+  const allPaid = members.length > 0 && paidCount === members.length;
+
+  if (cur.hidden && !isAdmin) return null;
+
+  const [venmo, setVenmo] = useState(cur.venmoLink || "");
+  const [zelle, setZelle] = useState(cur.zelleEmail || "");
+  useEffect(() => { setVenmo(cur.venmoLink || ""); setZelle(cur.zelleEmail || ""); }, [seasonKey, cur]);
+
+  const saveMeta = () => patch({ venmoLink: venmo.trim(), zelleEmail: zelle.trim() });
+
+  const onUploadQR = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => patch({ venmoQR: r.result || "" });
+    r.readAsDataURL(f);
+  };
+
+  const copyZelle = async () => {
+    const email = (cur.zelleEmail || "").trim();
+    if (!email) return alert("No Zelle email set yet.");
+    try { 
+      await navigator.clipboard.writeText(email); 
+      alert("Zelle username/email copied to clipboard! Paste into your Zelle app to Pay via Zelle!"); 
+    } catch { 
+      alert("Could not copy. Long-press / right-click to copy instead: " + email); 
+    }
+  };
+
+  return <div className="splash"><Logo size={160}/></div>;
+}
+
+function SyncOverlay({ open, pct, msg }) {
+  if (!open) return null;
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:9999 }}>
+      <div className="card" style={{ width:420, padding:16, background:"#0b1220", color:"#e2e8f0", border:"1px solid #1f2937" }}>
+        <div style={{ fontWeight:700, marginBottom:8 }}>Working...</div>
+        <div style={{ fontSize:12, color:"#93a3b8", minHeight:18 }}>{msg}</div>
+        <div style={{ height:10, background:"#0f172a", borderRadius:999, marginTop:10, overflow:"hidden", border:"1px solid #1f2937" }}>
+          <div style={{ width:`${pct}%`, height:"100%", background:"#38bdf8" }} />
+        </div>
+        <div style={{ textAlign:"right", fontSize:12, marginTop:6 }}>{pct}%</div>
+      </div>
+    </div>
+  );
+}(
+    <div className="card" style={{ padding:16, marginTop:16 }}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8}}>
+        <h3 style={{marginTop:0}}>${BUYIN} Season Buy-In — {displayYear}</h3>
+        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+          <span className="badge">{paidCount} / {members.length} paid</span>
+          {isAdmin && (
+            cur.hidden
+              ? <button className="btn" onClick={()=>patch({hidden:false})}>Show tracker</button>
+              : allPaid
+                ? <button className="btn" onClick={()=>patch({hidden:true})}>Hide (all paid)</button>
+                : null
+          )}
+        </div>
+      </div>
+
+      {members.length === 0 && (
+        <p style={{color:"#64748b", marginTop:0}}>
+          No members yet. Import teams in <b>League Settings</b> first.
+        </p>
+      )}
+
+      {members.length > 0 && (
+        <div className="grid" style={{gridTemplateColumns:"1fr", gap:16}}>
+          <div className="card" style={{ padding:12, background:"#f8fafc" }}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
+              <strong>Buy-In Paid Checklist ✅</strong>
+              {isAdmin && (
+                <div style={{display:"flex", gap:8}}>
+                  <button className="btn" onClick={markAll}>Mark all paid</button>
+                  <button className="btn" onClick={resetAll}>Reset</button>
+                </div>
+              )}
+            </div>
+            <ul style={{listStyle:"none", padding:0, margin:0}}>
+              {[...members].sort((a,b)=>a.name.localeCompare(b.name)).map(m => (
+                <li key={m.id} style={{display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid #e2e8f0"}}>
+                  <input
+                    type="checkbox"
+                    checked={!!cur.paid[m.id]}
+                    onChange={()=> isAdmin && togglePaid(m.id)}
+                    disabled={!isAdmin}
+                  />
+                  <span style={{textDecoration: cur.paid[m.id] ? "line-through" : "none"}}>{m.name}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="card buyin-pay" style={{ padding:12 }}>
+            <h4 style={{marginTop:0}}>Pay Dues</h4>
+            <div style={{display:"flex", flexDirection:"column", gap:8}}>
+              {cur.venmoLink && (
+                <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">Pay with Venmo</a>
+              )}
+              {cur.zelleEmail && (
+                <button type="button" className="btn" onClick={copyZelle}>Pay with Zelle</button>
+              )}
+            </div>
+            {(cur.venmoQR || cur.venmoLink || cur.zelleEmail) && (
+              <div style={{marginTop:8}}>
+                <a href={cur.venmoLink || `mailto:${encodeURIComponent(cur.zelleEmail)}`} target="_blank" rel="noreferrer" title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}>
+                  {cur.venmoQR && <img src={cur.venmoQR} alt="Venmo QR"/>}
+                </a>
+              </div>
+            )}
+            {isAdmin && (
+              <>
+                <div className="grid" style={{gridTemplateColumns:"1fr", gap:8, marginTop:8}}>
+                  <input className="input" placeholder="https://venmo.com/u/YourHandle" value={venmo} onChange={e=>setVenmo(e.target.value)}/>
+                  <input className="input" placeholder="Zelle email" value={zelle} onChange={e=>setZelle(e.target.value)}/>
+                </div>
+                <div style={{display:"flex", gap:8, alignItems:"center", marginTop:8, flexWrap:"wrap"}}>
+                  <input type="file" accept="image/*" onChange={onUploadQR}/>
+                  {cur.venmoQR && <button className="btn" onClick={()=>patch({venmoQR:""})}>Remove QR</button>}
+                  <button className="btn primary" onClick={saveMeta}>Save links</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TransactionsView({ report }){
+  if (!report) {
+    return (
+      <Section title="Transactions">
+        <p style={{color:"#64748b"}}>No snapshot yet — go to <b>Dues</b> and click <b>Refresh Snapshot</b> (or have the commissioner update it).</p>
+      </Section>
+    );
+  }
+
+  const SHOW_METHOD_COLUMN = false;
+  const METHOD_FOR_ADDS_ONLY = true;
+
+  const all = (report.rawMoves || report.rawAdds || []).map(r => ({
+  ...r,
+  week: Math.max(1, Number(r.week) || 1)
+}));
+
+  const teams = Array.from(new Set(all.map(r => r.team))).sort();
+
+  const [team, setTeam] = useState("");
+  const [method, setMethod] = useState(""); // WAIVER / FA
+  const [action, setAction] = useState(""); // ADD / DROP
+  const [q, setQ] = useState("");
+
+  const filtered = all.filter(r =>
+    (!team || r.team === team) &&
+    (!action || r.action === action) &&
+    (!method || r.method === method) &&
+    (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
+  );
+
+  const weeksSorted = Array.from(new Set(filtered.map(r => Math.max(1, Number(r.week) || 1))))
+  .sort((a, b) => a - b);
+
+const rangeByWeek = {};
+for (const r of filtered) {
+  const w = Math.max(1, Number(r.week) || 1);
+  if (!rangeByWeek[w]) rangeByWeek[w] = r.range;
+}
+
+const byWeek = new Map();
+for (const r of filtered) {
+  const w = Math.max(1, Number(r.week) || 1);
+  if (!byWeek.has(w)) byWeek.set(w, []);
+  byWeek.get(w).push({ ...r, week: w });
+}
+
+  const [openWeeks, setOpenWeeks] = useState(() => new Set(weeksSorted));
+  useEffect(() => { setOpenWeeks(new Set(weeksSorted)); }, [q, team, method, action]);
+  const toggleWeek = (w)=> setOpenWeeks(s => { const n=new Set(s); n.has(w)?n.delete(w):n.add(w); return n; });
+
+  return (
+    <Section title="Transactions" actions={
+      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+        <select className="input" value={team} onChange={e=>setTeam(e.target.value)}>
+          <option value="">All teams</option>
+          {teams.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select className="input" value={action} onChange={e=>setAction(e.target.value)}>
+          <option value="">All actions</option>
+          <option value="ADD">ADD</option>
+          <option value="DROP">DROP</option>
+        </select>
+        <select className="input" value={method} onChange={e=>setMethod(e.target.value)}>
+          <option value="">All methods</option>
+          <option value="WAIVER">WAIVER</option>
+          <option value="FA">FA</option>
+        </select>
+        <input className="input" placeholder="Search player/team…" value={q} onChange={e=>setQ(e.target.value)} />
+        <button className="btn" style={btnSec} onClick={()=>setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
+        <button className="btn" style={btnSec} onClick={()=>setOpenWeeks(new Set())}>Collapse all</button>
+        <button className="btn" style={btnSec} onClick={()=>{
+          const rows=[["Date (PT)","Week","Range","Team","Player","Action", ...(SHOW_METHOD_COLUMN?["Method"]:[]), "Source","PlayerId"]];
+          filtered.forEach(r=> rows.push([
+            r.date, r.week, r.range, r.team, r.player, r.action,
+            ...(SHOW_METHOD_COLUMN ? [ (METHOD_FOR_ADDS_ONLY && r.action==="DROP") ? "" : r.method ] : []),
+            r.source, r.playerId
+          ]));
+          downloadCSV("transactions_filtered.csv", rows);
+        }}>Download CSV (filtered)</button>
+      </div>
+    }>
+      {weeksSorted.length === 0 && (
+        <p style={{color:"#64748b"}}>No transactions match your filters.</p>
+      )}
+
+      {weeksSorted.map(week => {
+        const rows = byWeek.get(week) || [];
+        const open = openWeeks.has(week);
+        return (
+          <div key={week} className="card" style={{padding:12, marginBottom:12}}>
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer"}}
+                 onClick={()=>toggleWeek(week)}>
+              <div style={{display:"flex", alignItems:"center", gap:8}}>
+                <span style={{fontWeight:700}}>Week {week}</span>
+                <span style={{color:"#64748b"}}>{rangeByWeek[week] || ""}</span>
+              </div>
+              <span style={{color:"#64748b"}}>{open ? "Hide ▲" : "Show ▼"}</span>
+            </div>
+            {open && (
+              <div style={{marginTop:8, overflowX:"auto"}}>
+                <table style={{width:"100%", borderCollapse:"collapse"}}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Date (PT)</th>
+                      <th style={th}>Team</th>
+                      <th style={th}>Player</th>
+                      <th style={th}>Action</th>
+                      {SHOW_METHOD_COLUMN && <th style={th}>Method</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r,i)=>(
+                      <tr key={i}>
+                        <td style={td}>{r.date}</td>
+                        <td style={td}>{r.team}</td>
+                        <td style={{ ...td, color: r.action==="ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                          {r.player || (r.playerId ? `#${r.playerId}` : "—")}
+                        </td>
+                        <td style={td}>{r.action}</td>
+                        {SHOW_METHOD_COLUMN && (
+                          <td style={td}>
+                            {(METHOD_FOR_ADDS_ONLY && r.action === "DROP") ? "" : (r.method || "")}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    {rows.length===0 && (
+                      <tr><td style={td} colSpan={SHOW_METHOD_COLUMN ? 5 : 4}>&nbsp;No transactions in this week.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </Section>
+  );
+}
+
+function Rosters({ leagueId, seasonId, members, isAdmin, loadServerData }) {
+  const [rosters, setRosters] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadRosters = async () => {
+    try {
+      const response = await fetch(API(`/api/league-data/rosters?seasonId=${seasonId}`));
+      if (response.ok) {
+        const data = await response.json();
+        setRosters(data.rosters || []);
+      }
+    } catch (err) {
+      console.error("Failed to load rosters:", err);
+    }
+  };
+
+  const populateFromESPN = async () => {
+    if (!leagueId || !seasonId) return alert("Set League ID & Season in Settings first");
+    if (!isAdmin) return alert("Admin access required");
+    
+    setLoading(true);
+    setError("");
+    
+    try {
+      const [teamJson, rosJson] = await Promise.all([
+        fetchEspnJson({ leagueId, seasonId, view: "mTeam" }),
+        fetchEspnJson({ leagueId, seasonId, view: "mRoster" })
+      ]);
+      
+      const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
+      const rostersData = (rosJson?.teams || []).map(t => {
+        const entries = (t.roster?.entries || []).map(e => {
+          const p = e.playerPoolEntry?.player;
+          return {
+            name: p?.fullName || "Player",
+            position: posIdToName(p?.defaultPositionId),
+            slot: slotIdToName(e.lineupSlotId)
+          };
+        });
+        return { 
+          teamId: t.id,
+          teamName: teamsById[t.id] || `Team ${t.id}`, 
+          roster: entries 
+        };
+      }).sort((a, b) => a.teamName.localeCompare(b.teamName));
+
+      // Save to server
+      const response = await fetch(API('/api/league-data/rosters'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin': ADMIN_ENV },
+        body: JSON.stringify({ seasonId, rosters: rostersData })
+      });
+
+      if (response.ok) {
+        setRosters(rostersData);
+        alert(`Populated rosters for ${rostersData.length} teams`);
+      }
+    } catch (err) {
+      setError("Failed to populate rosters from ESPN");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { 
+    if (seasonId) loadRosters(); 
+  }, [seasonId]);
+
+  return (
+    <Section title="Rosters" actions={
+      <div style={{display:"flex", gap:8, alignItems:"center"}}>
+        {isAdmin && (
+          <button className="btn" style={btnPri} onClick={populateFromESPN} disabled={loading}>
+            {loading ? "Importing..." : "Import Teams"}
+          </button>
+        )}
+        <span className="badge">Server-side stored</span>
+      </div>
+    }>
+      {!leagueId && <p style={{color:"#64748b"}}>Set your ESPN League ID & Season in <b>League Settings</b>.</p>}
+      {loading && <p>Loading rosters...</p>}
+      {error && <p style={{color:"#dc2626"}}>{error}</p>}
+      
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
+        {rosters.map(team => (
+          <div key={team.teamId || team.teamName} className="card" style={{padding:16}}>
+            <h3 style={{marginTop:0}}>{team.teamName}</h3>
+            <ul style={{margin:0,paddingLeft:16}}>
+              {team.roster.map((e,i)=> 
+                <li key={i}><b>{e.slot}</b> — {e.name} ({e.position})</li>
+              )}
+              {team.roster.length === 0 && <li style={{color:"#64748b"}}>No players yet</li>}
+            </ul>
+          </div>
+        ))}
+      </div>
+      
+      {!loading && rosters.length === 0 && leagueId && (
+        <p style={{color:"#64748b"}}>
+          No roster data yet. {isAdmin ? "Click 'Import Teams' to populate from ESPN." : "Ask commissioner to import teams."}
+        </p>
+      )}
+    </Section>
+  );
+}
+
+function posIdToName(id){ 
+  const map={0:"QB",1:"TQB",2:"RB",3:"RB",4:"WR",5:"WR/TE",6:"TE",7:"OP",8:"DT",9:"DE",10:"LB",11:"DE",12:"DB",13:"DB",14:"DP",15:"D/ST",16:"D/ST",17:"K"}; 
+  return map?.[id] || "—"; 
+}
+
+function slotIdToName(id){ 
+  const map={0:"QB",2:"RB",3:"RB/WR",4:"WR",5:"WR/TE",6:"TE",7:"OP",16:"D/ST",17:"K",20:"Bench",21:"IR",23:"FLEX",24:"EDR",25:"RDP",26:"RDP",27:"RDP",28:"Head Coach"}; 
+  return map[id] || `Slot ${id}`;
+}
+
+function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, leagueSettingsHtml, updateLeagueSettings }) {
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <Section title="League Settings" actions={
+      isAdmin ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="input" placeholder="ESPN League ID" value={espn.leagueId} onChange={(e) => setEspn({ ...espn, leagueId: e.target.value })} style={{ width: 160 }} />
+          <input className="input" placeholder="Season" value={espn.seasonId} onChange={(e) => setEspn({ ...espn, seasonId: e.target.value })} style={{ width: 120 }} />
+          <button className="btn" style={btnPri} onClick={importEspnTeams}>Import ESPN Teams</button>
+          <button className="btn" style={editing ? btnSec : btnPri} onClick={() => setEditing(!editing)}>{editing ? "Cancel" : "Edit"}</button>
+        </div>
+      ) : <span className="badge">View-only</span>
+    }>
+      {isAdmin && editing ? (
+        <RichEditor
+          html={leagueSettingsHtml || ""}
+          readOnly={false}
+          setHtml={(h) => {
+            updateLeagueSettings(h);
+            setEditing(false);
+          }}
+        />
+      ) : (
+        <div className="card" style={{ padding: 16 }}>
+          <div className="prose" dangerouslySetInnerHTML={{ __html: leagueSettingsHtml || "<p>No settings yet.</p>" }} />
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function RichEditor({ html, setHtml, readOnly }) {
+  const [local, setLocal] = useState(html || "");
+  const ref = useRef(null);
+  const lastTyped = useRef(null);
+
+  useEffect(() => { setLocal(html || ""); }, [html]);
+
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== (local || "")) {
+      ref.current.innerHTML = local || "";
+    }
+  }, []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (local !== lastTyped.current && el.innerHTML !== (local || "")) {
+      el.innerHTML = local || "";
+    }
+  }, [local]);
+
+  if (readOnly) {
+    return (
+      <div className="card" style={{ padding: 16 }}>
+        <div className="prose" dangerouslySetInnerHTML={{ __html: local || "<p>No settings yet.</p>" }} />
+      </div>
+    );
+  }
+
+  const focus = () => { if (ref.current) ref.current.focus(); };
+
+  const exec = (cmd, val = null) => {
+    focus();
+    document.execCommand(cmd, false, val);
+    const htmlNow = ref.current?.innerHTML || "";
+    lastTyped.current = htmlNow;
+    setLocal(htmlNow);
+  };
+
+  const toggleH2 = (e) => {
+    e.preventDefault();
+    focus();
+    const block = document.queryCommandValue("formatBlock");
+    document.execCommand("formatBlock", false, /h2/i.test(block) ? "P" : "H2");
+    const htmlNow = ref.current?.innerHTML || "";
+    lastTyped.current = htmlNow;
+    setLocal(htmlNow);
+  };
+
+  const resetNormal = (e) => {
+    e.preventDefault();
+    focus();
+    document.execCommand("removeFormat", false, null);
+    document.execCommand("unlink", false, null);
+    document.execCommand("formatBlock", false, "P");
+    const htmlNow = ref.current?.innerHTML || "";
+    lastTyped.current = htmlNow;
+    setLocal(htmlNow);
+  };
+
+  const clearAll = (e) => {
+    e.preventDefault();
+    if (!ref.current) return;
+    ref.current.innerHTML = "";
+    lastTyped.current = "";
+    setLocal("");
+  };
+
+  const insertLink = (e) => {
+    e.preventDefault();
+    const url = prompt("Link URL:", "https://");
+    if (url) exec("createLink", url);
+  };
+
+  return (
+    <div className="card" style={{ padding: 16, background: "#f8fafc" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("bold");}}><b>B</b></button>
+        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("italic");}}><i>I</i></button>
+        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("underline");}}><u>U</u></button>
+        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("strikeThrough");}}><s>S</s></button>
+        <span style={{ width: 8 }} />
+        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("insertUnorderedList");}}>• List</button>
+        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("insertOrderedList");}}>1. List</button>
+        <button className="btn" style={btnSec} onMouseDown={toggleH2}>H2</button>
+        <button className="btn" style={btnSec} onMouseDown={insertLink}>Link</button>
+        <button className="btn" style={btnSec} onMouseDown={resetNormal}>Normal</button>
+        <button className="btn" style={btnSec} onMouseDown={clearAll}>Clear</button>
+      </div>
+
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        className="input"
+        style={{ minHeight: 160, whiteSpace: "pre-wrap" }}
+        onInput={(e) => {
+          const htmlNow = e.currentTarget.innerHTML;
+          lastTyped.current = htmlNow;
+          setLocal(htmlNow);
+        }}
+      />
+
+      <div style={{ textAlign: "right", marginTop: 8 }}>
+        <button className="btn" style={btnPri} onClick={() => setHtml(local)}>Save</button>
+      </div>
+    </div>
+  );
+}
+
+function TradingView({isAdmin,addTrade,deleteTrade,tradeBlock}) {
+  return (
+    <Section title="Trading Block">
+      {isAdmin && <TradeForm onSubmit={addTrade}/>}
+      <div className="grid">
+        {tradeBlock.length===0 && <p style={{color:"#64748b"}}>Nothing on the block yet.</p>}
+        {tradeBlock.map(t=>(
+          <div key={t.id} className="card" style={{padding:16}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,fontSize:14,alignItems:"center"}}>
+              <span style={{background:"#f1f5f9",padding:"2px 8px",borderRadius:999}}>{t.position||"PLAYER"}</span>
+              <strong>{t.player}</strong>
+              <span style={{color:"#64748b"}}>• Owner: {t.owner||"—"}</span>
+              <span style={{marginLeft:"auto", color:"#94a3b8"}}>{new Date(t.createdAt).toLocaleDateString()}</span>
+            </div>
+            {t.notes && <p style={{marginTop:8, whiteSpace:"pre-wrap"}}>{t.notes}</p>}
+            {isAdmin && <div style={{textAlign:"right", marginTop:8}}><button className="btn" style={{...btnSec, background:"#fee2e2", color:"#991b1b"}} onClick={()=>deleteTrade(t.id)}>Remove</button></div>}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function TradeForm({onSubmit}){
+  const [player,setPlayer]=useState(""); 
+  const [position,setPosition]=useState(""); 
+  const [owner,setOwner]=useState(""); 
+  const [notes,setNotes]=useState("");
+  
+  return (
+    <form onSubmit={(e)=>{
+      e.preventDefault(); 
+      if(!player) return; 
+      onSubmit({player,position,owner,notes}); 
+      setPlayer(""); setPosition(""); setOwner(""); setNotes("");
+    }} className="card" style={{padding:16, background:"#f8fafc", marginBottom:12}}>
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr", gap:8}}>
+        <input className="input" placeholder="Player" value={player} onChange={e=>setPlayer(e.target.value)}/>
+        <input className="input" placeholder="Position (e.g., WR)" value={position} onChange={e=>setPosition(e.target.value)}/>
+        <input className="input" placeholder="Owner" value={owner} onChange={e=>setOwner(e.target.value)}/>
+      </div>
+      <input className="input" placeholder="Notes" style={{marginTop:8}} value={notes} onChange={e=>setNotes(e.target.value)}/>
+      <div style={{textAlign:"right", marginTop:8}}>
+        <button className="btn" style={btnPri}>Add to Block</button>
+      </div>
+    </form>
+  );
+}
+
+function IntroSplash(){
+  const [show,setShow] = useState(true);
+  useEffect(()=>{ const t=setTimeout(()=>setShow(false), 1600); return ()=>clearTimeout(t); }, []);
+  if(!show) return null;
+  return function WeeklyForm({ seasonYear, onAdd }) {
+  const [weekLabel, setWeekLabel] = useState(() => {
+    const now = leagueWeekOf(new Date(), seasonYear).week || 1;
+    return `Week ${now}`;
+  });
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+
+  useEffect(() => {
+    const now = leagueWeekOf(new Date(), seasonYear).week || 1;
+    setWeekLabel(`Week ${now}`);
+  }, [seasonYear]);
+
+  return (
+    <div className="card" style={{ padding: 16, background: "#f8fafc" }}>
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <input className="input" placeholder="Week label" value={weekLabel} onChange={(e) => setWeekLabel(e.target.value)} />
+        <input className="input" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+      </div>
+      <textarea className="input" style={{ minHeight: 120, marginTop: 8 }} placeholder="Challenge description" value={text} onChange={(e) => setText(e.target.value)} />
+      <div style={{ textAlign: "right", marginTop: 8 }}>
+        <button className="btn" style={btnPri} onClick={() => {
+          const wk = parseInt(String(weekLabel || "").replace(/\D/g, ""), 10) || 0;
+          if (!weekLabel.trim() || !text.trim()) return alert("Fill all fields");
+          onAdd({
+            id: Math.random().toString(36).slice(2),
+            weekLabel: weekLabel.trim(),
+            week: wk,
+            title: title.trim(),
+            text: text.trim(),
+            createdAt: Date.now()
+          });
+          setTitle(""); setText("");
+          if (wk > 0) setWeekLabel(`Week ${wk + 1}`);
+        }}>Save</button>
+      </div>
+    </div>
+  );
+}
+
+function AddMember({onAdd}){ 
+  const [name,setName]=useState(""); 
+  return (
+    <form onSubmit={(e)=>{e.preventDefault(); if(!name) return; onAdd(name); setName("");}} style={{display:"flex", gap:8, margin:"8px 0 12px"}}>
+      <input className="input" placeholder="Member name" value={name} onChange={e=>setName(e.target.value)}/>
+      <button className="btn" style={btnPri}>Add</button>
+    </form>
+  ); 
+}
+
+function WaiverForm({members,onAdd,disabled}){ 
+  const [userId,setUserId]=useState(members[0]?.id||""); 
+  const [player,setPlayer]=useState(""); 
+  const [date,setDate]=useState(today());
+  
+  useEffect(()=>{ setUserId(members[0]?.id||""); }, [members]);
+  
+  return (
+    <form onSubmit={(e)=>{e.preventDefault(); if(!userId||!player) return; onAdd(userId,player,date); setPlayer("");}} className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:8}}>
+      <select className="input" value={userId} onChange={e=>setUserId(e.target.value)} disabled={disabled}>
+        {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+      </select>
+      <input className="input" placeholder="Player" value={player} onChange={e=>setPlayer(e.target.value)} disabled={disabled}/>
+      <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} disabled={disabled}/>
+      <div style={{gridColumn:"1 / -1", textAlign:"right"}}>
+        <button className="btn" style={btnPri} disabled={disabled}>Add Pickup</button>
+      </div>
+    </form>
+  );
+}
+
+function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
+  const go = (delta)=> {
+    const s = new Date(selectedWeek.start);
+    s.setDate(s.getDate() + delta*7);
+    setSelectedWeek(leagueWeekOf(s, seasonYear));
+  };
+  const label = selectedWeek.week>0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
+  return (
+    <div style={{display:"flex", alignItems:"center", gap:8}}>
+      <button type="button" className="btn" style={btnSec} onClick={()=>go(-1)}>◀</button>
+      <span style={{fontSize:14,color:"#334155",minWidth:170,textAlign:"center"}}>{label}</span>
+      <button type="button" className="btn" style={btnSec} onClick={()=>go(1)}>▶</button>
+    </div>
+  );
+}
+
+function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, members, buyins, updateBuyins, seasonYear }) {
+  return (
+    <Section title="Dues (Official Snapshot)" actions={
+      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+        <button className="btn" style={btnSec} onClick={()=>loadOfficialReport(false)}>Refresh Snapshot</button>
+        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
+        <button className="btn" style={btnSec} onClick={()=>print()}>Print</button>
+        {report && <>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Team","Adds","Owes"], ...report.totalsRows.map(r=>[r.name,r.adds,`${r.owes}`])];
+            downloadCSV("dues_totals.csv", rows);
+          }}>Download CSV (totals)</button>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Week","Range","Team","Adds","Owes"]];
+            report.weekRows.forEach(w=> w.entries.forEach(e=> rows.push([w.week,w.range,e.name,e.count,`${e.owes}`])));
+            downloadCSV("dues_by_week.csv", rows);
+          }}>Download CSV (by week)</button>
+          <button className="btn" style={btnSec} onClick={()=>{
+            const rows=[["Date (PT)","Week","Range","Team","Player","Action","Method","Source","PlayerId"]];
+            (report.rawMoves||[]).forEach(r=> rows.push([r.date, r.week, r.range, r.team, r.player, r.action, r.method, r.source, r.playerId]));
+            downloadCSV("raw_events.csv", rows);
+          }}>Download raw events</button>
+        </>}
+      </div>
+    }>
+      <p style={{marginTop:-8, color:"#64748b"}}>
+        Last updated: <b>{lastSynced || "—"}</b>. Rule: first two transactions per Wed→Tue week are free, then $5 each.
+      </p>
+      {!report && <p style={{color:"#64748b"}}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
+
+      {report && (
+        <div className="dues-grid dues-tight">
+          <div className="dues-left">
+            <div className="card" style={{padding:12}}>
+              <h3 style={{marginTop:0}}>League Owner Dues</h3>
+              <table style={{width:"100%", borderCollapse:"collapse"}}>
+                <thead>
+                  <tr>
+                    <th style={th}>Team</th>
+                    <th style={th}>Adds</th>
+                    <th style={th}>Owes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.totalsRows.map(r=>(
+                    <tr key={r.name}>
+                      <td style={td}>{r.name}</td>
+                      <td style={td}>{r.adds}</td>
+                      <td style={td}>${r.owes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <BuyInTracker
+              isAdmin={isAdmin}
+              members={members}
+              seasonYear={seasonYear}
+              // src/App.jsx
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import Logo from "./Logo.jsx";
 
@@ -173,6 +954,7 @@ function LeagueHub(){
   const [waivers, setWaivers] = useState([]);
   const [buyins, setBuyins] = useState({});
   const [leagueSettingsHtml, setLeagueSettingsHtml] = useState("");
+  const [tradeBlock, setTradeBlock] = useState([]);
 
   // Load server-side data
   const loadServerData = async () => {
@@ -184,6 +966,7 @@ function LeagueHub(){
         setWaivers(serverData.waivers || []);
         setBuyins(serverData.buyins || {});
         setLeagueSettingsHtml(serverData.leagueSettingsHtml || "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>");
+        setTradeBlock(serverData.tradeBlock || []);
       }
     } catch (err) {
       console.error("Failed to load server data:", err);
@@ -302,13 +1085,27 @@ function LeagueHub(){
       
       const names = [...new Set(teams.map(t => teamName(t)))];
       
-      const response = await fetch(API('/api/league-data/import-teams'), {
+      // Store rosters server-side
+      const response = await fetch(API('/api/league-data/rosters'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin': ADMIN_ENV },
+        body: JSON.stringify({ 
+          seasonId: espn.seasonId, 
+          rosters: teams.map(t => ({ 
+            teamId: t.id, 
+            teamName: teamName(t),
+            roster: [] // Will be populated when roster data is available
+          }))
+        })
+      });
+      
+      const importResponse = await fetch(API('/api/league-data/import-teams'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin': ADMIN_ENV },
         body: JSON.stringify({ teams: names })
       });
       
-      if (response.ok) {
+      if (importResponse.ok) {
         await loadServerData();
         alert(`Imported ${names.length} teams.`);
       } else {
@@ -329,6 +1126,7 @@ function LeagueHub(){
         body: JSON.stringify({ trade: t })
       });
       if (!response.ok) throw new Error('Failed to add trade');
+      await loadServerData(); // Refresh data
     } catch (err) {
       alert("Failed to add trade: " + err.message);
     }
@@ -343,6 +1141,7 @@ function LeagueHub(){
         body: JSON.stringify({ id })
       });
       if (!response.ok) throw new Error('Failed to delete trade');
+      await loadServerData(); // Refresh data
     } catch (err) {
       alert("Failed to delete trade: " + err.message);
     }
@@ -490,9 +1289,9 @@ function LeagueHub(){
       seasonYear={seasonYear}
     />,
     transactions: <TransactionsView report={espnReport} />,
-    rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
+    rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} members={members} isAdmin={isAdmin} loadServerData={loadServerData} />,
     settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,leagueSettingsHtml,updateLeagueSettings}}/>,
-    trading: <TradingView {...{isAdmin,addTrade,deleteTrade}}/>,
+    trading: <TradingView {...{isAdmin,addTrade,deleteTrade,tradeBlock}}/>,
     polls: <PollsView {...{isAdmin, members, espn}}/>
   };
 
@@ -736,811 +1535,3 @@ function WeeklyView({ isAdmin, seasonYear }) {
                     {item.weekLabel || "Week"}
                     {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
                   </h3>
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
-                    Added {new Date(item.createdAt).toLocaleString()}
-                  </div>
-                </div>
-                {isAdmin && (
-                  <button className="btn" style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }} onClick={() => deleteWeekly(item.id)}>Delete</button>
-                )}
-              </div>
-              <div style={{
-                marginTop: 8, whiteSpace: "pre-wrap",
-                textDecoration: isPast ? "line-through" : "none",
-                color: isPast ? "#64748b" : "#0b1220"
-              }}>
-                {item.text}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Section>
-  );
-}
-
-function RecentActivityView({ espn }) {
-  return (
-    <Section title="Recent Activity">
-      <div className="card" style={{padding:12, marginBottom:12}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <strong>Last 7 Days — Transactions</strong>
-        </div>
-        {!espn.leagueId && <div style={{color:"#64748b"}}>Set your ESPN details to see activity.</div>}
-      </div>
-    </Section>
-  );
-}
-
-function WaiversView({ 
-  isAdmin, members, waivers, waiversThisWeek, waiverCounts, waiverOwed, membersById, 
-  selectedWeek, setSelectedWeek, seasonYear, addMember, deleteMember, addWaiver, deleteWaiver,
-  updateOfficialSnapshot, setActive, espnReport, lastSynced, loadServerData 
-}) {
-  return (
-    <Section title="Waivers & Dues" actions={
-      <div style={{display:"flex", gap:8}}>
-        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-        <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-        {isAdmin && <button className="btn" style={btnSec} onClick={()=>{ if(confirm("Reset waivers?")) { 
-          fetch(API('/api/league-data/reset-waivers'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-admin': ADMIN_ENV }
-          }).then(() => loadServerData());
-        }}}>Reset Season</button>}
-      </div>
-    }>
-      <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
-        <div className="card" style={{padding:16}}>
-          <h3>League Members</h3>
-          {isAdmin && <AddMember onAdd={addMember}/>}
-          <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {members.map(m=>(
-              <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-                <span>{m.name}</span>
-                <span style={{fontSize:14,color:"#334155"}}>Adds (this week): {waiverCounts[m.id]||0} • Owes: ${waiverOwed[m.id]||0}</span>
-                {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
-              </li>
-            ))}
-            {members.length===0 && <p style={{color:"#64748b"}}>Add members or import via ESPN.</p>}
-          </ul>
-        </div>
-
-        <div className="card" style={{padding:16}}>
-          {isAdmin ? (
-            <>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                <h3>Log a Pickup</h3>
-                <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
-              </div>
-              <WaiverForm members={members} onAdd={addWaiver} disabled={members.length===0} />
-            </>
-          ) : (
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-              <h3>Activity (Wed→Tue)</h3>
-              <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
-            </div>
-          )}
-
-          <h4>History (selected week)</h4>
-          <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {waiversThisWeek.map(w=>(
-              <li key={w.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
-                <span><b>{membersById[w.userId]?.name||"Unknown"}</b> picked up <b>{w.player}</b> on {w.date}</span>
-                {isAdmin && <button onClick={()=>deleteWaiver(w.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Delete</button>}
-              </li>
-            ))}
-            {waiversThisWeek.length===0 && <p style={{color:"#64748b"}}>No activity this week.</p>}
-          </ul>
-        </div>
-      </div>
-
-      {espnReport && (
-        <div className="card" style={{padding:12, marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-          <div>Official dues snapshot loaded. Last updated: <b>{lastSynced || "—"}</b></div>
-          <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-        </div>
-      )}
-    </Section>
-  );
-}
-
-function PollsView({ isAdmin, members, espn }) {
-  const seasonKey = String(espn?.seasonId ?? "unknown");
-  const [teamCode, setTeamCode] = useStored(`poll-teamcode:${seasonKey}`, "");
-  const [polls,setPolls]=useState([]);
-  const [loading,setLoading]=useState(false);
-  const [err,setErr]=useState("");
-
-  async function loadPolls(){
-    setLoading(true); setErr("");
-    try{
-      const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}`));
-      const j = await r.json();
-      setPolls(j.polls || []);
-    }catch(e){ setErr("Failed to load polls"); }
-    setLoading(false);
-  }
-  useEffect(()=>{ loadPolls(); }, []);
-
-  const [createQ,setCreateQ]=useState(""); 
-  const [createOpts,setCreateOpts]=useState("Yes\nNo");
-  
-  async function createPoll(){
-    const opts = createOpts.split("\n").map(s=>s.trim()).filter(Boolean);
-    if(!createQ || opts.length<2) return alert("Enter a question and at least two options.");
-    const r = await fetch(API("/api/polls/create"), {
-      method:"POST",
-      headers: {"Content-Type":"application/json","x-admin": ADMIN_ENV},
-      body: JSON.stringify({ question:createQ, options:opts })
-    });
-    if(!r.ok) return alert("Create failed (commissioner only?)");
-    setCreateQ(""); setCreateOpts("Yes\nNo");
-    loadPolls();
-  }
-
-  const [activePollId,setActivePollId]=useState("");
-  const [voteChoice,setVoteChoice]=useState("");
-  
-  useEffect(()=>{ 
-    if (polls.length>0 && !activePollId) setActivePollId(polls[0].id); 
-  }, [polls, activePollId]);
-
-  async function castVote(){
-    if (!activePollId) return alert("Choose a poll");
-    if (!teamCode) return alert("Enter your Team Code first (button above).");
-    if (!voteChoice) return alert("Select an option");
-
-    try {
-      const resp = await fetch(API("/api/polls/vote"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pollId: activePollId, optionId: voteChoice, seasonId: espn.seasonId, teamCode })
-      });
-      if (resp.status === 423) return alert("This poll is closed.");
-      if (!resp.ok) throw new Error(await resp.text());
-
-      alert("Vote recorded!");
-      setVoteChoice("");
-      await loadPolls();
-    } catch (e) {
-      alert(e.message || "Vote failed");
-    }
-  }
-
-  const [showClosed, setShowClosed] = useState(false);
-  const visiblePolls = polls.length ? polls.filter(p => showClosed || !p.closed) : [];
-  const poll = polls.find(p=>p.id===activePollId);
-
-  return (
-    <Section title="Polls" actions={
-      isAdmin ? (
-        <div className="card" style={{padding:8, display:"flex", gap:8, alignItems:"center"}}>
-          <input className="input" placeholder="Question" value={createQ} onChange={e=>setCreateQ(e.target.value)} style={{width:260}}/>
-          <textarea className="input" placeholder="One option per line" value={createOpts} onChange={e=>setCreateOpts(e.target.value)} style={{width:260, height:60}}/>
-          <button className="btn" style={btnPri} onClick={createPoll}>Create Poll</button>
-        </div>
-      ) : <span className="badge">Enter your code to vote</span>
-    }>
-      {err && <p style={{color:"#dc2626"}}>{err}</p>}
-      {loading && <p>Loading polls...</p>}
-      {!loading && polls.length===0 && <p style={{color:"#64748b"}}>No polls yet.</p>}
-
-      {polls.length>0 && (
-        <div className="grid" style={{gridTemplateColumns:"240px 1fr", gap:16}}>
-          <div className="card" style={{padding:12}}>
-            <h3 style={{marginTop:0}}>Polls</h3>
-            <div style={{margin:"6px 0 8px", fontSize:12, color:"#64748b"}}>
-              <label>
-                <input type="checkbox" checked={showClosed} onChange={e=>setShowClosed(e.target.checked)} /> Show closed polls
-              </label>
-            </div>
-            <ul style={{listStyle:"none",padding:0,margin:0}}>
-              {visiblePolls.map(p=>(
-                <li key={p.id} style={{marginBottom:6}}>
-                  <button className={`btn ${p.id===activePollId?"primary":""}`} style={p.id===activePollId?btnPri:btnSec} onClick={()=>setActivePollId(p.id)}>
-                    {p.question} {p.closed? " (closed)":""}
-                  </button>
-                </li>
-              ))}
-              {visiblePolls.length===0 && <li style={{color:"#94a3b8"}}>No polls to show.</li>}
-            </ul>
-          </div>
-
-          <div>
-            {poll && (
-              <div className="card" style={{padding:16}}>
-                <h3 style={{marginTop:0}}>{poll.question}</h3>
-                <div className="card" style={{padding:12, background:"#f8fafc", marginBottom:12}}>
-                  <div style={{fontSize:12, color:"#64748b", marginBottom:4}}>Season Team Code</div>
-                  <div style={{display:"flex", gap:8, alignItems:"center", marginBottom:8}}>
-                    <span className="badge">{teamCode || "— not set —"}</span>
-                    <button className="btn" onClick={()=>{
-                      const c = prompt("Enter your Voting Password for this season:");
-                      if (c) setTeamCode(c.toUpperCase().trim());
-                    }}>
-                      {teamCode ? "Change" : "Enter"} Code
-                    </button>
-                  </div>
-                  <select className="input" value={voteChoice} onChange={e=>setVoteChoice(e.target.value)} style={{marginBottom:8}}>
-                    <option value="">Choose an option</option>
-                    {poll.options.map(o=> <option key={o.id} value={o.id}>{o.label}</option>)}
-                  </select>
-                  <button className="btn" style={btnPri} onClick={castVote} disabled={poll.closed}>Vote</button>
-                </div>
-
-                <h4>Results</h4>
-                {poll.options.map(o=>{
-                  const total = poll.options.reduce((s,x)=>s+x.votes,0) || 1;
-                  const pct = Math.round(o.votes*100/total);
-                  return (
-                    <div key={o.id} style={{marginBottom:8}}>
-                      <div style={{display:"flex", justifyContent:"space-between"}}>
-                        <strong>{o.label}</strong>
-                        <span>{o.votes} ({pct}%)</span>
-                      </div>
-                      <div style={{height:8, background:"#e5e7eb", borderRadius:999}}>
-                        <div style={{width:`${pct}%`, height:8, borderRadius:999, background:"#0ea5e9"}} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </Section>
-  );
-}
-
-// Helper Components
-function AnnouncementEditor({ onPost, disabled }) {
-  const [local, setLocal] = useState("");
-  const ref = useRef(null);
-
-  const focus = () => { if (ref.current) ref.current.focus(); };
-  const exec = (cmd, val = null) => {
-    focus();
-    document.execCommand(cmd, false, val);
-    if (ref.current) setLocal(ref.current.innerHTML);
-  };
-
-  return (
-    <div className="card" style={{ padding: 16, background: "#f8fafc" }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("bold");}}><b>B</b></button>
-        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("italic");}}><i>I</i></button>
-        <button className="btn" style={btnSec} onMouseDown={(e)=>{e.preventDefault(); exec("underline");}}><u>U</u></button>
-      </div>
-      <div
-        ref={ref}
-        contentEditable
-        suppressContentEditableWarning
-        className="input"
-        style={{ minHeight: 120, whiteSpace: "pre-wrap" }}
-        onInput={(e) => setLocal(e.currentTarget.innerHTML)}
-      />
-      <div style={{ textAlign: "right", marginTop: 8 }}>
-        <button className="btn" style={btnPri} disabled={disabled} onClick={() => {
-          const html = (local || "").trim();
-          if (!html || html === "<br>") return alert("Type something first");
-          onPost(html);
-          if (ref.current) ref.current.innerHTML = "";
-          setLocal("");
-          focus();
-        }}>
-          Post
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function WeeklyForm({ seasonYear, onAdd }) {
-  const [weekLabel, setWeekLabel] = useState(() => {
-    const now = leagueWeekOf(new Date(), seasonYear).week || 1;
-    return `Week ${now}`;
-  });
-  const [title, setTitle] = useState("");
-  const [text, setText] = useState("");
-
-  return (
-    <div className="card" style={{ padding: 16, background: "#f8fafc" }}>
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <input className="input" placeholder="Week label" value={weekLabel} onChange={(e) => setWeekLabel(e.target.value)} />
-        <input className="input" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
-      </div>
-      <textarea className="input" style={{ minHeight: 120, marginTop: 8 }} placeholder="Challenge description" value={text} onChange={(e) => setText(e.target.value)} />
-      <div style={{ textAlign: "right", marginTop: 8 }}>
-        <button className="btn" style={btnPri} onClick={() => {
-          const wk = parseInt(String(weekLabel || "").replace(/\D/g, ""), 10) || 0;
-          if (!weekLabel.trim() || !text.trim()) return alert("Fill all fields");
-          onAdd({
-            id: Math.random().toString(36).slice(2),
-            weekLabel: weekLabel.trim(),
-            week: wk,
-            title: title.trim(),
-            text: text.trim(),
-            createdAt: Date.now()
-          });
-          setTitle(""); setText("");
-          if (wk > 0) setWeekLabel(`Week ${wk + 1}`);
-        }}>Save</button>
-      </div>
-    </div>
-  );
-}
-
-function AddMember({onAdd}){ 
-  const [name,setName]=useState(""); 
-  return (
-    <form onSubmit={(e)=>{e.preventDefault(); if(!name) return; onAdd(name); setName("");}} style={{display:"flex", gap:8, margin:"8px 0 12px"}}>
-      <input className="input" placeholder="Member name" value={name} onChange={e=>setName(e.target.value)}/>
-      <button className="btn" style={btnPri}>Add</button>
-    </form>
-  ); 
-}
-
-function WaiverForm({members,onAdd,disabled}){ 
-  const [userId,setUserId]=useState(members[0]?.id||""); 
-  const [player,setPlayer]=useState(""); 
-  const [date,setDate]=useState(today());
-  
-  useEffect(()=>{ setUserId(members[0]?.id||""); }, [members]);
-  
-  return (
-    <form onSubmit={(e)=>{e.preventDefault(); if(!userId||!player) return; onAdd(userId,player,date); setPlayer("");}} className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:8}}>
-      <select className="input" value={userId} onChange={e=>setUserId(e.target.value)} disabled={disabled}>
-        {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-      </select>
-      <input className="input" placeholder="Player" value={player} onChange={e=>setPlayer(e.target.value)} disabled={disabled}/>
-      <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)} disabled={disabled}/>
-      <div style={{gridColumn:"1 / -1", textAlign:"right"}}>
-        <button className="btn" style={btnPri} disabled={disabled}>Add Pickup</button>
-      </div>
-    </form>
-  );
-}
-
-function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
-  const go = (delta)=> {
-    const s = new Date(selectedWeek.start);
-    s.setDate(s.getDate() + delta*7);
-    setSelectedWeek(leagueWeekOf(s, seasonYear));
-  };
-  const label = selectedWeek.week>0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
-  return (
-    <div style={{display:"flex", alignItems:"center", gap:8}}>
-      <button type="button" className="btn" style={btnSec} onClick={()=>go(-1)}>◀</button>
-      <span style={{fontSize:14,color:"#334155",minWidth:170,textAlign:"center"}}>{label}</span>
-      <button type="button" className="btn" style={btnSec} onClick={()=>go(1)}>▶</button>
-    </div>
-  );
-}
-
-function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, members, buyins, updateBuyins, seasonYear }) {
-  return (
-    <Section title="Dues (Official Snapshot)" actions={
-      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-        <button className="btn" style={btnSec} onClick={()=>loadOfficialReport(false)}>Refresh Snapshot</button>
-        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-        <button className="btn" style={btnSec} onClick={()=>print()}>Print</button>
-        {report && <>
-          <button className="btn" style={btnSec} onClick={()=>{
-            const rows=[["Team","Adds","Owes"], ...report.totalsRows.map(r=>[r.name,r.adds,`${r.owes}`])];
-            downloadCSV("dues_totals.csv", rows);
-          }}>Download CSV (totals)</button>
-          <button className="btn" style={btnSec} onClick={()=>{
-            const rows=[["Week","Range","Team","Adds","Owes"]];
-            report.weekRows.forEach(w=> w.entries.forEach(e=> rows.push([w.week,w.range,e.name,e.count,`${e.owes}`])));
-            downloadCSV("dues_by_week.csv", rows);
-          }}>Download CSV (by week)</button>
-          <button className="btn" style={btnSec} onClick={()=>{
-            const rows=[["Date (PT)","Week","Range","Team","Player","Action","Method","Source","PlayerId"]];
-            (report.rawMoves||[]).forEach(r=> rows.push([r.date, r.week, r.range, r.team, r.player, r.action, r.method, r.source, r.playerId]));
-            downloadCSV("raw_events.csv", rows);
-          }}>Download raw events</button>
-        </>}
-      </div>
-    }>
-      <p style={{marginTop:-8, color:"#64748b"}}>
-        Last updated: <b>{lastSynced || "—"}</b>. Rule: first two transactions per Wed→Tue week are free, then $5 each.
-      </p>
-      {!report && <p style={{color:"#64748b"}}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
-
-      {report && (
-        <div className="dues-grid dues-tight">
-          <div className="dues-left">
-            <div className="card" style={{padding:12}}>
-              <h3 style={{marginTop:0}}>League Owner Dues</h3>
-              <table style={{width:"100%", borderCollapse:"collapse"}}>
-                <thead>
-                  <tr>
-                    <th style={th}>Team</th>
-                    <th style={th}>Adds</th>
-                    <th style={th}>Owes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.totalsRows.map(r=>(
-                    <tr key={r.name}>
-                      <td style={td}>{r.name}</td>
-                      <td style={td}>{r.adds}</td>
-                      <td style={td}>${r.owes}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <BuyInTracker
-              isAdmin={isAdmin}
-              members={members}
-              seasonYear={seasonYear}
-              buyins={buyins}
-              updateBuyins={updateBuyins}
-            />
-          </div>
-
-          <div className="card dues-week" style={{padding:12, minWidth:0}}>
-            <h3 style={{marginTop:0}}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
-            {report.weekRows.map(w=>(
-              <div key={w.week} style={{marginBottom:12}}>
-                <div style={{fontWeight:600, margin:"6px 0"}}>Week {w.week} — {w.range}</div>
-                <table style={{width:"100%", borderCollapse:"collapse"}}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Team</th>
-                      <th style={th}>Adds</th>
-                      <th style={th}>Owes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {w.entries.map(e=>(
-                      <tr key={e.name}>
-                        <td style={{...td, whiteSpace:"normal"}}>{e.name}</td>
-                        <td style={td}>{e.count}</td>
-                        <td style={td}>${e.owes}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </Section>
-  );
-}
-
-function BuyInTracker({ isAdmin, members, seasonYear, buyins, updateBuyins }) {
-  const BUYIN = 200;
-  const displayYear = new Date().getFullYear();
-  const seasonKey = String(seasonYear);
-  const cur = buyins[seasonKey] || { paid: {}, hidden: false, venmoLink: "", zelleEmail: "", venmoQR: "" };
-
-  const patch = (p) => updateBuyins(seasonKey, { ...cur, ...p });
-  const togglePaid = (id) => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
-  const markAll = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
-  const resetAll = () => patch({ paid: {} });
-
-  const paidCount = members.filter(m => cur.paid[m.id]).length;
-  const allPaid = members.length > 0 && paidCount === members.length;
-
-  if (cur.hidden && !isAdmin) return null;
-
-  const [venmo, setVenmo] = useState(cur.venmoLink || "");
-  const [zelle, setZelle] = useState(cur.zelleEmail || "");
-  useEffect(() => { setVenmo(cur.venmoLink || ""); setZelle(cur.zelleEmail || ""); }, [seasonKey, cur]);
-
-  const saveMeta = () => patch({ venmoLink: venmo.trim(), zelleEmail: zelle.trim() });
-
-  const onUploadQR = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => patch({ venmoQR: r.result || "" });
-    r.readAsDataURL(f);
-  };
-
-  const copyZelle = async () => {
-    const email = (cur.zelleEmail || "").trim();
-    if (!email) return alert("No Zelle email set yet.");
-    try { 
-      await navigator.clipboard.writeText(email); 
-      alert("Zelle username/email copied to clipboard! Paste into your Zelle app to Pay via Zelle!"); 
-    } catch { 
-      alert("Could not copy. Long-press / right-click to copy instead: " + email); 
-    }
-  };
-
-  return (
-    <div className="card" style={{ padding:16, marginTop:16 }}>
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8}}>
-        <h3 style={{marginTop:0}}>${BUYIN} Season Buy-In — {displayYear}</h3>
-        <div style={{display:"flex", gap:8, alignItems:"center"}}>
-          <span className="badge">{paidCount} / {members.length} paid</span>
-          {isAdmin && (
-            cur.hidden
-              ? <button className="btn" onClick={()=>patch({hidden:false})}>Show tracker</button>
-              : allPaid
-                ? <button className="btn" onClick={()=>patch({hidden:true})}>Hide (all paid)</button>
-                : null
-          )}
-        </div>
-      </div>
-
-      {members.length === 0 && (
-        <p style={{color:"#64748b", marginTop:0}}>
-          No members yet. Import teams in <b>League Settings</b> first.
-        </p>
-      )}
-
-      {members.length > 0 && (
-        <div className="grid" style={{gridTemplateColumns:"1fr", gap:16}}>
-          <div className="card" style={{ padding:12, background:"#f8fafc" }}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8}}>
-              <strong>Buy-In Paid Checklist ✅</strong>
-              {isAdmin && (
-                <div style={{display:"flex", gap:8}}>
-                  <button className="btn" onClick={markAll}>Mark all paid</button>
-                  <button className="btn" onClick={resetAll}>Reset</button>
-                </div>
-              )}
-            </div>
-            <ul style={{listStyle:"none", padding:0, margin:0}}>
-              {[...members].sort((a,b)=>a.name.localeCompare(b.name)).map(m => (
-                <li key={m.id} style={{display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:"1px solid #e2e8f0"}}>
-                  <input
-                    type="checkbox"
-                    checked={!!cur.paid[m.id]}
-                    onChange={()=> isAdmin && togglePaid(m.id)}
-                    disabled={!isAdmin}
-                  />
-                  <span style={{textDecoration: cur.paid[m.id] ? "line-through" : "none"}}>{m.name}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="card buyin-pay" style={{ padding:12 }}>
-            <h4 style={{marginTop:0}}>Pay Dues</h4>
-            <div style={{display:"flex", flexDirection:"column", gap:8}}>
-              {cur.venmoLink && (
-                <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">Pay with Venmo</a>
-              )}
-              {cur.zelleEmail && (
-                <button type="button" className="btn" onClick={copyZelle}>Pay with Zelle</button>
-              )}
-            </div>
-            {(cur.venmoQR || cur.venmoLink || cur.zelleEmail) && (
-              <div style={{marginTop:8}}>
-                <a href={cur.venmoLink || `mailto:${encodeURIComponent(cur.zelleEmail)}`} target="_blank" rel="noreferrer" title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}>
-                  {cur.venmoQR && <img src={cur.venmoQR} alt="Venmo QR"/>}
-                </a>
-              </div>
-            )}
-            {isAdmin && (
-              <>
-                <div className="grid" style={{gridTemplateColumns:"1fr", gap:8, marginTop:8}}>
-                  <input className="input" placeholder="https://venmo.com/u/YourHandle" value={venmo} onChange={e=>setVenmo(e.target.value)}/>
-                  <input className="input" placeholder="Zelle email" value={zelle} onChange={e=>setZelle(e.target.value)}/>
-                </div>
-                <div style={{display:"flex", gap:8, alignItems:"center", marginTop:8, flexWrap:"wrap"}}>
-                  <input type="file" accept="image/*" onChange={onUploadQR}/>
-                  {cur.venmoQR && <button className="btn" onClick={()=>patch({venmoQR:""})}>Remove QR</button>}
-                  <button className="btn primary" onClick={saveMeta}>Save links</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TransactionsView({ report }){
-  if (!report) {
-    return (
-      <Section title="Transactions">
-        <p style={{color:"#64748b"}}>No snapshot yet — go to <b>Dues</b> and click <b>Refresh Snapshot</b> (or have the commissioner update it).</p>
-      </Section>
-    );
-  }
-
-  const SHOW_METHOD_COLUMN = false;
-  const METHOD_FOR_ADDS_ONLY = true;
-
-  const all = (report.rawMoves || report.rawAdds || []).map(r => ({
-  ...r,
-  week: Math.max(1, Number(r.week) || 1)
-}));
-
-  const teams = Array.from(new Set(all.map(r => r.team))).sort();
-
-  const [team, setTeam] = useState("");
-  const [method, setMethod] = useState(""); // WAIVER / FA
-  const [action, setAction] = useState(""); // ADD / DROP
-  const [q, setQ] = useState("");
-
-  const filtered = all.filter(r =>
-    (!team || r.team === team) &&
-    (!action || r.action === action) &&
-    (!method || r.method === method) &&
-    (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
-  );
-
-  const weeksSorted = Array.from(new Set(filtered.map(r => Math.max(1, Number(r.week) || 1))))
-  .sort((a, b) => a - b);
-
-const rangeByWeek = {};
-for (const r of filtered) {
-  const w = Math.max(1, Number(r.week) || 1);
-  if (!rangeByWeek[w]) rangeByWeek[w] = r.range;
-}
-
-const byWeek = new Map();
-for (const r of filtered) {
-  const w = Math.max(1, Number(r.week) || 1);
-  if (!byWeek.has(w)) byWeek.set(w, []);
-  byWeek.get(w).push({ ...r, week: w });
-}
-
-  const [openWeeks, setOpenWeeks] = useState(() => new Set(weeksSorted));
-  useEffect(() => { setOpenWeeks(new Set(weeksSorted)); }, [q, team, method, action]);
-  const toggleWeek = (w)=> setOpenWeeks(s => { const n=new Set(s); n.has(w)?n.delete(w):n.add(w); return n; });
-
-  return (
-    <Section title="Transactions" actions={
-      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-        <select className="input" value={team} onChange={e=>setTeam(e.target.value)}>
-          <option value="">All teams</option>
-          {teams.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select className="input" value={action} onChange={e=>setAction(e.target.value)}>
-          <option value="">All actions</option>
-          <option value="ADD">ADD</option>
-          <option value="DROP">DROP</option>
-        </select>
-        <select className="input" value={method} onChange={e=>setMethod(e.target.value)}>
-          <option value="">All methods</option>
-          <option value="WAIVER">WAIVER</option>
-          <option value="FA">FA</option>
-        </select>
-        <input className="input" placeholder="Search player/team…" value={q} onChange={e=>setQ(e.target.value)} />
-        <button className="btn" style={btnSec} onClick={()=>setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
-        <button className="btn" style={btnSec} onClick={()=>setOpenWeeks(new Set())}>Collapse all</button>
-        <button className="btn" style={btnSec} onClick={()=>{
-          const rows=[["Date (PT)","Week","Range","Team","Player","Action", ...(SHOW_METHOD_COLUMN?["Method"]:[]), "Source","PlayerId"]];
-          filtered.forEach(r=> rows.push([
-            r.date, r.week, r.range, r.team, r.player, r.action,
-            ...(SHOW_METHOD_COLUMN ? [ (METHOD_FOR_ADDS_ONLY && r.action==="DROP") ? "" : r.method ] : []),
-            r.source, r.playerId
-          ]));
-          downloadCSV("transactions_filtered.csv", rows);
-        }}>Download CSV (filtered)</button>
-      </div>
-    }>
-      {weeksSorted.length === 0 && (
-        <p style={{color:"#64748b"}}>No transactions match your filters.</p>
-      )}
-
-      {weeksSorted.map(week => {
-        const rows = byWeek.get(week) || [];
-        const open = openWeeks.has(week);
-        return (
-          <div key={week} className="card" style={{padding:12, marginBottom:12}}>
-            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer"}}
-                 onClick={()=>toggleWeek(week)}>
-              <div style={{display:"flex", alignItems:"center", gap:8}}>
-                <span style={{fontWeight:700}}>Week {week}</span>
-                <span style={{color:"#64748b"}}>{rangeByWeek[week] || ""}</span>
-              </div>
-              <span style={{color:"#64748b"}}>{open ? "Hide ▲" : "Show ▼"}</span>
-            </div>
-            {open && (
-              <div style={{marginTop:8, overflowX:"auto"}}>
-                <table style={{width:"100%", borderCollapse:"collapse"}}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Date (PT)</th>
-                      <th style={th}>Team</th>
-                      <th style={th}>Player</th>
-                      <th style={th}>Action</th>
-                      {SHOW_METHOD_COLUMN && <th style={th}>Method</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r,i)=>(
-                      <tr key={i}>
-                        <td style={td}>{r.date}</td>
-                        <td style={td}>{r.team}</td>
-                        <td style={{ ...td, color: r.action==="ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-                          {r.player || (r.playerId ? `#${r.playerId}` : "—")}
-                        </td>
-                        <td style={td}>{r.action}</td>
-                        {SHOW_METHOD_COLUMN && (
-                          <td style={td}>
-                            {(METHOD_FOR_ADDS_ONLY && r.action === "DROP") ? "" : (r.method || "")}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                    {rows.length===0 && (
-                      <tr><td style={td} colSpan={SHOW_METHOD_COLUMN ? 5 : 4}>&nbsp;No transactions in this week.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </Section>
-  );
-}
-
-function Rosters({ leagueId, seasonId }) {
-  return (
-    <Section title="Rosters" actions={<span className="badge">View-only (ESPN live)</span>}>
-      {!leagueId && <p style={{color:"#64748b"}}>Set your ESPN League ID & Season in <b>League Settings</b>.</p>}
-    </Section>
-  );
-}
-
-function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, leagueSettingsHtml, updateLeagueSettings }) {
-  const [editing, setEditing] = useState(false);
-
-  return (
-    <Section title="League Settings" actions={
-      isAdmin ? (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input className="input" placeholder="ESPN League ID" value={espn.leagueId} onChange={(e) => setEspn({ ...espn, leagueId: e.target.value })} style={{ width: 160 }} />
-          <input className="input" placeholder="Season" value={espn.seasonId} onChange={(e) => setEspn({ ...espn, seasonId: e.target.value })} style={{ width: 120 }} />
-          <button className="btn" style={btnPri} onClick={importEspnTeams}>Import ESPN Teams</button>
-          <button className="btn" style={editing ? btnSec : btnPri} onClick={() => setEditing(!editing)}>{editing ? "Cancel" : "Edit"}</button>
-        </div>
-      ) : <span className="badge">View-only</span>
-    }>
-      <div className="card" style={{ padding: 16 }}>
-        <div className="prose" dangerouslySetInnerHTML={{ __html: leagueSettingsHtml || "<p>No settings yet.</p>" }} />
-      </div>
-    </Section>
-  );
-}
-
-function TradingView({isAdmin,addTrade,deleteTrade}) {
-  return (
-    <Section title="Trading Block">
-      <div className="grid">
-        <p style={{color:"#64748b"}}>No trades on the block yet.</p>
-      </div>
-    </Section>
-  );
-}
-
-function IntroSplash(){
-  const [show,setShow] = useState(true);
-  useEffect(()=>{ const t=setTimeout(()=>setShow(false), 1600); return ()=>clearTimeout(t); }, []);
-  if(!show) return null;
-  return <div className="splash"><Logo size={160}/></div>;
-}
-
-function SyncOverlay({ open, pct, msg }) {
-  if (!open) return null;
-  return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:9999 }}>
-      <div className="card" style={{ width:420, padding:16, background:"#0b1220", color:"#e2e8f0", border:"1px solid #1f2937" }}>
-        <div style={{ fontWeight:700, marginBottom:8 }}>Working...</div>
-        <div style={{ fontSize:12, color:"#93a3b8", minHeight:18 }}>{msg}</div>
-        <div style={{ height:10, background:"#0f172a", borderRadius:999, marginTop:10, overflow:"hidden", border:"1px solid #1f2937" }}>
-          <div style={{ width:`${pct}%`, height:"100%", background:"#38bdf8" }} />
-        </div>
-        <div style={{ textAlign:"right", fontSize:12, marginTop:6 }}>{pct}%</div>
-      </div>
-    </div>
-  );
-}

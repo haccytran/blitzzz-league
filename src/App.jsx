@@ -21,6 +21,31 @@ const WEEK_START_DAY = 3; // 0=Sun..3=Wed
 
 const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
 
+// --- server-backed announcements helpers ---
+async function fetchAnnouncements() {
+  try {
+    const r = await fetch(API("/api/state/announcements"));
+    if (!r.ok) throw new Error("bad status");
+    return await r.json(); // { items: [...] }
+  } catch {
+    return { items: [] };
+  }
+}
+
+async function saveAnnouncements(items) {
+  const r = await fetch(API("/api/state/announcements"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin": ADMIN_ENV || ""   // your build-time commissioner password
+    },
+    body: JSON.stringify({ items })
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+
 /* ---- playful (non-hateful) roasts for wrong commissioner password ---- */
 const ROASTS = [
   "Wrong again, champ. Try reading the group chat for once.",
@@ -478,14 +503,14 @@ function LeagueHub(){
 
   const [data,setData]=useState(load);
 
-// v3.6 ADD: hydrate announcements from server on load
+// hydrate announcements from server at startup
 useEffect(() => {
-  getAnnouncements()
-    .then(({ items }) => {
-      setData((d) => ({ ...d, announcements: items || d.announcements || [] }));
-    })
-    .catch(() => {}); // ignore if server not ready yet
+  (async () => {
+    const j = await fetchAnnouncements();
+    setData(d => ({ ...d, announcements: Array.isArray(j.items) ? j.items : [] }));
+  })();
 }, []);
+
 
 
 
@@ -530,17 +555,32 @@ useEffect(() => {
   const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
   const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
 
-  // CRUD
+ // CRUD (persist to server)
 const addAnnouncement = async (html) => {
-  const next = [{ id: nid(), html, createdAt: Date.now() }, ...(data.announcements || [])];
-  setData(d => ({ ...d, announcements: next }));      // optimistic
-  try { await saveAnnouncements(next); } catch {}
+  const a = { id: Math.random().toString(36).slice(2), html, createdAt: Date.now() };
+  const next = [a, ...(data.announcements || [])];
+
+  // optimistic UI
+  setData(d => ({ ...d, announcements: next }));
+
+  try {
+    await saveAnnouncements(next);
+  } catch (e) {
+    alert("Failed to save announcement: " + String(e?.message || e));
+  }
 };
 
 const deleteAnnouncement = async (id) => {
-  const next = (data.announcements || []).filter(a => a.id !== id);
-  setData(d => ({ ...d, announcements: next }));      // optimistic
-  try { await saveAnnouncements(next); } catch {}
+  const next = (data.announcements || []).filter(x => x.id !== id);
+
+  // optimistic UI
+  setData(d => ({ ...d, announcements: next }));
+
+  try {
+    await saveAnnouncements(next);
+  } catch (e) {
+    alert("Failed to delete announcement: " + String(e?.message || e));
+  }
 };
 
 
@@ -937,23 +977,6 @@ function RecentActivityView({ espn }) {
     </Section>
   );
 }
-
-
-// v3.6 ADD: admin header + small fetch helpers used by announcements
-const ADMIN_HEADER = () => {
-  // use whatever your admin login stores; fallback to build-time ADMIN password if present
-  const pwd = localStorage.getItem("adminPassword") || (typeof ADMIN_ENV !== "undefined" ? ADMIN_ENV : "");
-  return pwd ? { "x-admin": pwd } : {};
-};
-const j = (r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
-
-const getAnnouncements = () => fetch(API("/api/state/announcements")).then(j);
-const saveAnnouncements = (items) =>
-  fetch(API("/api/state/announcements"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...ADMIN_HEADER() },
-    body: JSON.stringify({ items })
-  }).then(j);
 
 
 /* ---- Polls ---- */

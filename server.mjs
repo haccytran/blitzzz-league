@@ -186,6 +186,31 @@ app.post("/api/state/announcements", async (req, res) => {
   res.json({ ok: true });
 });
 
+// =========================
+// League state (members, waivers, buyins) — server-side persistence
+// =========================
+app.get("/api/state/league", async (_req, res) => {
+  const data = await readJson("league.json", { members: [], waivers: [], buyins: {}, lastSaved: 0 });
+  res.json(data);
+});
+
+app.post("/api/state/league", async (req, res) => {
+  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const body = req.body || {};
+  if (typeof body !== "object") return res.status(400).send("Bad request");
+
+  // Load previous and shallow-merge only known keys
+  const prev = await readJson("league.json", { members: [], waivers: [], buyins: {}, lastSaved: 0 });
+  const next = {
+    ...prev,
+    ...(Array.isArray(body.members) ? { members: body.members } : {}),
+    ...(Array.isArray(body.waivers) ? { waivers: body.waivers } : {}),
+    ...(body.buyins && typeof body.buyins === "object" ? { buyins: body.buyins } : {}),
+    lastSaved: Date.now()
+  };
+  await writeJson("league.json", next);
+  res.json({ ok: true, saved: next.lastSaved });
+});
 
 // =========================
 // Week helpers (NATIVE LOCAL TIME)

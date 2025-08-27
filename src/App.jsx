@@ -658,9 +658,10 @@ const deleteWaiver = (id) => {
       const teams = json?.teams || [];
       if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
       const names = [...new Set(teams.map(t => teamName(t)))];
-      setData(d => ({ ...d, members: names.map(n => ({ id: nid(), name: n })) }));
-       await saveLeagueState({ members });   
-      alert(`Imported ${names.length} teams.`);
+ const members = names.map(n => ({ id: nid(), name: n }));
+ setData(d => ({ ...d, members }));         // optimistic UI
+ await saveLeagueState({ members });         // persist to server (creates data/league.json)
+ alert(`Imported ${members.length} teams.`);
     } catch(e){ alert(e.message || "ESPN fetch failed. Check League/Season."); }
   };
 
@@ -1732,7 +1733,15 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
   const patch = (p) => {
     setData(d => {
       const prev = (d.buyins && d.buyins[seasonKey]) || { paid:{}, hidden:false, venmoLink:"", zelleEmail:"", venmoQR:"" };
-      return { ...d, buyins: { ...(d.buyins||{}), [seasonKey]: { ...prev, ...p } } };
+      const nextSeason   = { ...prev, ...p };
+      const nextBuyins   = { ...(d.buyins||{}), [seasonKey]: nextSeason };
+      // optimistic UI, then persist
+      setTimeout(() => {
+        saveLeagueState({ buyins: nextBuyins }).catch(e =>
+          alert("Saving buy-ins failed: " + (e?.message || e))
+        );
+      }, 0);
+      return { ...d, buyins: nextBuyins };
     });
   };
 
@@ -1899,72 +1908,38 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <p style={{marginTop:-8, color:"#64748b"}}>
         Last updated: <b>{lastSynced || "—"}</b>. Rule: first two transactions per Wed→Tue week are free, then $5 each.
       </p>
-      {!report && <p style={{color:"#64748b"}}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
+      {!report && <p style={{color:"#64748b"}}>No snapshot yet — Commissioner can click <b>Update Official Snapshot</b>, but the tables below are still visible.</p>}
 
-      {report && (
-        <div className="dues-grid dues-tight">
-          {/* LEFT column (≤50%): Season-to-date + Buy-in tracker stacked */}
-          <div className="dues-left">
-            <div className="card" style={{padding:12}}>
-              <h3 style={{marginTop:0}}>League Owner Dues</h3>
-              <table style={{width:"100%", borderCollapse:"collapse"}}>
-                <thead>
-                  <tr>
-                    <th style={th}>Team</th>
-                    <th style={th}>Adds</th>
-                    <th style={th}>Owes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.totalsRows.map(r=>(
-                    <tr key={r.name}>
-                      <td style={td}>{r.name}</td>
-                      <td style={td}>{r.adds}</td>
-                      <td style={td}>${r.owes}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      {/* Always show Buy-in tracker for everyone */}
+      <BuyInTracker
+        isAdmin={isAdmin}
+        members={data.members}
+        seasonYear={seasonYear}
+        data={data}
+        setData={setData}
+      />
 
-            <BuyInTracker
-              isAdmin={isAdmin}
-              members={data.members}
-              seasonYear={seasonYear}
-              data={data}
-              setData={setData}
-            />
-          </div>
-
-          {/* RIGHT column (50%): By Week */}
-          <div className="card dues-week" style={{padding:12, minWidth:0}}>
-            <h3 style={{marginTop:0}}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
-            {report.weekRows.map(w=>(
-              <div key={w.week} style={{marginBottom:12}}>
-                <div style={{fontWeight:600, margin:"6px 0"}}>Week {w.week} — {w.range}</div>
-                <table style={{width:"100%", borderCollapse:"collapse"}}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Team</th>
-                      <th style={th}>Adds</th>
-                      <th style={th}>Owes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {w.entries.map(e=>(
-                      <tr key={e.name}>
-                        <td style={{...td, whiteSpace:"normal"}}>{e.name}</td>
-                        <td style={td}>{e.count}</td>
-                        <td style={td}>${e.owes}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+       {/* Pay Dues table: show official if available; otherwise fallback (all teams $0) */}
+      <div className="card" style={{padding:12, marginTop:12}}>
+        <h3 style={{marginTop:0}}>League Owner Dues</h3>
+        <table style={{width:"100%", borderCollapse:"collapse"}}>
+          <thead>
+            <tr><th style={th}>Team</th><th style={th}>Adds</th><th style={th}>Owes</th></tr>
+          </thead>
+          <tbody>
+            {(report
+              ? report.totalsRows.map(r => ({ name:r.name, adds:r.adds, owes:r.owes }))
+              : (data.members || []).map(m => ({ name:m.name, adds:0, owes:0 }))
+            ).map(r => (
+              <tr key={r.name}>
+                <td style={td}>{r.name}</td>
+                <td style={td}>{r.adds}</td>
+                <td style={td}>${r.owes}</td>
+              </tr>
             ))}
-          </div>
-        </div>
-      )}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }

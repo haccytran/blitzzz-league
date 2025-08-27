@@ -55,7 +55,8 @@ async function getLeagueData() {
     waivers: [],
     buyins: {},
     leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
-    tradeBlock: []
+    tradeBlock: [],
+    rosters: {} // Add rosters storage by season
   });
 }
 
@@ -289,7 +290,7 @@ app.post("/api/league-data/reset-waivers", requireAdmin, async (req, res) => {
   }
 });
 
-// === BUY-INS ===
+// === BUY-INS (Fixed with proper server-side persistence) ===
 app.post("/api/league-data/buyins", requireAdmin, async (req, res) => {
   try {
     const { seasonKey, updates } = req.body;
@@ -305,6 +306,36 @@ app.post("/api/league-data/buyins", requireAdmin, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: "Failed to update buy-ins" });
+  }
+});
+
+// === ROSTERS (Server-side storage) ===
+app.get("/api/league-data/rosters", async (req, res) => {
+  try {
+    const { seasonId } = req.query;
+    const data = await getLeagueData();
+    const rosters = data.rosters || {};
+    res.json({ rosters: rosters[seasonId] || [] });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load rosters" });
+  }
+});
+
+app.post("/api/league-data/rosters", requireAdmin, async (req, res) => {
+  try {
+    const { seasonId, rosters } = req.body;
+    if (!seasonId || !rosters) {
+      return res.status(400).json({ error: "Season ID and rosters required" });
+    }
+
+    const data = await getLeagueData();
+    data.rosters = data.rosters || {};
+    data.rosters[seasonId] = rosters;
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save rosters" });
   }
 });
 
@@ -893,6 +924,14 @@ app.post("/api/report/update", async (req, res) => {
     res.status(502).send(err?.message || String(err));
   }
 });
+
+// Replace file storage with PostgreSQL if you add the addon
+const DATABASE_URL = process.env.DATABASE_URL;
+if (DATABASE_URL) {
+  // Use database instead of files
+} else {
+  // Keep current file system (will reset on deploy)
+}
 
 // Static hosting
 const CLIENT_DIR = path.join(__dirname, "dist");

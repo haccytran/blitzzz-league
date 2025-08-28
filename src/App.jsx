@@ -734,11 +734,11 @@ function RecentActivityView({ espn }) {
         const reportData = await r.json();
         setReport(reportData);
         
-        // Filter transactions to last 7 days
+        // Filter transactions to last 7 days - INCLUDING Week 0 (draft picks)
         const cutoffDate = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days ago
         const recentMoves = (reportData.rawMoves || []).filter(move => {
           const moveDate = new Date(move.date).getTime();
-          return moveDate > cutoffDate;
+          return moveDate > cutoffDate; // No week filter - show ALL weeks including 0
         });
         
         // Sort by date (most recent first) and format for display
@@ -748,7 +748,9 @@ function RecentActivityView({ espn }) {
             date: new Date(move.date).toLocaleDateString(),
             team: move.team,
             player: move.player,
-            action: move.action === "ADD" ? "ADDED" : "DROPPED"
+            action: move.action === "ADD" ? "ADDED" : "DROPPED",
+            week: move.week,
+            isDraft: move.week <= 0 // Flag draft picks for styling
           }));
         
         setActivities(formattedActivities);
@@ -788,10 +790,13 @@ function RecentActivityView({ espn }) {
                 borderBottom: "1px solid #e2e8f0",
                 display: "flex",
                 justifyContent: "space-between",
-                fontSize: 14
+                fontSize: 14,
+                fontStyle: activity.isDraft ? "italic" : "normal",
+                opacity: activity.isDraft ? 0.8 : 1
               }}>
                 <span>
                   <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
+                  {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
                 </span>
                 <span style={{ color: "#64748b" }}>{activity.date}</span>
               </div>
@@ -806,77 +811,10 @@ function RecentActivityView({ espn }) {
         {report && (
           <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
             Data from official snapshot: {report.lastSynced}
+            <br />
+            <span style={{ fontStyle: "italic" }}>Draft picks (Week 0)</span> shown but not billed
           </div>
         )}
-      </div>
-    </Section>
-  );
-}function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
-  const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
-  const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
-
-  list.sort((a, b) => {
-    const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
-    const aIsCur = wa === cur, bIsCur = wb === cur;
-    if (aIsCur && !bIsCur) return -1;
-    if (bIsCur && !aIsCur) return 1;
-
-    const aFuture = wa > cur, bFuture = wb > cur;
-    if (aFuture && !bFuture) return -1;
-    if (bFuture && !aFuture) return 1;
-    if (aFuture && bFuture) return wa - wb;
-
-    const aPast = wa < cur, bPast = wb < cur;
-    if (aPast && bPast) return wb - wa;
-    return 0;
-  });
-
-  return (
-    <Section title="Weekly Challenges">
-      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} />}
-      <div className="grid" style={{ gap: 12, marginTop: 12 }}>
-        {list.length === 0 && (
-          <div className="card" style={{ padding: 16, color: "#64748b" }}>
-            No weekly challenges yet.
-          </div>
-        )}
-        {list.map(item => {
-          const isPast = (item.week || 0) > 0 && (item.week || 0) < nowWeek;
-          return (
-            <div key={item.id} className="card" style={{ padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <h3 style={{ margin: 0 }}>
-                    {item.weekLabel || "Week"}
-                    {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
-                  </h3>
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
-                    Added {new Date(item.createdAt).toLocaleString()}
-                  </div>
-                </div>
-                {isAdmin && (
-                  <button
-                    className="btn"
-                    style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }}
-                    onClick={() => deleteWeekly(item.id)}
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-              <div
-                style={{
-                  marginTop: 8,
-                  whiteSpace: "pre-wrap",
-                  textDecoration: isPast ? "line-through" : "none",
-                  color: isPast ? "#64748b" : "#0b1220"
-                }}
-              >
-                {item.text}
-              </div>
-            </div>
-          );
-        })}
       </div>
     </Section>
   );

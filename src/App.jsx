@@ -103,10 +103,39 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, auth =
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
   const au = auth ? `&auth=1` : "";
   const url = API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&view=${view}${sp}${au}`);
-  const r = await fetch(url);
-  const text = await r.text();
-  try { return JSON.parse(text); }
-  catch { throw new Error(`ESPN returned non-JSON for ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}. Snippet: ${text.slice(0,160).replace(/\s+/g," ")}`); }
+  
+  console.log(`[ESPN API] Fetching: ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}`);
+  const startTime = Date.now();
+  
+  try {
+    const r = await fetch(url);
+    const text = await r.text();
+    const elapsed = Date.now() - startTime;
+    
+    console.log(`[ESPN API] Response for ${view}: ${r.status} (${elapsed}ms)`);
+    
+    if (!r.ok) {
+      console.error(`[ESPN API] HTTP ${r.status} for ${view}:`, text.slice(0, 200));
+      throw new Error(`ESPN API HTTP ${r.status} for ${view}`);
+    }
+    
+    try { 
+      const json = JSON.parse(text);
+      console.log(`[ESPN API] Success: ${view} - parsed JSON (${elapsed}ms)`);
+      return json;
+    } catch (parseError) {
+      console.error(`[ESPN API] JSON parse error for ${view}:`, {
+        error: parseError.message,
+        snippet: text.slice(0, 300).replace(/\s+/g, " "),
+        contentType: r.headers.get("content-type")
+      });
+      throw new Error(`ESPN returned non-JSON for ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}. Snippet: ${text.slice(0,160).replace(/\s+/g," ")}`);
+    }
+  } catch (networkError) {
+    const elapsed = Date.now() - startTime;
+    console.error(`[ESPN API] Network error for ${view} (${elapsed}ms):`, networkError.message);
+    throw networkError;
+  }
 }
 
 /* =========================
@@ -350,6 +379,18 @@ function LeagueHub(){
     }
   };
 
+  const updateBuyIns = async (seasonKey, updates) => {
+    try {
+      await apiCall('/api/league-data/buyins', {
+        method: 'POST',
+        body: JSON.stringify({ seasonKey, updates })
+      });
+      await loadServerData();
+    } catch (error) {
+      alert('Failed to update buy-ins: ' + error.message);
+    }
+  };
+
   const deleteTrade = async (id) => {
     try {
       await apiCall('/api/league-data/trading', {
@@ -486,7 +527,6 @@ function LeagueHub(){
         <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
           <div className="card" style={{padding:16}}>
             <h3>League Members</h3>
-            {isAdmin && <AddMember onAdd={addMember}/>}
             <ul style={{listStyle:"none",padding:0,margin:0}}>
               {data.members.map(m=>(
                 <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
@@ -495,7 +535,7 @@ function LeagueHub(){
                   {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
                 </li>
               ))}
-              {data.members.length===0 && <p style={{color:"#64748b"}}>Add members or import via ESPN.</p>}
+              {data.members.length===0 && <p style={{color:"#64748b"}}>Import teams via League Settings to populate members.</p>}
             </ul>
           </div>
 
@@ -549,6 +589,7 @@ function LeagueHub(){
       data={data}
       setData={setData}
       seasonYear={seasonYear}
+      updateBuyIns={updateBuyIns}
     />,
     transactions: <TransactionsView report={espnReport} />,
     rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
@@ -815,7 +856,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
   );
 }
 
-function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear }) {
+function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns }) {
   return (
     <Section title="Dues (Official Snapshot)" actions={
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -872,6 +913,7 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
               seasonYear={seasonYear}
               data={data}
               setData={setData}
+              updateBuyIns={updateBuyIns}
             />
           </div>
           <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
@@ -1660,7 +1702,7 @@ function WaiverForm({ members, onAdd, disabled }) {
   );
 }
 
-function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
+function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIns }) {
   const BUYIN = 200;
   const displayYear = new Date().getFullYear();
 
@@ -1673,11 +1715,42 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
     venmoQR: ""
   };
 
-  const patch = (p) => {
+  const patch = async (updates) => {
+    if (!updateBuyIns) {
+      console.error('updateBuyIns function not provided');
+      return;
+    }
+    
+    const newData = { ...cur, ...updates };
+    
+    // Optimistically update local state
     setData(d => {
-      const prev = (d.buyins && d.buyins[seasonKey]) || { paid: {}, hidden: false, venmoLink: "", zelleEmail: "", venmoQR: "" };
-      return { ...d, buyins: { ...(d.buyins || {}), [seasonKey]: { ...prev, ...p } } };
+      return { 
+        ...d, 
+        buyins: { 
+          ...(d.buyins || {}), 
+          [seasonKey]: newData 
+        } 
+      };
     });
+    
+    // Save to server
+    try {
+      await updateBuyIns(seasonKey, newData);
+    } catch (error) {
+      console.error('Failed to update buy-ins:', error);
+      // Revert local state on failure
+      setData(d => {
+        return { 
+          ...d, 
+          buyins: { 
+            ...(d.buyins || {}), 
+            [seasonKey]: cur 
+          } 
+        };
+      });
+      alert('Failed to save buy-in changes: ' + error.message);
+    }
   };
 
   const togglePaid = (id) => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
@@ -1689,11 +1762,19 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
 
   if (cur.hidden && !isAdmin) return null;
 
-  const [venmo, setVenmo] = React.useState(cur.venmoLink || "");
+  const [venmo, setVenmo] = React.useState(cur.venmoLink || "https://venmo.com/u/");
   const [zelle, setZelle] = React.useState(cur.zelleEmail || "");
-  React.useEffect(() => { setVenmo(cur.venmoLink || ""); setZelle(cur.zelleEmail || ""); }, [seasonKey, data.buyins]);
+  
+  React.useEffect(() => { 
+    setVenmo(cur.venmoLink || "https://venmo.com/u/"); 
+    setZelle(cur.zelleEmail || ""); 
+  }, [seasonKey, data.buyins]);
 
-  const saveMeta = () => patch({ venmoLink: venmo.trim(), zelleEmail: zelle.trim() });
+  const saveMeta = async () => {
+    const venmoLink = venmo.trim();
+    const zelleEmail = zelle.trim();
+    await patch({ venmoLink, zelleEmail });
+  };
 
   const onUploadQR = (e) => {
     const f = e.target.files?.[0];
@@ -1767,7 +1848,7 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
             <h4 style={{ marginTop: 0 }}>Pay Dues</h4>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {cur.venmoLink && (
+              {cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/" && (
                 <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">
                   Pay with Venmo
                 </a>
@@ -1779,7 +1860,7 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
               )}
             </div>
 
-            {(cur.venmoQR || cur.venmoLink || cur.zelleEmail) && (
+            {(cur.venmoQR || (cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/") || cur.zelleEmail) && (
               <div style={{ marginTop: 8 }}>
                 <a
                   href={cur.venmoLink || `mailto:${encodeURIComponent(cur.zelleEmail)}`}
@@ -1797,8 +1878,18 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData }) {
             {isAdmin && (
               <>
                 <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8, marginTop: 8 }}>
-                  <input className="input" placeholder="https://venmo.com/u/YourHandle" value={venmo} onChange={e => setVenmo(e.target.value)} />
-                  <input className="input" placeholder="Zelle email" value={zelle} onChange={e => setZelle(e.target.value)} />
+                  <input 
+                    className="input" 
+                    placeholder="https://venmo.com/u/YourHandle" 
+                    value={venmo} 
+                    onChange={e => setVenmo(e.target.value)}
+                  />
+                  <input 
+                    className="input" 
+                    placeholder="Zelle email" 
+                    value={zelle} 
+                    onChange={e => setZelle(e.target.value)}
+                  />
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
                   <input type="file" accept="image/*" onChange={onUploadQR} />

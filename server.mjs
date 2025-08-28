@@ -117,12 +117,21 @@ async function writeJson(name, obj) {
     try {
       const client = await pool.connect();
       const dataType = name.replace('.json', '');
-      await client.query(`
-        INSERT INTO league_data (data_type, data_value, updated_at) 
-        VALUES ($1, $2, CURRENT_TIMESTAMP)
-        ON CONFLICT (data_type) DO UPDATE SET 
-        data_value = EXCLUDED.data_value, updated_at = CURRENT_TIMESTAMP
-      `, [dataType, JSON.stringify(obj)]);
+      
+      // First try to update existing record
+      const updateResult = await client.query(
+        'UPDATE league_data SET data_value = $1, updated_at = CURRENT_TIMESTAMP WHERE data_type = $2',
+        [JSON.stringify(obj), dataType]
+      );
+      
+      // If no rows were updated, insert a new record
+      if (updateResult.rowCount === 0) {
+        await client.query(
+          'INSERT INTO league_data (data_type, data_value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)',
+          [dataType, JSON.stringify(obj)]
+        );
+      }
+      
       client.release();
     } catch (err) {
       console.error('Database write error:', err);

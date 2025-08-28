@@ -7,8 +7,14 @@ import cors from "cors";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
-import pkg from 'pg';
-const { Pool } = pkg;
+// Optional PostgreSQL import
+let Pool = null;
+try {
+  const pkg = await import('pg');
+  Pool = pkg.Pool;
+} catch (err) {
+  console.log('PostgreSQL not available, using file storage');
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);

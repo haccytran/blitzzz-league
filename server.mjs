@@ -811,9 +811,16 @@ async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requi
 app.get("/api/espn", async (req, res) => {
   try {
     const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
+    console.log(`[Server ESPN] Fetching ${view} for league ${leagueId}, season ${seasonId}${scoringPeriodId ? `, SP ${scoringPeriodId}` : ''}`);
+    const startTime = Date.now();
+    
     const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
+    
+    const elapsed = Date.now() - startTime;
+    console.log(`[Server ESPN] Success ${view}: ${elapsed}ms`);
     res.json(json);
   } catch (e) { 
+    console.error(`[Server ESPN] Failed ${req.query.view}:`, e.message);
     res.status(502).send(String(e.message || e)); 
   }
 });

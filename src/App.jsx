@@ -722,7 +722,7 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
 function RecentActivityView({ espn }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [stats, setStats] = useState(null);
+  const [activities, setActivities] = useState([]);
   
   async function refresh() {
     if (!espn.leagueId) {
@@ -732,18 +732,50 @@ function RecentActivityView({ espn }) {
     setError("");
     setLoading(true);
     try {
-      const teamJson = await fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" });
-      const idToName = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
+      // Fetch recent transactions from multiple scoring periods
+      const allActivities = [];
+      const maxWeeks = 5; // Check last 5 weeks
       
-      // Simple 7-day activity check
-      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      for (let sp = 1; sp <= maxWeeks; sp++) {
+        try {
+          const txJson = await fetchEspnJson({ 
+            leagueId: espn.leagueId, 
+            seasonId: espn.seasonId, 
+            view: "mTransactions2", 
+            scoringPeriodId: sp 
+          });
+          
+          const transactions = txJson?.transactions || [];
+          transactions.forEach(tx => {
+            const date = new Date(tx.processDate || tx.proposedDate || Date.now());
+            const isRecent = Date.now() - date.getTime() < 7 * 24 * 60 * 60 * 1000; // Last 7 days
+            
+            if (isRecent && tx.items) {
+              tx.items.forEach(item => {
+                if (item.type === 1) { // ADD
+                  allActivities.push({
+                    date: date.toLocaleDateString(),
+                    team: `Team ${tx.toTeamId}`,
+                    player: item.playerPoolEntry?.player?.fullName || "Unknown Player",
+                    action: "ADD"
+                  });
+                } else if (item.type === 2) { // DROP  
+                  allActivities.push({
+                    date: date.toLocaleDateString(),
+                    team: `Team ${tx.fromTeamId}`,
+                    player: item.playerPoolEntry?.player?.fullName || "Unknown Player", 
+                    action: "DROP"
+                  });
+                }
+              });
+            }
+          });
+        } catch (e) {
+          console.log(`No transactions found for SP ${sp}`);
+        }
+      }
       
-      // For now, just show that it's working - real implementation would need more ESPN calls
-      setStats({ 
-        total: 0, 
-        top: [],
-        message: "Recent activity tracking active. Commissioner should update official snapshot for full transaction data." 
-      });
+      setActivities(allActivities.sort((a, b) => new Date(b.date) - new Date(a.date)));
     } catch (err) {
       setError(err.message || "Could not load ESPN activity.");
     }
@@ -753,38 +785,41 @@ function RecentActivityView({ espn }) {
   useEffect(() => { refresh(); }, [espn.leagueId, espn.seasonId]);
 
   return (
-    <Section title="Recent Activity">
+    <Section title="Recent Activity (Last 7 Days)">
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <strong>Last 7 Days — Transactions</strong>
+          <strong>Recent Transactions</strong>
           <button className="btn" style={btnSec} onClick={refresh} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
         {!espn.leagueId && <div style={{ color: "#64748b" }}>Set your ESPN details to see activity.</div>}
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
-        {stats && (
-          <div style={{ marginTop: 6 }}>
-            <div style={{ fontSize: 14, color: "#64748b" }}>
-              {stats.message || `Adds: ${stats.total}`}
-            </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
-              Last Updated: {new Date().toLocaleString()}
-            </div>
-            {stats.top.length > 0 && (
-              <ul style={{ margin: 6, marginLeft: 18 }}>
-                {stats.top.map(([name, count]) => (
-                  <li key={name}>{name} — {count}</li>
-                ))}
-              </ul>
-            )}
+        
+        {activities.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            {activities.map((activity, i) => (
+              <div key={i} style={{ 
+                padding: "8px 0", 
+                borderBottom: "1px solid #e2e8f0",
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 14
+              }}>
+                <span>
+                  <b>{activity.team}</b> {activity.action.toLowerCase()}ed <b>{activity.player}</b>
+                </span>
+                <span style={{ color: "#64748b" }}>{activity.date}</span>
+              </div>
+            ))}
           </div>
+        ) : !loading && !error && (
+          <div style={{ color: "#64748b", marginTop: 8 }}>No recent activity found.</div>
         )}
       </div>
     </Section>
   );
 }
-
 function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
   const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
@@ -1409,47 +1444,54 @@ function PollsView({ isAdmin, members, espn }) {
                   )}
                 </div>
 
-                <div className="card" style={{ padding: 12, background: "#f8fafc", marginBottom: 12 }}>
-                  <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Season Team Code</div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span className="badge" style={{ background: "#e5e7eb", color: "#0b1220" }}>
-                          {teamCode || "— not set —"}
-                        </span>
-                        <button
-                          className="btn"
-                          style={{ fontSize: 12, padding: "4px 8px" }}
-                          onClick={() => {
-                            const c = prompt("Enter your Voting Password for this season:");
-                            if (c) setTeamCode(c.toUpperCase().trim());
-                          }}
-                        >
-                          {teamCode ? "Change" : "Enter Code"}
-                        </button>
-                      </div>
-                    </div>
+               // VOTING CARD SECTION
+<div className="card" style={{ padding: 12, background: "#f8fafc", marginBottom: 12 }}>
+  <div style={{ marginBottom: 12 }}>
+    <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Season Team Code</div>
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <span className="badge" style={{ background: "#e5e7eb", color: "#0b1220" }}>
+        {teamCode || "— not set —"}
+      </span>
+      <button
+        className="btn"
+        style={{ fontSize: 12, padding: "4px 8px" }}
+        onClick={() => {
+          const c = prompt("Enter your Voting Password for this season:");
+          if (c) setTeamCode(c.toUpperCase().trim());
+        }}
+      >
+        {teamCode ? "Change" : "Enter Code"}
+      </button>
+    </div>
+  </div>
 
-                    <div>
-                      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Your Vote</div>
-                      <select className="input" value={voteChoice} onChange={e => setVoteChoice(e.target.value)}>
-                        <option value="">Choose an option</option>
-                        {poll.options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-                      </select>
-                    </div>
-                  </div>
+  <div style={{ marginBottom: 12 }}>
+    {poll.options.map(o => (
+      <label key={o.id} style={{ display: "block", marginBottom: 6, cursor: "pointer" }}>
+        <input
+          type="radio"
+          name="pollChoice"
+          value={o.id}
+          checked={voteChoice === o.id}
+          onChange={(e) => setVoteChoice(e.target.value)}
+          style={{ marginRight: 8 }}
+        />
+        {o.label}
+      </label>
+    ))}
+  </div>
 
-                  <div style={{ textAlign: "right", marginTop: 8 }}>
-                    <button
-                      className="btn"
-                      style={btnPri}
-                      onClick={castVote}
-                      disabled={poll.closed}
-                    >
-                      Vote
-                    </button>
-                  </div>
-                </div>
+  <div style={{ textAlign: "center" }}>
+    <button
+      className="btn"
+      style={btnPri}
+      onClick={castVote}
+      disabled={poll.closed}
+    >
+      Vote
+    </button>
+  </div>
+</div>
 
                 <h4>Results</h4>
                 {poll.options.map(o => {

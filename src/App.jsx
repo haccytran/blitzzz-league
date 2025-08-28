@@ -725,23 +725,43 @@ function RecentActivityView({ espn }) {
   const [activities, setActivities] = useState([]);
   const [report, setReport] = useState(null);
 
-  async function loadReport() {
-    setLoading(true);
-    setError("");
-    try {
-      const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
-      if (r.ok) {
-        const reportData = await r.json();
-        setReport(reportData);
+async function loadReport() {
+  setLoading(true);
+  setError("");
+  try {
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
+    if (r.ok) {
+      const reportData = await r.json();
+      setReport(reportData);
+      
+      console.log("Full report data:", reportData);
+      console.log("Raw moves:", reportData.rawMoves);
+      console.log("Total raw moves:", reportData.rawMoves?.length || 0);
+      
+      // Check date distribution
+      if (reportData.rawMoves) {
+        const movesByWeek = {};
+        reportData.rawMoves.forEach(move => {
+          const week = move.week;
+          movesByWeek[week] = (movesByWeek[week] || 0) + 1;
+        });
+        console.log("Moves by week:", movesByWeek);
         
-        // Filter transactions to last 7 days - INCLUDING Week 0 (draft picks)
-        const cutoffDate = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days ago
-        const recentMoves = (reportData.rawMoves || []).filter(move => {
+        // Check recent dates
+        const now = Date.now();
+        const cutoffDate = now - 7 * 24 * 60 * 60 * 1000;
+        console.log("Current timestamp:", now);
+        console.log("7-day cutoff timestamp:", cutoffDate);
+        console.log("Cutoff date:", new Date(cutoffDate).toLocaleString());
+        
+        const recentMoves = reportData.rawMoves.filter(move => {
           const moveDate = new Date(move.date).getTime();
-          return moveDate > cutoffDate; // No week filter - show ALL weeks including 0
+          console.log(`Move: ${move.team} ${move.action} ${move.player} - Date: ${move.date} - Timestamp: ${moveDate} - Recent: ${moveDate > cutoffDate}`);
+          return moveDate > cutoffDate;
         });
         
-        // Sort by date (most recent first) and format for display
+        console.log("Recent moves found:", recentMoves.length);
+        
         const formattedActivities = recentMoves
           .sort((a, b) => new Date(b.date) - new Date(a.date))
           .map(move => ({
@@ -750,18 +770,20 @@ function RecentActivityView({ espn }) {
             player: move.player,
             action: move.action === "ADD" ? "ADDED" : "DROPPED",
             week: move.week,
-            isDraft: move.week <= 0 // Flag draft picks for styling
+            isDraft: move.week <= 0
           }));
         
         setActivities(formattedActivities);
-      } else {
-        setError("No recent transactions snapshot available. Update the official snapshot first.");
       }
-    } catch (err) {
-      setError("Failed to load recent activity data.");
+    } else {
+      setError("No recent transactions snapshot available. Update the official snapshot first.");
     }
-    setLoading(false);
+  } catch (err) {
+    console.error("Error loading report:", err);
+    setError("Failed to load recent activity data.");
   }
+  setLoading(false);
+}
 
   useEffect(() => {
     if (espn.seasonId) {
@@ -819,6 +841,78 @@ function RecentActivityView({ espn }) {
     </Section>
   );
 }
+
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
+  const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
+  const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
+
+  list.sort((a, b) => {
+    const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
+    const aIsCur = wa === cur, bIsCur = wb === cur;
+    if (aIsCur && !bIsCur) return -1;
+    if (bIsCur && !aIsCur) return 1;
+
+    const aFuture = wa > cur, bFuture = wb > cur;
+    if (aFuture && !bFuture) return -1;
+    if (bFuture && !aFuture) return 1;
+    if (aFuture && bFuture) return wa - wb;
+
+    const aPast = wa < cur, bPast = wb < cur;
+    if (aPast && bPast) return wb - wa;
+    return 0;
+  });
+
+  return (
+    <Section title="Weekly Challenges">
+      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} />}
+      <div className="grid" style={{ gap: 12, marginTop: 12 }}>
+        {list.length === 0 && (
+          <div className="card" style={{ padding: 16, color: "#64748b" }}>
+            No weekly challenges yet.
+          </div>
+        )}
+        {list.map(item => {
+          const isPast = (item.week || 0) > 0 && (item.week || 0) < nowWeek;
+          return (
+            <div key={item.id} className="card" style={{ padding: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>
+                    {item.weekLabel || "Week"}
+                    {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
+                  </h3>
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                    Added {new Date(item.createdAt).toLocaleString()}
+                  </div>
+                </div>
+                {isAdmin && (
+                  <button
+                    className="btn"
+                    style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }}
+                    onClick={() => deleteWeekly(item.id)}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+              <div
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  textDecoration: isPast ? "line-through" : "none",
+                  color: isPast ? "#64748b" : "#0b1220"
+                }}
+              >
+                {item.text}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
 
 function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns }) {
   return (

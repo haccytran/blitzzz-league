@@ -347,7 +347,17 @@ app.post("/api/league-data/import-teams", requireAdmin, async (req, res) => {
     }
 
     const data = await getLeagueData();
-    data.members = teams.map(name => ({ id: nid(), name }));
+    const existingMembers = data.members || [];
+    
+    // Create a map of existing members by name to preserve IDs
+    const membersByName = Object.fromEntries(existingMembers.map(m => [m.name, m]));
+    
+    // Import teams while preserving existing member IDs where possible
+    data.members = teams.map(name => {
+      const existing = membersByName[name];
+      return existing ? existing : { id: nid(), name };
+    });
+    
     await saveLeagueData(data);
 
     res.json({ success: true, imported: teams.length });

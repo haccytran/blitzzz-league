@@ -238,6 +238,26 @@ app.delete("/api/league-data/announcements", requireAdmin, async (req, res) => {
   }
 });
 
+// === BUY-INS ===
+app.post("/api/league-data/buyins", requireAdmin, async (req, res) => {
+  try {
+    const { seasonKey, updates } = req.body;
+    if (!seasonKey || !updates) {
+      return res.status(400).json({ error: "Season key and updates required" });
+    }
+
+    const data = await getLeagueData();
+    data.buyins = data.buyins || {};
+    data.buyins[seasonKey] = { ...data.buyins[seasonKey], ...updates };
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to update buy-ins:', error);
+    res.status(500).json({ error: "Failed to update buy-ins" });
+  }
+});
+
 // === WEEKLY CHALLENGES ===
 app.post("/api/league-data/weekly", requireAdmin, async (req, res) => {
   try {

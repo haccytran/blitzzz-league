@@ -40,12 +40,11 @@ if (DATABASE_URL) {
       await client.query(`
         CREATE TABLE IF NOT EXISTS league_data (
           id SERIAL PRIMARY KEY,
-          data_type VARCHAR(50) NOT NULL,
+          data_type VARCHAR(50) NOT NULL UNIQUE,
           data_key VARCHAR(100),
           data_value JSONB NOT NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(data_type, data_key)
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
 
@@ -122,7 +121,7 @@ async function writeJson(name, obj) {
         INSERT INTO league_data (data_type, data_value, updated_at) 
         VALUES ($1, $2, CURRENT_TIMESTAMP)
         ON CONFLICT (data_type) DO UPDATE SET 
-        data_value = $2, updated_at = CURRENT_TIMESTAMP
+        data_value = EXCLUDED.data_value, updated_at = CURRENT_TIMESTAMP
       `, [dataType, JSON.stringify(obj)]);
       client.release();
     } catch (err) {

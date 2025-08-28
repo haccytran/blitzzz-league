@@ -769,7 +769,11 @@ function buildCookie(req) {
   if (hdr) return String(hdr);
   const swid = process.env.SWID;
   const s2   = process.env.ESPN_S2 || process.env.S2;
+  
+  console.log("Building cookie - SWID:", swid ? "present" : "missing", "S2:", s2 ? "present" : "missing");
+  
   if (swid && s2) return `SWID=${swid}; ESPN_S2=${s2}`;
+  if (swid) return `SWID=${swid}`;  // Use just SWID
   if (process.env.ESPN_COOKIE) return process.env.ESPN_COOKIE;
   return "";
 }
@@ -1166,7 +1170,11 @@ const totalsRows = allTeamNames.map(teamName => {
 app.get("/api/report", async (req, res) => {
   try {
     const seasonId = req.query?.seasonId;
-    if (DATABASE_URL && seasonId) {
+    if (!seasonId) {
+      return res.status(400).json({ error: "Season ID required" });
+    }
+    
+    if (DATABASE_URL) {
       const client = await pool.connect();
       const result = await client.query('SELECT report_data FROM reports WHERE season_id = $1', [seasonId]);
       client.release();
@@ -1175,14 +1183,13 @@ app.get("/api/report", async (req, res) => {
       }
     }
     
-    const preferred = seasonId ? await readJson(`report_${seasonId}.json`, null) : null;
-    const fallback = await readJson(REPORT_FILE, null);
-    const report = preferred || fallback;
-    if (!report) return res.status(404).send("No report");
-    res.json(report);
+    const preferred = await readJson(`report_${seasonId}.json`, null);
+    if (preferred) return res.json(preferred);
+    
+    return res.status(404).json({ error: "No report found for season " + seasonId });
   } catch (error) {
     console.error('Failed to load report:', error);
-    res.status(500).send("Failed to load report");
+    res.status(500).json({ error: "Failed to load report" });
   }
 });
 

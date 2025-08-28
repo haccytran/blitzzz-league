@@ -841,9 +841,10 @@ function RecentActivityView({ espn }) {
       
       setActivities(uniqueActivities);
       
-      if (uniqueActivities.length === 0) {
-        console.log("No recent transactions found. Raw data:", { recentJson: !!recentJson, txJson: !!txJson });
-      }
+    // Replace the console.log line at the bottom:
+if (uniqueActivities.length === 0) {
+  console.log("No recent transactions found. Checked both recentActivity and mTransactions2 endpoints.");
+}
       
     } catch (err) {
       setError(err.message || "Could not load ESPN activity.");

@@ -1193,6 +1193,35 @@ app.get("/api/report", async (req, res) => {
   }
 });
 
+// Set the default season for all users
+app.post("/api/report/set-default", requireAdmin, async (req, res) => {
+  try {
+    const { seasonId } = req.body;
+    if (!seasonId) {
+      return res.status(400).json({ error: "Season ID required" });
+    }
+
+    // Store the default season setting
+    const defaultSetting = { defaultSeason: seasonId, updatedAt: Date.now() };
+    await writeJson("default_season.json", defaultSetting);
+    
+    res.json({ success: true, defaultSeason: seasonId });
+  } catch (error) {
+    console.error('Failed to set default season:', error);
+    res.status(500).json({ error: "Failed to set default season" });
+  }
+});
+
+// Get the default season
+app.get("/api/report/default-season", async (req, res) => {
+  try {
+    const setting = await readJson("default_season.json", { defaultSeason: "2025" });
+    res.json(setting);
+  } catch (error) {
+    res.json({ defaultSeason: "2025" });
+  }
+});
+
 app.post("/api/report/update", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { leagueId, seasonId } = req.body || {};
@@ -1231,8 +1260,13 @@ app.post("/api/report/update", async (req, res) => {
     
     await writeJson(`report_${seasonId}.json`, snapshot);
     await writeJson(REPORT_FILE, snapshot);
-    setProgress(jobId, 100, "Snapshot complete");
-    res.json({ ok: true, weeks: (report?.weekRows || []).length });
+
+   // Set this season as the default for all users
+const defaultSetting = { defaultSeason: seasonId, updatedAt: Date.now() };
+await writeJson("default_season.json", defaultSetting);
+
+setProgress(jobId, 100, "Snapshot complete");
+res.json({ ok: true, weeks: (report?.weekRows || []).length });
   } catch (err) {
     console.error('Report update failed:', err);
     setProgress(jobId, 100, "Failed");

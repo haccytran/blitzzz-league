@@ -732,52 +732,122 @@ function RecentActivityView({ espn }) {
     setError("");
     setLoading(true);
     try {
-      // Fetch recent transactions from multiple scoring periods
-      const allActivities = [];
-      const maxWeeks = 5; // Check last 5 weeks
+      // First get team names
+      const teamJson = await fetchEspnJson({ 
+        leagueId: espn.leagueId, 
+        seasonId: espn.seasonId, 
+        view: "mTeam" 
+      });
+      const idToName = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
       
-      for (let sp = 1; sp <= maxWeeks; sp++) {
-        try {
-          const txJson = await fetchEspnJson({ 
-            leagueId: espn.leagueId, 
-            seasonId: espn.seasonId, 
-            view: "mTransactions2", 
-            scoringPeriodId: sp 
-          });
-          
-          const transactions = txJson?.transactions || [];
-          transactions.forEach(tx => {
-            const date = new Date(tx.processDate || tx.proposedDate || Date.now());
-            const isRecent = Date.now() - date.getTime() < 7 * 24 * 60 * 60 * 1000; // Last 7 days
-            
-            if (isRecent && tx.items) {
-              tx.items.forEach(item => {
-                if (item.type === 1) { // ADD
-                  allActivities.push({
-                    date: date.toLocaleDateString(),
-                    team: `Team ${tx.toTeamId}`,
-                    player: item.playerPoolEntry?.player?.fullName || "Unknown Player",
-                    action: "ADD"
-                  });
-                } else if (item.type === 2) { // DROP  
-                  allActivities.push({
-                    date: date.toLocaleDateString(),
-                    team: `Team ${tx.fromTeamId}`,
-                    player: item.playerPoolEntry?.player?.fullName || "Unknown Player", 
-                    action: "DROP"
-                  });
-                }
-              });
-            }
-          });
-        } catch (e) {
-          console.log(`No transactions found for SP ${sp}`);
-        }
+      const allActivities = [];
+      const cutoffDate = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days ago
+      
+      // Try recent activity endpoint
+      try {
+        const recentJson = await fetchEspnJson({ 
+          leagueId: espn.leagueId, 
+          seasonId: espn.seasonId, 
+          view: "recentActivity"
+        });
+        
+        const transactions = recentJson?.transactions || [];
+        transactions.forEach(tx => {
+          const txDate = new Date(tx.processDate || tx.proposedDate || tx.date || Date.now());
+          if (txDate.getTime() > cutoffDate && tx.items) {
+            tx.items.forEach(item => {
+              const playerName = item.playerPoolEntry?.player?.fullName || 
+                                item.player?.fullName || 
+                                `Player #${item.playerId || 'Unknown'}`;
+              
+              if (item.type === 1 || /ADD/i.test(item.moveType)) { // ADD
+                allActivities.push({
+                  date: txDate,
+                  dateStr: txDate.toLocaleDateString(),
+                  team: idToName[tx.toTeamId] || `Team ${tx.toTeamId}`,
+                  player: playerName,
+                  action: "ADDED"
+                });
+              }
+              
+              if (item.type === 2 || /DROP/i.test(item.moveType)) { // DROP
+                allActivities.push({
+                  date: txDate,
+                  dateStr: txDate.toLocaleDateString(), 
+                  team: idToName[tx.fromTeamId] || `Team ${tx.fromTeamId}`,
+                  player: playerName,
+                  action: "DROPPED"
+                });
+              }
+            });
+          }
+        });
+      } catch (e) {
+        console.log("recentActivity failed:", e.message);
       }
       
-      setActivities(allActivities.sort((a, b) => new Date(b.date) - new Date(a.date)));
+      // Also try mTransactions2 for current week
+      try {
+        const txJson = await fetchEspnJson({ 
+          leagueId: espn.leagueId, 
+          seasonId: espn.seasonId, 
+          view: "mTransactions2"
+        });
+        
+        const transactions = txJson?.transactions || [];
+        transactions.forEach(tx => {
+          const txDate = new Date(tx.processDate || tx.proposedDate || tx.date || Date.now());
+          if (txDate.getTime() > cutoffDate && tx.items) {
+            tx.items.forEach(item => {
+              const playerName = item.playerPoolEntry?.player?.fullName || 
+                                item.player?.fullName || 
+                                `Player #${item.playerId || 'Unknown'}`;
+              
+              if (item.type === 1) { // ADD
+                allActivities.push({
+                  date: txDate,
+                  dateStr: txDate.toLocaleDateString(),
+                  team: idToName[tx.toTeamId] || `Team ${tx.toTeamId}`,
+                  player: playerName,
+                  action: "ADDED"
+                });
+              }
+              
+              if (item.type === 2) { // DROP
+                allActivities.push({
+                  date: txDate,
+                  dateStr: txDate.toLocaleDateString(),
+                  team: idToName[tx.fromTeamId] || `Team ${tx.fromTeamId}`,
+                  player: playerName,
+                  action: "DROPPED"
+                });
+              }
+            });
+          }
+        });
+      } catch (e) {
+        console.log("mTransactions2 failed:", e.message);
+      }
+      
+      // Remove duplicates and sort by date (most recent first)
+      const uniqueActivities = allActivities.filter((activity, index, self) => 
+        index === self.findIndex(a => 
+          a.team === activity.team && 
+          a.player === activity.player && 
+          a.action === activity.action &&
+          Math.abs(a.date - activity.date) < 60000 // Within 1 minute
+        )
+      ).sort((a, b) => b.date - a.date);
+      
+      setActivities(uniqueActivities);
+      
+      if (uniqueActivities.length === 0) {
+        console.log("No recent transactions found. Raw data:", { recentJson: !!recentJson, txJson: !!txJson });
+      }
+      
     } catch (err) {
       setError(err.message || "Could not load ESPN activity.");
+      console.error("Recent Activity error:", err);
     }
     setLoading(false);
   }
@@ -807,14 +877,16 @@ function RecentActivityView({ espn }) {
                 fontSize: 14
               }}>
                 <span>
-                  <b>{activity.team}</b> {activity.action.toLowerCase()}ed <b>{activity.player}</b>
+                  <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
                 </span>
-                <span style={{ color: "#64748b" }}>{activity.date}</span>
+                <span style={{ color: "#64748b" }}>{activity.dateStr}</span>
               </div>
             ))}
           </div>
         ) : !loading && !error && (
-          <div style={{ color: "#64748b", marginTop: 8 }}>No recent activity found.</div>
+          <div style={{ color: "#64748b", marginTop: 8 }}>
+            No recent activity found. Check console for debugging info.
+          </div>
         )}
       </div>
     </Section>
@@ -1444,7 +1516,6 @@ function PollsView({ isAdmin, members, espn }) {
                   )}
                 </div>
 
-               // VOTING CARD SECTION
 <div className="card" style={{ padding: 12, background: "#f8fafc", marginBottom: 12 }}>
   <div style={{ marginBottom: 12 }}>
     <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>Season Team Code</div>
@@ -1748,7 +1819,7 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
   const BUYIN = 200;
   const displayYear = new Date().getFullYear();
 
-  const seasonKey = String(seasonYear);
+  const seasonKey = "current"; // Always use current season, not year-specific
   const cur = (data.buyins && data.buyins[seasonKey]) || {
     paid: {},
     hidden: false,

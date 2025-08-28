@@ -723,148 +723,61 @@ function RecentActivityView({ espn }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activities, setActivities] = useState([]);
-  
-  async function refresh() {
-    if (!espn.leagueId) {
-      setError("Set League ID & Season in League Settings.");
-      return;
-    }
-    setError("");
+  const [report, setReport] = useState(null);
+
+  async function loadReport() {
     setLoading(true);
+    setError("");
     try {
-      // First get team names
-      const teamJson = await fetchEspnJson({ 
-        leagueId: espn.leagueId, 
-        seasonId: espn.seasonId, 
-        view: "mTeam" 
-      });
-      const idToName = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
-      
-      const allActivities = [];
-      const cutoffDate = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days ago
-      
-      // Try recent activity endpoint
-      try {
-        const recentJson = await fetchEspnJson({ 
-          leagueId: espn.leagueId, 
-          seasonId: espn.seasonId, 
-          view: "recentActivity"
+      const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
+      if (r.ok) {
+        const reportData = await r.json();
+        setReport(reportData);
+        
+        // Filter transactions to last 7 days
+        const cutoffDate = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days ago
+        const recentMoves = (reportData.rawMoves || []).filter(move => {
+          const moveDate = new Date(move.date).getTime();
+          return moveDate > cutoffDate;
         });
         
-        const transactions = recentJson?.transactions || [];
-        transactions.forEach(tx => {
-          const txDate = new Date(tx.processDate || tx.proposedDate || tx.date || Date.now());
-          if (txDate.getTime() > cutoffDate && tx.items) {
-            tx.items.forEach(item => {
-              const playerName = item.playerPoolEntry?.player?.fullName || 
-                                item.player?.fullName || 
-                                `Player #${item.playerId || 'Unknown'}`;
-              
-              if (item.type === 1 || /ADD/i.test(item.moveType)) { // ADD
-                allActivities.push({
-                  date: txDate,
-                  dateStr: txDate.toLocaleDateString(),
-                  team: idToName[tx.toTeamId] || `Team ${tx.toTeamId}`,
-                  player: playerName,
-                  action: "ADDED"
-                });
-              }
-              
-              if (item.type === 2 || /DROP/i.test(item.moveType)) { // DROP
-                allActivities.push({
-                  date: txDate,
-                  dateStr: txDate.toLocaleDateString(), 
-                  team: idToName[tx.fromTeamId] || `Team ${tx.fromTeamId}`,
-                  player: playerName,
-                  action: "DROPPED"
-                });
-              }
-            });
-          }
-        });
-      } catch (e) {
-        console.log("recentActivity failed:", e.message);
-      }
-      
-      // Also try mTransactions2 for current week
-      try {
-        const txJson = await fetchEspnJson({ 
-          leagueId: espn.leagueId, 
-          seasonId: espn.seasonId, 
-          view: "mTransactions2"
-        });
+        // Sort by date (most recent first) and format for display
+        const formattedActivities = recentMoves
+          .sort((a, b) => new Date(b.date) - new Date(a.date))
+          .map(move => ({
+            date: new Date(move.date).toLocaleDateString(),
+            team: move.team,
+            player: move.player,
+            action: move.action === "ADD" ? "ADDED" : "DROPPED"
+          }));
         
-        const transactions = txJson?.transactions || [];
-        transactions.forEach(tx => {
-          const txDate = new Date(tx.processDate || tx.proposedDate || tx.date || Date.now());
-          if (txDate.getTime() > cutoffDate && tx.items) {
-            tx.items.forEach(item => {
-              const playerName = item.playerPoolEntry?.player?.fullName || 
-                                item.player?.fullName || 
-                                `Player #${item.playerId || 'Unknown'}`;
-              
-              if (item.type === 1) { // ADD
-                allActivities.push({
-                  date: txDate,
-                  dateStr: txDate.toLocaleDateString(),
-                  team: idToName[tx.toTeamId] || `Team ${tx.toTeamId}`,
-                  player: playerName,
-                  action: "ADDED"
-                });
-              }
-              
-              if (item.type === 2) { // DROP
-                allActivities.push({
-                  date: txDate,
-                  dateStr: txDate.toLocaleDateString(),
-                  team: idToName[tx.fromTeamId] || `Team ${tx.fromTeamId}`,
-                  player: playerName,
-                  action: "DROPPED"
-                });
-              }
-            });
-          }
-        });
-      } catch (e) {
-        console.log("mTransactions2 failed:", e.message);
+        setActivities(formattedActivities);
+      } else {
+        setError("No recent transactions snapshot available. Update the official snapshot first.");
       }
-      
-      // Remove duplicates and sort by date (most recent first)
-      const uniqueActivities = allActivities.filter((activity, index, self) => 
-        index === self.findIndex(a => 
-          a.team === activity.team && 
-          a.player === activity.player && 
-          a.action === activity.action &&
-          Math.abs(a.date - activity.date) < 60000 // Within 1 minute
-        )
-      ).sort((a, b) => b.date - a.date);
-      
-      setActivities(uniqueActivities);
-      
-    // Replace the console.log line at the bottom:
-if (uniqueActivities.length === 0) {
-  console.log("No recent transactions found. Checked both recentActivity and mTransactions2 endpoints.");
-}
-      
     } catch (err) {
-      setError(err.message || "Could not load ESPN activity.");
-      console.error("Recent Activity error:", err);
+      setError("Failed to load recent activity data.");
     }
     setLoading(false);
   }
 
-  useEffect(() => { refresh(); }, [espn.leagueId, espn.seasonId]);
+  useEffect(() => {
+    if (espn.seasonId) {
+      loadReport();
+    }
+  }, [espn.seasonId]);
 
   return (
     <Section title="Recent Activity (Last 7 Days)">
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <strong>Recent Transactions</strong>
-          <button className="btn" style={btnSec} onClick={refresh} disabled={loading}>
+          <button className="btn" style={btnSec} onClick={loadReport} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
-        {!espn.leagueId && <div style={{ color: "#64748b" }}>Set your ESPN details to see activity.</div>}
+        
+        {!espn.seasonId && <div style={{ color: "#64748b" }}>Set your ESPN season in League Settings.</div>}
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         
         {activities.length > 0 ? (
@@ -880,20 +793,25 @@ if (uniqueActivities.length === 0) {
                 <span>
                   <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
                 </span>
-                <span style={{ color: "#64748b" }}>{activity.dateStr}</span>
+                <span style={{ color: "#64748b" }}>{activity.date}</span>
               </div>
             ))}
           </div>
         ) : !loading && !error && (
           <div style={{ color: "#64748b", marginTop: 8 }}>
-            No recent activity found. Check console for debugging info.
+            No recent activity in the last 7 days.
+          </div>
+        )}
+
+        {report && (
+          <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+            Data from official snapshot: {report.lastSynced}
           </div>
         )}
       </div>
     </Section>
   );
-}
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
+}function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
   const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
 

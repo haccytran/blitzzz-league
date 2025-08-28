@@ -442,24 +442,30 @@ function LeagueHub(){
   const [espnReport, setEspnReport] = useState(null);
   const [lastSynced, setLastSynced] = useState("");
 
-  async function loadOfficialReport(silent=false){
-    try{
-      if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
-      const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
-
-      if (r.ok){
-        const j = await r.json();
-        setEspnReport(j || null);
-        setLastSynced(j?.lastSynced || "");
-      } else {
-        if(!silent) alert("No official snapshot found yet.");
-      }
-    } catch(e){
-      if(!silent) alert("Failed to load snapshot.");
-    } finally{
-      if(!silent) setTimeout(()=>setSyncing(false),200);
+async function loadOfficialReport(silent=false){
+  try{
+    if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
+    
+    // Get the server's default season
+    const defaultRes = await fetch(API('/api/report/default-season'));
+    const defaultSeason = defaultRes.ok ? (await defaultRes.json()).defaultSeason : espn.seasonId;
+    
+    const r = await fetch(API(`/api/report?seasonId=${defaultSeason}`));
+    
+    if (r.ok){
+      const j = await r.json();
+      setEspnReport(j || null);
+      setLastSynced(j?.lastSynced || "");
+    } else {
+      if(!silent) alert("No official snapshot found yet.");
     }
+  } catch(e){
+    if(!silent) alert("Failed to load snapshot.");
+  } finally{
+    if(!silent) setTimeout(()=>setSyncing(false),200);
   }
+}
+
   useEffect(()=>{ loadOfficialReport(true); }, []);
 
   async function updateOfficialSnapshot(){
@@ -1153,10 +1159,15 @@ function Rosters({ leagueId, seasonId }) {
           const entries = (t.roster?.entries || []).map(e => {
             const p = e.playerPoolEntry?.player;
             const fullName = p?.fullName || "Player";
-            // Remove parentheses and position info from name
-            const cleanName = fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+            const pos = posIdToName(p?.defaultPositionId);
             const slot = slotMap[e.lineupSlotId] || "—";
-            return { name: cleanName, slot };
+            
+            // Only show position in parentheses for BENCH players
+            const displayName = slot === "Bench" 
+              ? fullName  // Keep original name with position for bench
+              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(); // Remove parentheses for starters
+            
+            return { name: displayName, slot };
           });
           
           // Sort entries by position order
@@ -1196,7 +1207,6 @@ function Rosters({ leagueId, seasonId }) {
     </Section>
   );
 }
-
 
 function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, data, saveLeagueSettings }) {
   const [editing, setEditing] = useState(false);

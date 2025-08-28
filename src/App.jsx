@@ -937,8 +937,10 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       </div>
     }>
       <p style={{ marginTop: -8, color: "#64748b" }}>
-        Last updated: <b>{lastSynced || "—"}</b>. Rule: first two transactions per Wed→Tue week are free, then $5 each.
-      </p>
+  Last updated: <b>{lastSynced || "—"}</b>
+  <br />
+  Rule: first two transactions per Wed→Tue week are free, then $5 each.
+</p>
       {!report && <p style={{ color: "#64748b" }}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
 
       {report && (
@@ -1126,6 +1128,14 @@ function Rosters({ leagueId, seasonId }) {
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
 
+  // Position order for sorting
+  const positionOrder = ["QB", "RB", "RB/WR", "WR", "WR/TE", "TE", "FLEX", "OP", "D/ST", "K", "Bench"];
+  
+  const getPositionPriority = (slot) => {
+    const index = positionOrder.findIndex(pos => slot.includes(pos));
+    return index === -1 ? 999 : index;
+  };
+
   useEffect(() => {
     if (!leagueId) return;
     (async () => {
@@ -1143,10 +1153,20 @@ function Rosters({ leagueId, seasonId }) {
           const entries = (t.roster?.entries || []).map(e => {
             const p = e.playerPoolEntry?.player;
             const fullName = p?.fullName || "Player";
-            const pos = posIdToName(p?.defaultPositionId);
+            // Remove parentheses and position info from name
+            const cleanName = fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
             const slot = slotMap[e.lineupSlotId] || "—";
-            return { name: fullName, pos, slot };
+            return { name: cleanName, slot };
           });
+          
+          // Sort entries by position order
+          entries.sort((a, b) => {
+            const aPriority = getPositionPriority(a.slot);
+            const bPriority = getPositionPriority(b.slot);
+            if (aPriority !== bPriority) return aPriority - bPriority;
+            return a.name.localeCompare(b.name); // Secondary sort by name
+          });
+          
           return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
         }).sort((a, b) => a.teamName.localeCompare(b.teamName));
         setTeams(items);
@@ -1167,7 +1187,7 @@ function Rosters({ leagueId, seasonId }) {
           <div key={team.teamName} className="card" style={{ padding: 16 }}>
             <h3 style={{ marginTop: 0 }}>{team.teamName}</h3>
             <ul style={{ margin: 0, paddingLeft: 16 }}>
-              {team.entries.map((e, i) => <li key={i}><b>{e.slot}</b> — {e.name} ({e.pos})</li>)}
+              {team.entries.map((e, i) => <li key={i}><b>{e.slot}</b> — {e.name}</li>)}
             </ul>
           </div>
         ))}
@@ -1176,6 +1196,7 @@ function Rosters({ leagueId, seasonId }) {
     </Section>
   );
 }
+
 
 function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, data, saveLeagueSettings }) {
   const [editing, setEditing] = useState(false);

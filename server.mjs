@@ -1126,8 +1126,16 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
     weekRows.push({ week:w, range: rangeByWeek[w] || "", entries });
   }
   
-  const totalsRows = [...totals.entries()].map(([name, v]) => ({ name, adds: v.adds, owes: v.owes }))
-    .sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
+  // Ensure all teams appear in totals, even with 0 adds/owes
+const allTeamNames = Object.values(idToName);
+const totalsRows = allTeamNames.map(teamName => {
+  const existing = totals.get(teamName);
+  return {
+    name: teamName,
+    adds: existing ? existing.adds : 0,
+    owes: existing ? existing.owes : 0
+  };
+}).sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
     
   return { 
     lastSynced: fmtPT(new Date()), 

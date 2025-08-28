@@ -1,4 +1,4 @@
-// --- server.mjs (Version 3.7, PostgreSQL + Fixes) ---
+// --- server.mjs (Version 4.0 - Complete PostgreSQL + All Features) ---
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -7,20 +7,14 @@ import cors from "cors";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
-// Optional PostgreSQL import
-let Pool = null;
-try {
-  const pkg = await import('pg');
-  Pool = pkg.Pool;
-} catch (err) {
-  console.log('PostgreSQL not available, using file storage');
-}
+import pkg from 'pg';
+const { Pool } = pkg;
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
-const DATA_DIR   = path.join(__dirname, "data");
+const __dirname = path.dirname(__filename);
+const DATA_DIR = path.join(__dirname, "data");
 
-const PORT           = process.env.PORT || 8787;
+const PORT = process.env.PORT || 8787;
 const ADMIN_PASSWORD = process.env.VITE_ADMIN_PASSWORD || "changeme";
 
 const app = express();
@@ -43,7 +37,6 @@ if (DATABASE_URL) {
   async function initDB() {
     const client = await pool.connect();
     try {
-      // League data table
       await client.query(`
         CREATE TABLE IF NOT EXISTS league_data (
           id SERIAL PRIMARY KEY,
@@ -51,11 +44,11 @@ if (DATABASE_URL) {
           data_key VARCHAR(100),
           data_value JSONB NOT NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(data_type, data_key)
         )
       `);
 
-      // Polls table
       await client.query(`
         CREATE TABLE IF NOT EXISTS polls_data (
           id SERIAL PRIMARY KEY,
@@ -66,7 +59,6 @@ if (DATABASE_URL) {
         )
       `);
 
-      // Reports table
       await client.query(`
         CREATE TABLE IF NOT EXISTS reports (
           season_id VARCHAR(20) PRIMARY KEY,
@@ -76,7 +68,6 @@ if (DATABASE_URL) {
         )
       `);
 
-      // Insert initial polls data if not exists
       const pollsResult = await client.query('SELECT COUNT(*) FROM polls_data');
       if (parseInt(pollsResult.rows[0].count) === 0) {
         await client.query('INSERT INTO polls_data (polls, votes, team_codes) VALUES ($1, $2, $3)', 
@@ -114,8 +105,11 @@ async function readJson(name, fallback) {
       return fallback;
     }
   } else {
-    try { return JSON.parse(await fs.readFile(fpath(name), "utf8")); }
-    catch { return fallback; }
+    try { 
+      return JSON.parse(await fs.readFile(fpath(name), "utf8")); 
+    } catch { 
+      return fallback; 
+    }
   }
 }
 
@@ -133,7 +127,6 @@ async function writeJson(name, obj) {
       client.release();
     } catch (err) {
       console.error('Database write error:', err);
-      // Fallback to file system
       await fs.mkdir(DATA_DIR, { recursive: true });
       await fs.writeFile(fpath(name), JSON.stringify(obj, null, 2), "utf8");
     }
@@ -150,6 +143,10 @@ const requireAdmin = (req, res, next) => {
   }
   next();
 };
+
+// Helper functions
+const nid = () => Math.random().toString(36).slice(2, 9);
+const today = () => new Date().toISOString().slice(0, 10);
 
 // =========================
 // League Data Storage
@@ -175,34 +172,21 @@ async function saveLeagueData(data) {
   await writeJson(LEAGUE_DATA_FILE, data);
 }
 
-// Helper for generating IDs
-const nid = () => Math.random().toString(36).slice(2, 9);
-const today = () => new Date().toISOString().slice(0, 10);
-
 // =========================
 // League Data API Routes
 // =========================
 
-// GET all league data
 app.get("/api/league-data", async (req, res) => {
   try {
     const data = await getLeagueData();
     res.json(data);
   } catch (error) {
+    console.error('Failed to load league data:', error);
     res.status(500).json({ error: "Failed to load league data" });
   }
 });
 
 // === ANNOUNCEMENTS ===
-app.get("/api/league-data/announcements", async (req, res) => {
-  try {
-    const data = await getLeagueData();
-    res.json({ announcements: data.announcements || [] });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to load announcements" });
-  }
-});
-
 app.post("/api/league-data/announcements", requireAdmin, async (req, res) => {
   try {
     const { html } = req.body;
@@ -223,6 +207,7 @@ app.post("/api/league-data/announcements", requireAdmin, async (req, res) => {
 
     res.json({ success: true, announcement: newAnnouncement });
   } catch (error) {
+    console.error('Failed to create announcement:', error);
     res.status(500).json({ error: "Failed to create announcement" });
   }
 });
@@ -240,20 +225,12 @@ app.delete("/api/league-data/announcements", requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to delete announcement:', error);
     res.status(500).json({ error: "Failed to delete announcement" });
   }
 });
 
 // === WEEKLY CHALLENGES ===
-app.get("/api/league-data/weekly", async (req, res) => {
-  try {
-    const data = await getLeagueData();
-    res.json({ weeklyList: data.weeklyList || [] });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to load weekly challenges" });
-  }
-});
-
 app.post("/api/league-data/weekly", requireAdmin, async (req, res) => {
   try {
     const { entry } = req.body;
@@ -270,6 +247,7 @@ app.post("/api/league-data/weekly", requireAdmin, async (req, res) => {
 
     res.json({ success: true, entry: newEntry });
   } catch (error) {
+    console.error('Failed to create weekly challenge:', error);
     res.status(500).json({ error: "Failed to create weekly challenge" });
   }
 });
@@ -287,6 +265,7 @@ app.delete("/api/league-data/weekly", requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to delete weekly challenge:', error);
     res.status(500).json({ error: "Failed to delete weekly challenge" });
   }
 });
@@ -308,6 +287,7 @@ app.post("/api/league-data/members", requireAdmin, async (req, res) => {
 
     res.json({ success: true, member: newMember });
   } catch (error) {
+    console.error('Failed to add member:', error);
     res.status(500).json({ error: "Failed to add member" });
   }
 });
@@ -326,6 +306,7 @@ app.delete("/api/league-data/members", requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to delete member:', error);
     res.status(500).json({ error: "Failed to delete member" });
   }
 });
@@ -343,6 +324,7 @@ app.post("/api/league-data/import-teams", requireAdmin, async (req, res) => {
 
     res.json({ success: true, imported: teams.length });
   } catch (error) {
+    console.error('Failed to import teams:', error);
     res.status(500).json({ error: "Failed to import teams" });
   }
 });
@@ -369,6 +351,7 @@ app.post("/api/league-data/waivers", requireAdmin, async (req, res) => {
 
     res.json({ success: true, waiver: newWaiver });
   } catch (error) {
+    console.error('Failed to add waiver:', error);
     res.status(500).json({ error: "Failed to add waiver" });
   }
 });
@@ -386,6 +369,7 @@ app.delete("/api/league-data/waivers", requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to delete waiver:', error);
     res.status(500).json({ error: "Failed to delete waiver" });
   }
 });
@@ -394,59 +378,12 @@ app.post("/api/league-data/reset-waivers", requireAdmin, async (req, res) => {
   try {
     const data = await getLeagueData();
     data.waivers = [];
+    data.announcements = [];
     await saveLeagueData(data);
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to reset waivers:', error);
     res.status(500).json({ error: "Failed to reset waivers" });
-  }
-});
-
-// === BUY-INS (Fixed with proper server-side persistence) ===
-app.post("/api/league-data/buyins", requireAdmin, async (req, res) => {
-  try {
-    const { seasonKey, updates } = req.body;
-    if (!seasonKey || !updates) {
-      return res.status(400).json({ error: "Season key and updates required" });
-    }
-
-    const data = await getLeagueData();
-    data.buyins = data.buyins || {};
-    data.buyins[seasonKey] = updates;
-    await saveLeagueData(data);
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to update buy-ins" });
-  }
-});
-
-// === ROSTERS (Server-side storage) ===
-app.get("/api/league-data/rosters", async (req, res) => {
-  try {
-    const { seasonId } = req.query;
-    const data = await getLeagueData();
-    const rosters = data.rosters || {};
-    res.json({ rosters: rosters[seasonId] || [] });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to load rosters" });
-  }
-});
-
-app.post("/api/league-data/rosters", requireAdmin, async (req, res) => {
-  try {
-    const { seasonId, rosters } = req.body;
-    if (!seasonId || !rosters) {
-      return res.status(400).json({ error: "Season ID and rosters required" });
-    }
-
-    const data = await getLeagueData();
-    data.rosters = data.rosters || {};
-    data.rosters[seasonId] = rosters;
-    await saveLeagueData(data);
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to save rosters" });
   }
 });
 
@@ -454,30 +391,22 @@ app.post("/api/league-data/rosters", requireAdmin, async (req, res) => {
 app.post("/api/league-data/settings", requireAdmin, async (req, res) => {
   try {
     const { html } = req.body;
-    if (!html) {
+    if (html === undefined || html === null) {
       return res.status(400).json({ error: "HTML content required" });
     }
 
     const data = await getLeagueData();
-    data.leagueSettingsHtml = html.trim();
+    data.leagueSettingsHtml = String(html).trim();
     await saveLeagueData(data);
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to save league settings:', error);
     res.status(500).json({ error: "Failed to save league settings" });
   }
 });
 
 // === TRADING BLOCK ===
-app.get("/api/league-data/trading", async (req, res) => {
-  try {
-    const data = await getLeagueData();
-    res.json({ tradeBlock: data.tradeBlock || [] });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to load trades" });
-  }
-});
-
 app.post("/api/league-data/trading", requireAdmin, async (req, res) => {
   try {
     const { trade } = req.body;
@@ -494,6 +423,7 @@ app.post("/api/league-data/trading", requireAdmin, async (req, res) => {
 
     res.json({ success: true, trade: newTrade });
   } catch (error) {
+    console.error('Failed to add trade:', error);
     res.status(500).json({ error: "Failed to add trade" });
   }
 });
@@ -511,12 +441,13 @@ app.delete("/api/league-data/trading", requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
+    console.error('Failed to delete trade:', error);
     res.status(500).json({ error: "Failed to delete trade" });
   }
 });
 
 // =========================
-// Polls (v2.1) - PostgreSQL compatible
+// Polls System
 // =========================
 async function loadPolls() {
   if (DATABASE_URL) {
@@ -543,15 +474,29 @@ async function savePolls(pollsState) {
   if (DATABASE_URL) {
     try {
       const client = await pool.connect();
-      await client.query(`
-        UPDATE polls_data SET 
-        polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP
-        WHERE id = (SELECT id FROM polls_data ORDER BY updated_at DESC LIMIT 1)
-      `, [
-        JSON.stringify(pollsState.polls),
-        JSON.stringify(pollsState.votes), 
-        JSON.stringify(pollsState.teamCodes)
-      ]);
+      const result = await client.query('SELECT id FROM polls_data ORDER BY updated_at DESC LIMIT 1');
+      
+      if (result.rows.length > 0) {
+        await client.query(`
+          UPDATE polls_data SET 
+          polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $4
+        `, [
+          JSON.stringify(pollsState.polls),
+          JSON.stringify(pollsState.votes), 
+          JSON.stringify(pollsState.teamCodes),
+          result.rows[0].id
+        ]);
+      } else {
+        await client.query(`
+          INSERT INTO polls_data (polls, votes, team_codes) VALUES ($1, $2, $3)
+        `, [
+          JSON.stringify(pollsState.polls),
+          JSON.stringify(pollsState.votes), 
+          JSON.stringify(pollsState.teamCodes)
+        ]);
+      }
+      
       client.release();
     } catch (err) {
       console.error('Database polls save error:', err);
@@ -610,6 +555,9 @@ app.post("/api/polls/vote", async (req, res) => {
   }
   
   if (!teamId) return res.status(403).send("Invalid code");
+  
+  const poll = pollsState.polls[pollId];
+  if (poll && poll.closed) return res.status(423).send("This poll is closed");
   
   pollsState.votes[pollId] = pollsState.votes[pollId] || {};
   pollsState.votes[pollId][teamId] = optionId;
@@ -699,22 +647,26 @@ app.get("/api/polls/team-codes", async (req, res) => {
 });
 
 // =========================
-// Keep existing ESPN/Report functionality
+// Progress tracking for ESPN operations
 // =========================
-
-// Progress
 const jobProgress = new Map();
 function setProgress(jobId, pct, msg) {
   if (!jobId) return;
-  jobProgress.set(jobId, { pct: Math.max(0, Math.min(100, Math.round(pct))), msg: String(msg || ""), t: Date.now() });
+  jobProgress.set(jobId, { 
+    pct: Math.max(0, Math.min(100, Math.round(pct))), 
+    msg: String(msg || ""), 
+    t: Date.now() 
+  });
 }
 app.get("/api/progress", (req, res) => {
   const { jobId } = req.query || {};
   res.json(jobProgress.get(jobId) || { pct: 0, msg: "" });
 });
 
-// Week helpers (NATIVE LOCAL TIME)
-const WEEK_START_DAY = 3; // Wednesday
+// =========================
+// Week helpers
+// =========================
+const WEEK_START_DAY = 3;
 function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
 function normalizeEpoch(x){
   if (x == null) return Date.now();
@@ -768,7 +720,12 @@ function weekRangeLabelDisplay(start){
   return `${short(wed)}–${short(tue)} (cutoff Tue 11:59 PM PT)`;
 }
 
-// ESPN proxy (3.5 behavior)
+// =========================
+// ESPN proxy
+// =========================
+// =========================
+// ESPN proxy
+// =========================
 function buildCookie(req) {
   const hdr = req.headers["x-espn-cookie"];
   if (hdr) return String(hdr);
@@ -778,6 +735,7 @@ function buildCookie(req) {
   if (process.env.ESPN_COOKIE) return process.env.ESPN_COOKIE;
   return "";
 }
+
 const BROWSER_HEADERS = {
   "x-fantasy-source": "kona",
   "x-fantasy-platform": "kona",
@@ -787,6 +745,7 @@ const BROWSER_HEADERS = {
   "Referer": "https://fantasy.espn.com/",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
 };
+
 async function tryFetchJSON(url, requireCookie, req) {
   const headers = { ...BROWSER_HEADERS };
   if (requireCookie) {
@@ -795,11 +754,13 @@ async function tryFetchJSON(url, requireCookie, req) {
   }
   const r = await fetch(url, { headers });
   const text = await r.text();
-  try { return { ok:true, json: JSON.parse(text), status: r.status }; }
-  catch {
+  try { 
+    return { ok:true, json: JSON.parse(text), status: r.status }; 
+  } catch {
     return { ok:false, status: r.status, snippet: text.slice(0,200).replace(/\s+/g," "), ct: r.headers.get("content-type") || "" };
   }
 }
+
 async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie = false }) {
   if (!leagueId || !seasonId || !view) throw new Error("Missing leagueId/seasonId/view");
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
@@ -818,15 +779,20 @@ async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requi
   }
   throw new Error(`ESPN non-JSON for ${view}${scoringPeriodId?` (SP ${scoringPeriodId})`:""}; status ${last?.status}; ct ${last?.ct}; snippet: ${last?.snippet}`);
 }
+
 app.get("/api/espn", async (req, res) => {
   try {
     const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
     const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
     res.json(json);
-  } catch (e) { res.status(502).send(String(e.message || e)); }
+  } catch (e) { 
+    res.status(502).send(String(e.message || e)); 
+  }
 });
 
-// Transactions+report (3.5 behavior, restored)
+// =========================
+// Transactions and Reports
+// =========================
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
@@ -840,8 +806,10 @@ function inferMethod(typeStr, typeNum, t, it){
   if (isWithinWaiverWindow(ts)) return "WAIVER";
   return "FA";
 }
-const pickPlayerId   = (it)=> it?.playerId ?? it?.playerPoolEntry?.player?.id ?? it?.entityId ?? null;
-const pickPlayerName = (it,t)=> it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
+
+const pickPlayerId = (it) => it?.playerId ?? it?.playerPoolEntry?.player?.id ?? it?.entityId ?? null;
+const pickPlayerName = (it,t) => it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
+
 function extractMoves(json, src="tx"){
   const rows =
     (Array.isArray(json?.transactions) && json.transactions) ||
@@ -852,6 +820,7 @@ function extractMoves(json, src="tx"){
     (json?.events && typeof json.events === "object" ? Object.values(json.events) : null) ||
     (json && typeof json === "object" && !Array.isArray(json) ? Object.values(json) : null) ||
     [];
+    
   const out = [];
   for (const t of rows){
     const when = new Date(normalizeEpoch(t.processDate ?? t.proposedDate ?? t.executionDate ?? t.date ?? t.timestamp ?? Date.now()));
@@ -862,29 +831,51 @@ function extractMoves(json, src="tx"){
                : (t.item ? [t.item] : []);
     const typeStr = t.type ?? t.moveType ?? t.status;
     const typeNum = Number.isFinite(t.type) ? t.type : null;
+    
     if (!items.length) {
       const action = /DROP/i.test(typeStr) ? "DROP" : "ADD";
       const method = inferMethod(typeStr, typeNum, t, null);
       const teamId = t.toTeamId ?? t.teamId ?? t.forTeamId ?? t.targetTeamId ?? t.fromTeamId ?? null;
-      if (teamId != null) out.push({ teamId, date:when, action, method, src, eventId, playerId: t.playerId ?? null, playerName: t.playerName ?? null });
+      if (teamId != null) {
+        out.push({
+          teamId, date:when, action, method, src, eventId,
+          playerId: t.playerId ?? null, playerName: t.playerName ?? null
+        });
+      }
       continue;
     }
+    
     for (const it of items){
       const iTypeStr = it.type ?? it.moveType ?? it.action;
       const iTypeNum = Number.isFinite(it.type) ? it.type : null;
       const method = inferMethod(iTypeStr ?? typeStr, iTypeNum ?? typeNum, t, it);
+      
       if (/ADD|WAIVER|CLAIM/i.test(String(iTypeStr)) || [1,5,7].includes(iTypeNum)) {
         const toTeamId = it.toTeamId ?? it.teamId ?? it.forTeamId ?? t.toTeamId ?? t.teamId ?? null;
-        if (toTeamId != null) out.push({ teamId: toTeamId, date:when, action:"ADD",  method, src, eventId: it.id ?? eventId ?? null, playerId: pickPlayerId(it), playerName: pickPlayerName(it,t) });
+        if (toTeamId != null) {
+          out.push({
+            teamId: toTeamId, date:when, action:"ADD", method, src, 
+            eventId: it.id ?? eventId ?? null,
+            playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
+          });
+        }
       }
+      
       if (/DROP/i.test(String(iTypeStr)) || [2].includes(iTypeNum)) {
         const fromTeamId = it.fromTeamId ?? t.fromTeamId ?? it.teamId ?? null;
-        if (fromTeamId != null) out.push({ teamId: fromTeamId, date:when, action:"DROP", method:"FA", src, eventId: it.id ?? eventId ?? null, playerId: pickPlayerId(it), playerName: pickPlayerName(it,t) });
+        if (fromTeamId != null) {
+          out.push({
+            teamId: fromTeamId, date:when, action:"DROP", method:"FA", src, 
+            eventId: it.id ?? eventId ?? null,
+            playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
+          });
+        }
       }
     }
   }
   return out;
 }
+
 function extractMovesFromComm(json){
   const topics =
     (Array.isArray(json?.topics) && json.topics) ||
@@ -899,36 +890,57 @@ function extractMovesFromComm(json){
       for (const a of acts) {
         const s = String(a.type ?? a.action ?? "").toUpperCase();
         const teamId = a.toTeamId ?? a.teamId ?? m.toTeamId ?? m.teamId ?? null;
-        if (/ADD|WAIVER|CLAIM/.test(s) && teamId != null) out.push({ teamId, date:when, action:"ADD",  method:/WAIVER|CLAIM/.test(s) ? "WAIVER":"FA", src:"comm", playerId:a.playerId||null });
-        if (/DROP/.test(s)           && teamId != null) out.push({ teamId, date:when, action:"DROP", method:"FA", src:"comm", playerId:a.playerId||null });
+        if (/ADD|WAIVER|CLAIM/.test(s) && teamId != null) {
+          out.push({ teamId, date:when, action:"ADD", method:/WAIVER|CLAIM/.test(s) ? "WAIVER":"FA", src:"comm", playerId:a.playerId||null });
+        }
+        if (/DROP/.test(s) && teamId != null) {
+          out.push({ teamId, date:when, action:"DROP", method:"FA", src:"comm", playerId:a.playerId||null });
+        }
       }
     }
   }
   return out;
 }
+
 function dedupeMoves(events){
-  const seen = new Set(), out = [];
+  const seen = new Set();
+  const out = [];
   for (const e of events){
     const tMin = Math.floor(new Date(e.date).getTime() / 60000);
-    const key = e.eventId ? `id:${e.eventId}|a:${e.action}` : `tm:${e.teamId}|p:${e.playerId||""}|a:${e.action}|m:${tMin}`;
+    const key = e.eventId
+      ? `id:${e.eventId}|a:${e.action}`
+      : `tm:${e.teamId}|p:${e.playerId||""}|a:${e.action}|m:${tMin}`;
     if (seen.has(key)) continue;
-    seen.add(key); out.push(e);
+    seen.add(key); 
+    out.push(e);
   }
   return out;
 }
+
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const all = [];
   for (let sp=1; sp<=maxSp; sp++){
     onProgress?.(sp, maxSp, "Reading ESPN activity…");
-    try { const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"tx")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMoves(j,"recent")); } catch {}
-    try { const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true }); all.push(...extractMovesFromComm(j)); } catch {}
+    try { 
+      const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); 
+      all.push(...extractMoves(j,"tx")); 
+    } catch {}
+    try { 
+      const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true }); 
+      all.push(...extractMoves(j,"recent")); 
+    } catch {}
+    try { 
+      const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true }); 
+      all.push(...extractMovesFromComm(j)); 
+    } catch {}
     await sleep(120 + Math.floor(Math.random() * 120));
   }
   return all.map(e => ({ ...e, date: e.date instanceof Date ? e.date : new Date(e.date) }))
             .sort((a,b)=> a.date - b.date);
 }
+
 async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const series = [];
   let lastGood = {};
@@ -952,10 +964,12 @@ async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress
   }
   return series;
 }
+
 const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]?.[teamId]?.has(playerId));
-const spFromDate = (dateLike, seasonYear)=> Math.max(1, Math.min(25, (leagueWeekOf(new Date(dateLike), seasonYear).week || 1)));
+const spFromDate = (dateLike, seasonYear) => Math.max(1, Math.min(25, (leagueWeekOf(new Date(dateLike), seasonYear).week || 1)));
+
 function isGenuineAddBySeries(row, series, seasonYear){
-  if (!row.playerId) return true; // lenient as in 3.5
+  if (!row.playerId) return true;
   const sp = spFromDate(row.date, seasonYear);
   const before = Math.max(1, sp - 1);
   const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
@@ -963,8 +977,9 @@ function isGenuineAddBySeries(row, series, seasonYear){
   const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return !wasBefore && appearsLater;
 }
+
 function isExecutedDropBySeries(row, series, seasonYear){
-  if (!row.playerId) return true; // lenient as in 3.5
+  if (!row.playerId) return true;
   const sp = spFromDate(row.date, seasonYear);
   const before = Math.max(1, sp - 1);
   const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
@@ -972,9 +987,12 @@ function isExecutedDropBySeries(row, series, seasonYear){
   const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
   return wasBefore && !appearsLater;
 }
+
 async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
   const need = new Set((ids||[]).filter(Boolean));
-  const map = {}; if (need.size===0) return map;
+  const map = {}; 
+  if (need.size===0) return map;
+  
   for (let sp=1; sp<=maxSp; sp++){
     onProgress?.(sp, maxSp, "Resolving player names…");
     try {
@@ -983,7 +1001,10 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
         for (const e of (t.roster?.entries||[])) {
           const p = e.playerPoolEntry?.player;
           const pid = p?.id;
-          if (pid && need.has(pid)) { map[pid] = p.fullName || p.name || `#${pid}`; need.delete(pid); }
+          if (pid && need.has(pid)) { 
+            map[pid] = p.fullName || p.name || `#${pid}`; 
+            need.delete(pid); 
+          }
         }
       }
       if (need.size===0) break;
@@ -991,17 +1012,28 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
   }
   return map;
 }
+
 async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
   const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
-  const deduped = dedupeMoves(all).map(e => ({ ...e, teamIdRaw: e.teamId, team: idToName[e.teamId] || `Team ${e.teamId}`, player: e.playerName || null }));
-  const adds  = deduped.filter(r => r.action === "ADD"  && isGenuineAddBySeries(r, series, seasonId));
+  const deduped = dedupeMoves(all).map(e => ({ 
+    ...e, 
+    teamIdRaw: e.teamId, 
+    team: idToName[e.teamId] || `Team ${e.teamId}`, 
+    player: e.playerName || null 
+  }));
+  
+  const adds = deduped.filter(r => r.action === "ADD" && isGenuineAddBySeries(r, series, seasonId));
   const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
   const needIds = [...new Set([...adds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
   const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
-  for (const r of [...adds, ...drops]) if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
+  
+  for (const r of [...adds, ...drops]) {
+    if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
+  }
+  
   let rawMoves = [...adds, ...drops].map(r => {
     const wb = weekBucket(r.date, seasonId);
     return {
@@ -1017,9 +1049,11 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
       playerId: r.playerId || null
     };
   }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
+  
   const DEDUPE_WINDOW_MS = 3 * 60 * 1000;
   const dedupedMoves = [];
   const lastByKey = new Map();
+  
   for (const m of rawMoves) {
     const key = `${m.team}|${m.playerId || m.player}`;
     if (m.action === "DROP") {
@@ -1031,7 +1065,9 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
     }
     dedupedMoves.push(m);
   }
+  
   rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
+  
   const perWeek = new Map();
   for (const r of rawMoves) {
     if (r.action !== "ADD" || r.week <= 0) continue;
@@ -1039,10 +1075,14 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
     const m = perWeek.get(r.week);
     m.set(r.team, (m.get(r.team) || 0) + 1);
   }
+  
   const weekRows = [];
   const totals = new Map();
   const rangeByWeek = {};
-  for (const r of rawMoves) if (r.week>0 && !rangeByWeek[r.week]) rangeByWeek[r.week] = r.range;
+  for (const r of rawMoves) {
+    if (r.week > 0 && !rangeByWeek[r.week]) rangeByWeek[r.week] = r.range;
+  }
+  
   for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
     const entries = [];
     const m = perWeek.get(w);
@@ -1050,24 +1090,47 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
       const owes = Math.max(0, count - 2) * 5;
       entries.push({ name: team, count, owes });
       const t = totals.get(team) || { adds:0, owes:0 };
-      t.adds += count; t.owes += owes; totals.set(team, t);
+      t.adds += count; 
+      t.owes += owes; 
+      totals.set(team, t);
     }
     entries.sort((a,b)=> a.name.localeCompare(b.name));
     weekRows.push({ week:w, range: rangeByWeek[w] || "", entries });
   }
+  
   const totalsRows = [...totals.entries()].map(([name, v]) => ({ name, adds: v.adds, owes: v.owes }))
     .sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
-  return { lastSynced: fmtPT(new Date()), totalsRows, weekRows, rawMoves };
+    
+  return { 
+    lastSynced: fmtPT(new Date()), 
+    totalsRows, 
+    weekRows, 
+    rawMoves 
+  };
 }
 
-// Snapshot routes
+// Report routes
 app.get("/api/report", async (req, res) => {
-  const seasonId = req.query?.seasonId;
-  const preferred = seasonId ? await readJson(`report_${seasonId}.json`, null) : null;
-  const fallback  = await readJson(REPORT_FILE, null);
-  const report = preferred || fallback;
-  if (!report) return res.status(404).send("No report");
-  res.json(report);
+  try {
+    const seasonId = req.query?.seasonId;
+    if (DATABASE_URL && seasonId) {
+      const client = await pool.connect();
+      const result = await client.query('SELECT report_data FROM reports WHERE season_id = $1', [seasonId]);
+      client.release();
+      if (result.rows.length > 0) {
+        return res.json(result.rows[0].report_data);
+      }
+    }
+    
+    const preferred = seasonId ? await readJson(`report_${seasonId}.json`, null) : null;
+    const fallback = await readJson(REPORT_FILE, null);
+    const report = preferred || fallback;
+    if (!report) return res.status(404).send("No report");
+    res.json(report);
+  } catch (error) {
+    console.error('Failed to load report:', error);
+    res.status(500).send("Failed to load report");
+  }
 });
 
 app.post("/api/report/update", async (req, res) => {
@@ -1075,33 +1138,61 @@ app.post("/api/report/update", async (req, res) => {
   const { leagueId, seasonId } = req.body || {};
   if (!leagueId || !seasonId) return res.status(400).send("Missing leagueId or seasonId");
   const jobId = (req.query?.jobId || `job_${Date.now()}`);
+  
   try {
     setProgress(jobId, 5, "Fetching teams…");
     await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false });
+    
     await fetchSeasonMovesAllSources({
       leagueId, seasonId, req, maxSp: 25,
       onProgress: (sp, max, msg) => setProgress(jobId, 10 + Math.round((sp / max) * 45), `${msg} (${sp}/${max})`)
     });
+    
     await fetchRosterSeries({
       leagueId, seasonId, req, maxSp: 25,
       onProgress: (sp, max, msg) => setProgress(jobId, 55 + Math.round((sp / max) * 27), `${msg} (${sp}/${max})`)
     });
+    
     setProgress(jobId, 92, "Computing official totals…");
     const report = await buildOfficialReport({ leagueId, seasonId, req });
     const snapshot = { seasonId, leagueId, ...report };
+    
+    // Save to database if available
+    if (DATABASE_URL) {
+      const client = await pool.connect();
+      await client.query(`
+        INSERT INTO reports (season_id, report_data, updated_at) 
+        VALUES ($1, $2, CURRENT_TIMESTAMP)
+        ON CONFLICT (season_id) DO UPDATE SET 
+        report_data = $2, updated_at = CURRENT_TIMESTAMP
+      `, [seasonId, JSON.stringify(snapshot)]);
+      client.release();
+    }
+    
     await writeJson(`report_${seasonId}.json`, snapshot);
     await writeJson(REPORT_FILE, snapshot);
     setProgress(jobId, 100, "Snapshot complete");
     res.json({ ok: true, weeks: (report?.weekRows || []).length });
   } catch (err) {
+    console.error('Report update failed:', err);
     setProgress(jobId, 100, "Failed");
     res.status(502).send(err?.message || String(err));
   }
 });
 
+// =========================
 // Static hosting
+// =========================
 const CLIENT_DIR = path.join(__dirname, "dist");
 app.use(express.static(CLIENT_DIR));
-app.get(/^(?!\/api).*/, (_req, res) => { res.sendFile(path.join(CLIENT_DIR, "index.html")); });
+app.get(/^(?!\/api).*/, (_req, res) => { 
+  res.sendFile(path.join(CLIENT_DIR, "index.html")); 
+});
 
-app.listen(PORT, () => { console.log(`Server running on http://localhost:${PORT}`); });
+// =========================
+// Server startup
+// =========================
+app.listen(PORT, () => { 
+  console.log(`Server running on http://localhost:${PORT}`); 
+  console.log(`Database: ${DATABASE_URL ? 'PostgreSQL' : 'File system'}`);
+});

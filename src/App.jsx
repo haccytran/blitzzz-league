@@ -446,18 +446,15 @@ async function loadOfficialReport(silent=false){
   try{
     if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
     
-    // Get the server's default season
-    const defaultRes = await fetch(API('/api/report/default-season'));
-    const defaultSeason = defaultRes.ok ? (await defaultRes.json()).defaultSeason : espn.seasonId;
-    
-    const r = await fetch(API(`/api/report?seasonId=${defaultSeason}`));
+    // Always load based on current ESPN season setting
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     
     if (r.ok){
       const j = await r.json();
       setEspnReport(j || null);
       setLastSynced(j?.lastSynced || "");
     } else {
-      if(!silent) alert("No official snapshot found yet.");
+      if(!silent) alert(`No snapshot found for ${espn.seasonId}. Update Official Snapshot to create one.`);
     }
   } catch(e){
     if(!silent) alert("Failed to load snapshot.");
@@ -465,8 +462,6 @@ async function loadOfficialReport(silent=false){
     if(!silent) setTimeout(()=>setSyncing(false),200);
   }
 }
-
-  useEffect(()=>{ loadOfficialReport(true); }, []);
 
   async function updateOfficialSnapshot(){
     if(!espn.leagueId) return alert("Enter league & season first in League Settings.");
@@ -926,17 +921,6 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn" style={btnSec} onClick={() => loadOfficialReport(false)}>Refresh Snapshot</button>
         {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-        {isAdmin && <button className="btn" style={btnSec} onClick={async () => {
-  try {
-    await apiCall('/api/report/set-display-season', {
-      method: 'POST',
-      body: JSON.stringify({ seasonId: espn.seasonId })
-    });
-    alert(`Set ${espn.seasonId} as the default display season for all users`);
-  } catch (error) {
-    alert('Failed to set display season: ' + error.message);
-  }
-}}>Set as Default Display</button>}
         <button className="btn" style={btnSec} onClick={() => print()}>Print</button>
         {report && (
           <>
@@ -1145,7 +1129,6 @@ function Rosters({ leagueId, seasonId }) {
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
 
-  // Position order for sorting
   const positionOrder = ["QB", "RB", "RB/WR", "WR", "WR/TE", "TE", "FLEX", "OP", "D/ST", "K", "Bench"];
   
   const getPositionPriority = (slot) => {
@@ -1172,15 +1155,14 @@ function Rosters({ leagueId, seasonId }) {
             const fullName = p?.fullName || "Player";
             const slot = slotMap[e.lineupSlotId] || "—";
             
-            // Remove parentheses from ALL players EXCEPT bench players
+            // ONLY remove parentheses from NON-bench players
             const displayName = slot === "Bench" 
-              ? fullName  // Keep parentheses for bench players
-              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(); // Remove parentheses for non-bench
+              ? fullName  // Keep original name with parentheses for bench players
+              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(); // Remove parentheses for starters only
             
             return { name: displayName, slot };
           });
           
-          // Sort entries by position order
           entries.sort((a, b) => {
             const aPriority = getPositionPriority(a.slot);
             const bPriority = getPositionPriority(b.slot);

@@ -1053,22 +1053,6 @@ function TransactionsView({ report, loadOfficialReport }) {
     );
   }
 
-  // Auto-load snapshot for non-admin users when component mounts
-  useEffect(() => {
-    if (!report) {
-      // Need to call loadOfficialReport but TransactionsView doesn't have it as a prop
-      // So we need to add it as a prop from the parent component
-    }
-  }, [report]);
-
-  if (!report) {
-    return (
-      <Section title="Transactions">
-        <p style={{ color: "#64748b" }}>No snapshot yet — go to <b>Dues</b> and click <b>Refresh Snapshot</b> (or have the commissioner update it).</p>
-      </Section>
-    );
-  }
-
   const all = (report.rawMoves || []).map(r => ({
     ...r,
     week: Math.max(1, Number(r.week) || 1)

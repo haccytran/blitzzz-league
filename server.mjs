@@ -1240,12 +1240,11 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
 app.get("/api/report/default-season", async (req, res) => {
   try {
     const setting = await readJson("current_display_season.json", { season: "2025" });
-    res.json(setting);
+    res.json({ season: setting.season }); // Use consistent property name
   } catch (error) {
-    res.json({ defaultSeason: "2025" });
+    res.json({ season: "2025" });
   }
 });
-
 app.post("/api/report/update", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { leagueId, seasonId } = req.body || {};

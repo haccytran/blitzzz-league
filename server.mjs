@@ -927,6 +927,18 @@ function extractMoves(json, src="tx"){
           });
         }
       }
+
+// Handle DRAFT picks separately (for Recent Activity, but they won't count toward dues)
+if (/DRAFT/i.test(String(iTypeStr)) || String(iTypeStr) === "DRAFT") {
+  const toTeamId = it.toTeamId ?? t.teamId ?? null;
+  if (toTeamId != null) {
+    out.push({
+      teamId: toTeamId, date:when, action:"ADD", method:"DRAFT", src, 
+      eventId: it.id ?? eventId ?? null,
+      playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
+    });
+  }
+}
     }
   }
   return out;

@@ -219,6 +219,7 @@ function LeagueHub(){
   // Load data from server on mount
   useEffect(() => {
     loadServerData();
+  loadDisplaySeason(); 
   }, []);
 
   async function loadServerData() {
@@ -229,6 +230,18 @@ function LeagueHub(){
       console.error('Failed to load server data:', error);
     }
   }
+
+
+async function loadDisplaySeason() {
+  try {
+    const response = await apiCall('/api/report/default-season');
+    const serverSeason = response.season || response.defaultSeason || DEFAULT_SEASON;
+    setEspn(prev => ({ ...prev, seasonId: serverSeason }));
+  } catch (error) {
+    console.error('Failed to load display season:', error);
+    setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
+  }
+}
 
   // Commissioner mode
   const [isAdmin,setIsAdmin] = useState(localStorage.getItem("ffl_is_admin")==="1");
@@ -251,7 +264,7 @@ function LeagueHub(){
   const logout = ()=>{ setIsAdmin(false); localStorage.removeItem("ffl_is_admin"); };
 
   // ESPN config
-  const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: DEFAULT_SEASON });
+  const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: "" });
   const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
 
   // Weeks

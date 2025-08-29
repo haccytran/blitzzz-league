@@ -444,24 +444,29 @@ function LeagueHub(){
 
 async function loadOfficialReport(silent=false){
   try{
-    if(!silent){ 
-      setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); 
-      
-      // Set server's current display season
-      await writeJson("current_display_season.json", { season: espn.seasonId, updatedAt: Date.now() });
-    }
+    if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
     
+    // Simply request the current season's report
     const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     
     if (r.ok){
       const j = await r.json();
       setEspnReport(j || null);
       setLastSynced(j?.lastSynced || "");
+      
+      // Set this as server's display season
+      if (!silent) {
+        await apiCall('/api/report/set-display-season', {
+          method: 'POST',
+          body: JSON.stringify({ seasonId: espn.seasonId })
+        });
+      }
     } else {
-      if(!silent) alert(`No snapshot found for ${espn.seasonId}.`);
+      if(!silent) alert(`No snapshot found for ${espn.seasonId}. Update Official Snapshot to create one.`);
     }
   } catch(e){
     if(!silent) alert("Failed to load snapshot.");
+    console.error('Load report error:', e);
   } finally{
     if(!silent) setTimeout(()=>setSyncing(false),200);
   }

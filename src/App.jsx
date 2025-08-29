@@ -530,6 +530,7 @@ async function loadOfficialReport(silent=false){
     announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
     weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly,seasonYear}} />,
     activity: <RecentActivityView espn={espn} />,
+  transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
     waivers: (
       <Section title="Waivers & Dues" actions={
         <div style={{display:"flex", gap:8}}>
@@ -614,7 +615,6 @@ async function loadOfficialReport(silent=false){
       seasonYear={seasonYear}
       updateBuyIns={updateBuyIns}
     />,
-    transactions: <TransactionsView report={espnReport} />,
     rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
     settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
     trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>,
@@ -938,6 +938,12 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
 
 
 function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns }) {
+  useEffect(() => {
+    if (!isAdmin && !report) {
+      loadOfficialReport(true); // silent=true to avoid showing sync overlay
+    }
+  }, [isAdmin, report, loadOfficialReport]);
+
   return (
     <Section title="Dues (Official Snapshot)" actions={
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1031,7 +1037,30 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
   );
 }
 
-function TransactionsView({ report }) {
+function TransactionsView({ report, loadOfficialReport }) {
+  // Auto-load snapshot when component mounts and no report exists
+  useEffect(() => {
+    if (!report && loadOfficialReport) {
+      loadOfficialReport(true); // silent=true to avoid sync overlay
+    }
+  }, [report, loadOfficialReport]);
+
+  if (!report) {
+    return (
+      <Section title="Transactions">
+        <p style={{ color: "#64748b" }}>Loading snapshot...</p>
+      </Section>
+    );
+  }
+
+  // Auto-load snapshot for non-admin users when component mounts
+  useEffect(() => {
+    if (!report) {
+      // Need to call loadOfficialReport but TransactionsView doesn't have it as a prop
+      // So we need to add it as a prop from the parent component
+    }
+  }, [report]);
+
   if (!report) {
     return (
       <Section title="Transactions">

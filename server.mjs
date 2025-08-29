@@ -860,6 +860,13 @@ const pickPlayerId = (it) => it?.playerId ?? it?.playerPoolEntry?.player?.id ?? 
 const pickPlayerName = (it,t) => it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
 
 function extractMoves(json, src="tx"){
+  console.log(`[DEBUG] extractMoves called with src="${src}", data keys:`, Object.keys(json || {}));
+  console.log(`[DEBUG] Transaction count:`, json?.transactions?.length || 0);
+  
+  if (json?.transactions?.length > 0) {
+    console.log(`[DEBUG] Sample transaction:`, JSON.stringify(json.transactions[0], null, 2));
+  }
+  
   const rows =
     (Array.isArray(json?.transactions) && json.transactions) ||
     (Array.isArray(json?.events) && json.events) ||
@@ -1201,9 +1208,23 @@ app.post("/api/report/set-default", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Season ID required" });
     }
 
-    // Store the default season setting
+// Add this new route for setting which season to display by default
+app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
+  try {
+    const { seasonId } = req.body;
+    if (!seasonId) {
+      return res.status(400).json({ error: "Season ID required" });
+    }
+
     const defaultSetting = { defaultSeason: seasonId, updatedAt: Date.now() };
     await writeJson("default_season.json", defaultSetting);
+    
+    res.json({ success: true, defaultSeason: seasonId });
+  } catch (error) {
+    console.error('Failed to set display season:', error);
+    res.status(500).json({ error: "Failed to set display season" });
+  }
+});
     
     res.json({ success: true, defaultSeason: seasonId });
   } catch (error) {

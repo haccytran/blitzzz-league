@@ -926,6 +926,17 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn" style={btnSec} onClick={() => loadOfficialReport(false)}>Refresh Snapshot</button>
         {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
+        {isAdmin && <button className="btn" style={btnSec} onClick={async () => {
+  try {
+    await apiCall('/api/report/set-display-season', {
+      method: 'POST',
+      body: JSON.stringify({ seasonId: espn.seasonId })
+    });
+    alert(`Set ${espn.seasonId} as the default display season for all users`);
+  } catch (error) {
+    alert('Failed to set display season: ' + error.message);
+  }
+}}>Set as Default Display</button>}
         <button className="btn" style={btnSec} onClick={() => print()}>Print</button>
         {report && (
           <>
@@ -1159,13 +1170,12 @@ function Rosters({ leagueId, seasonId }) {
           const entries = (t.roster?.entries || []).map(e => {
             const p = e.playerPoolEntry?.player;
             const fullName = p?.fullName || "Player";
-            const pos = posIdToName(p?.defaultPositionId);
             const slot = slotMap[e.lineupSlotId] || "—";
             
-            // Only show position in parentheses for BENCH players
+            // Remove parentheses from ALL players EXCEPT bench players
             const displayName = slot === "Bench" 
-              ? fullName  // Keep original name with position for bench
-              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(); // Remove parentheses for starters
+              ? fullName  // Keep parentheses for bench players
+              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(); // Remove parentheses for non-bench
             
             return { name: displayName, slot };
           });
@@ -1175,7 +1185,7 @@ function Rosters({ leagueId, seasonId }) {
             const aPriority = getPositionPriority(a.slot);
             const bPriority = getPositionPriority(b.slot);
             if (aPriority !== bPriority) return aPriority - bPriority;
-            return a.name.localeCompare(b.name); // Secondary sort by name
+            return a.name.localeCompare(b.name);
           });
           
           return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };

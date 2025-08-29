@@ -1085,6 +1085,8 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
   const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
+console.log(`[DEBUG] Total moves extracted from all sources: ${all.length}`);
+console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
   const deduped = dedupeMoves(all).map(e => ({ 
     ...e, 
@@ -1188,9 +1190,12 @@ const totalsRows = allTeamNames.map(teamName => {
 // Report routes
 app.get("/api/report", async (req, res) => {
   try {
-    const seasonId = req.query?.seasonId;
+    let seasonId = req.query?.seasonId;
+    
+    // If no specific season requested, use the server's current display season
     if (!seasonId) {
-      return res.status(400).json({ error: "Season ID required" });
+      const displaySetting = await readJson("current_display_season.json", { season: "2025" });
+      seasonId = displaySetting.season;
     }
     
     if (DATABASE_URL) {

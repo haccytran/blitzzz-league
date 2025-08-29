@@ -1235,13 +1235,6 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
     res.status(500).json({ error: "Failed to set display season" });
   }
 });
-    
-    res.json({ success: true, defaultSeason: seasonId });
-  } catch (error) {
-    console.error('Failed to set default season:', error);
-    res.status(500).json({ error: "Failed to set default season" });
-  }
-});
 
 // Get the default season
 app.get("/api/report/default-season", async (req, res) => {

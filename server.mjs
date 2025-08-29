@@ -1195,7 +1195,7 @@ app.get("/api/report", async (req, res) => {
     // If no specific season requested, use the server's current display season
     if (!seasonId) {
       const displaySetting = await readJson("current_display_season.json", { season: "2025" });
-      seasonId = displaySetting.season;
+      seasonId = displaySetting.season; // Use 'season', not 'defaultSeason'
     }
     
     if (DATABASE_URL) {
@@ -1217,13 +1217,6 @@ app.get("/api/report", async (req, res) => {
   }
 });
 
-// Set the default season for all users
-app.post("/api/report/set-default", requireAdmin, async (req, res) => {
-  try {
-    const { seasonId } = req.body;
-    if (!seasonId) {
-      return res.status(400).json({ error: "Season ID required" });
-    }
 
 // Add this new route for setting which season to display by default
 app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
@@ -1233,8 +1226,8 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Season ID required" });
     }
 
-    const defaultSetting = { defaultSeason: seasonId, updatedAt: Date.now() };
-    await writeJson("default_season.json", defaultSetting);
+    const defaultSetting = { season: seasonId, updatedAt: Date.now() };
+    await writeJson("current_display_season.json", defaultSetting);
     
     res.json({ success: true, defaultSeason: seasonId });
   } catch (error) {

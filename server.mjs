@@ -1271,13 +1271,58 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
   }
 });
 
-// Get the default season
+// Get the default season - improved version
 app.get("/api/report/default-season", async (req, res) => {
   try {
-    const setting = await readJson("current_display_season.json", { season: "2025" });
-    res.json({ season: setting.season });
+    console.log('[API] Getting default season...');
+    
+    let seasonData = null;
+    
+    // Try database first if available
+    if (DATABASE_URL) {
+      try {
+        const client = await pool.connect();
+        const result = await client.query(
+          'SELECT data_value FROM league_data WHERE data_type = $1 ORDER BY updated_at DESC LIMIT 1',
+          ['current_display_season']
+        );
+        client.release();
+        
+        if (result.rows.length > 0) {
+          seasonData = result.rows[0].data_value;
+          console.log('[API] Found season in database:', seasonData);
+        }
+      } catch (dbError) {
+        console.error('[API] Database read error:', dbError);
+      }
+    }
+    
+    // Fallback to file system
+    if (!seasonData) {
+      try {
+        seasonData = await readJson("current_display_season.json", { season: "2025" });
+        console.log('[API] Found season in file:', seasonData);
+      } catch (fileError) {
+        console.error('[API] File read error:', fileError);
+        seasonData = { season: "2025" };
+      }
+    }
+    
+    // Extract and validate season
+    let season = seasonData?.season || "2025";
+    season = String(season).trim();
+    
+    // Ensure it's a valid year-like string
+    if (!/^\d{4}$/.test(season)) {
+      console.warn('[API] Invalid season format:', season, 'using 2025');
+      season = "2025";
+    }
+    
+    console.log('[API] Returning season:', season);
+    res.json({ season });
+    
   } catch (error) {
-    console.error('Failed to get default season:', error);
+    console.error('[API] Failed to get default season:', error);
     res.json({ season: "2025" });
   }
 });

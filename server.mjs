@@ -1257,9 +1257,7 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Season ID required" });
     }
 
-    const defaultSetting = { season: seasonId, updatedAt: Date.now() };
-    await writeJson("current_display_season.json", defaultSetting);
-    
+        
     res.json({ success: true, defaultSeason: seasonId });
   } catch (error) {
     console.error('Failed to set display season:', error);
@@ -1299,7 +1297,7 @@ app.get("/api/report/current-season", async (req, res) => {
 
 app.post("/api/report/update", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { leagueId, seasonId } = req.body || {};
+  const { leagueId, seasonId, updateDefaultSeason } = req.body || {};
   if (!leagueId || !seasonId) return res.status(400).send("Missing leagueId or seasonId");
   const jobId = (req.query?.jobId || `job_${Date.now()}`);
   
@@ -1334,21 +1332,19 @@ app.post("/api/report/update", async (req, res) => {
     }
     
     await writeJson(`report_${seasonId}.json`, snapshot);
-    await writeJson(REPORT_FILE, snapshot);
+    
+    // REMOVE THESE LINES - Don't force server default season
+    // const defaultSetting = { season: seasonId, updatedAt: Date.now() };
+    // await writeJson("current_display_season.json", defaultSetting);
 
-   // Set this season as the default for all users
-const defaultSetting = { season: seasonId, updatedAt: Date.now() };
-await writeJson("current_display_season.json", defaultSetting);
-
-setProgress(jobId, 100, "Snapshot complete");
-res.json({ ok: true, weeks: (report?.weekRows || []).length });
+    setProgress(jobId, 100, "Snapshot complete");
+    res.json({ ok: true, weeks: (report?.weekRows || []).length });
   } catch (err) {
     console.error('Report update failed:', err);
     setProgress(jobId, 100, "Failed");
     res.status(502).send(err?.message || String(err));
   }
 });
-
 // =========================
 // Static hosting
 // =========================

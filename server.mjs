@@ -34,19 +34,25 @@ if (DATABASE_URL) {
   });
 
   // Initialize database tables
-  async function initDB() {
-    const client = await pool.connect();
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS league_data (
-          id SERIAL PRIMARY KEY,
-          data_type VARCHAR(50) NOT NULL UNIQUE,
-          data_key VARCHAR(100),
-          data_value JSONB NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+ async function initDB() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS league_data (
+        id SERIAL PRIMARY KEY,
+        data_type VARCHAR(50) NOT NULL UNIQUE,  -- This should create the constraint
+        data_key VARCHAR(100),
+        data_value JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    // Add this additional constraint creation to ensure it exists
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_league_data_type 
+      ON league_data (data_type)
+    `);
 
       await client.query(`
         CREATE TABLE IF NOT EXISTS polls_data (

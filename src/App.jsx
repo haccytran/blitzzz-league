@@ -438,9 +438,9 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
       if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
       const names = [...new Set(teams.map(t => teamName(t)))];
       
- await apiCall('/api/league-data/import-teams', {
+await apiCall('/api/league-data/import-teams', {
   method: 'POST',
-  body: JSON.stringify({ teams: names, seasonId: espn.seasonId })
+  body: JSON.stringify({ teams: names }) // ← seasonId removed
 });
       await loadServerData();
       alert(`Imported ${names.length} teams.`);

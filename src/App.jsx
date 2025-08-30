@@ -216,10 +216,19 @@ function LeagueHub(){
     lastUpdated: null
   });
 
-  // Load data from server on mount
+// Load data from server on mount
   useEffect(() => {
-    loadServerData(); 
+    loadServerData();
+    loadDisplaySeason(); // Add this line back
   }, []);
+
+  // Add this useEffect for auto-loading data when season changes
+  useEffect(() => {
+    if (espn.seasonId) {
+      // Auto-load official report when season changes
+      loadOfficialReport(true);
+    }
+  }, [espn.seasonId]);
 
   async function loadServerData() {
     try {
@@ -233,12 +242,17 @@ function LeagueHub(){
 
 async function loadDisplaySeason() {
   try {
-    const response = await apiCall('/api/report/default-season');
-    const serverSeason = response.season || response.defaultSeason || DEFAULT_SEASON;
-    setEspn(prev => ({ ...prev, seasonId: serverSeason }));
+    // Only load default season if user hasn't set one yet
+    if (!espn.seasonId) {
+      const response = await apiCall('/api/report/default-season');
+      const serverSeason = response.season || DEFAULT_SEASON;
+      setEspn(prev => ({ ...prev, seasonId: serverSeason }));
+    }
   } catch (error) {
     console.error('Failed to load display season:', error);
-    setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
+    if (!espn.seasonId) {
+      setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
+    }
   }
 }
 
@@ -493,18 +507,15 @@ async function loadOfficialReport(silent=false){
   try{
     if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
     
-    // Pass the specific season we want to load
+    // Load the snapshot for the current season
     const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     
     if (r.ok){
       const j = await r.json();
-      // Only update if it matches our current season
-      if (j?.seasonId === espn.seasonId || !j?.seasonId) {
-        setEspnReport(j || null);
-        setLastSynced(j?.lastSynced || "");
-      }
+      setEspnReport(j || null);
+      setLastSynced(j?.lastSynced || "");
     } else {
-      if(!silent) alert(`No snapshot found for season ${espn.seasonId}. Update Official Snapshot to create one.`);
+      if(!silent) alert(`No snapshot found for ${espn.seasonId}. Update Official Snapshot to create one.`);
     }
   } catch(e){
     if(!silent) alert("Failed to load snapshot.");
@@ -513,7 +524,6 @@ async function loadOfficialReport(silent=false){
     if(!silent) setTimeout(()=>setSyncing(false),200);
   }
 }
-
  async function updateOfficialSnapshot(){
   if(!espn.leagueId) return alert("Enter league & season first in League Settings.");
 
@@ -1232,58 +1242,61 @@ function Rosters({ leagueId, seasonId }) {
   };
 
   // Load roster data from server
-  useEffect(() => {
-    if (!seasonId) return;
-    
-    (async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const response = await apiCall(`/api/league-data/rosters?seasonId=${seasonId}`);
-        if (response.rosterData && response.rosterData.length > 0) {
-          // Use server-stored roster data
-          setTeams(response.rosterData);
-        } else if (leagueId) {
-          // Fallback to live ESPN data if no server data
-          const [teamJson, rosJson, setJson] = await Promise.all([
-            fetchEspnJson({ leagueId, seasonId, view: "mTeam" }),
-            fetchEspnJson({ leagueId, seasonId, view: "mRoster" }),
-            fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
-          ]);
-          
-          const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
-          const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
-          const items = (rosJson?.teams || []).map(t => {
-            const entries = (t.roster?.entries || []).map(e => {
-              const p = e.playerPoolEntry?.player;
-              const fullName = p?.fullName || "Player";
-              const slot = slotMap[e.lineupSlotId] || "—";
-              
-              const displayName = slot === "Bench" 
-                ? fullName
-                : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
-              
-              return { name: displayName, slot };
-            });
+  // In the Rosters component, update the useEffect:
+useEffect(() => {
+  if (!seasonId) return;
+  
+  (async () => {
+    setLoading(true);
+    setError("");
+    try {
+      // First try to load server-cached roster data
+      const response = await apiCall(`/api/league-data/rosters?seasonId=${seasonId}`);
+      if (response.rosterData && response.rosterData.length > 0) {
+        // Use server-stored roster data
+        setTeams(response.rosterData);
+      } else if (leagueId && seasonId) {
+        // If no server data and we have credentials, load from ESPN
+        const [teamJson, rosJson, setJson] = await Promise.all([
+          fetchEspnJson({ leagueId, seasonId, view: "mTeam" }),
+          fetchEspnJson({ leagueId, seasonId, view: "mRoster" }),
+          fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
+        ]);
+        
+        const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
+        const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
+        const items = (rosJson?.teams || []).map(t => {
+          const entries = (t.roster?.entries || []).map(e => {
+            const p = e.playerPoolEntry?.player;
+            const fullName = p?.fullName || "Player";
+            const slot = slotMap[e.lineupSlotId] || "—";
             
-            entries.sort((a, b) => {
-              const aPriority = getPositionPriority(a.slot);
-              const bPriority = getPositionPriority(b.slot);
-              if (aPriority !== bPriority) return aPriority - bPriority;
-              return a.name.localeCompare(b.name);
-            });
+            const displayName = slot === "Bench" 
+              ? fullName
+              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
             
-            return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
-          }).sort((a, b) => a.teamName.localeCompare(b.teamName));
+            return { name: displayName, slot };
+          });
           
-          setTeams(items);
-        }
-      } catch {
-        setError("Failed to load rosters.");
+          entries.sort((a, b) => {
+            const aPriority = getPositionPriority(a.slot);
+            const bPriority = getPositionPriority(b.slot);
+            if (aPriority !== bPriority) return aPriority - bPriority;
+            return a.name.localeCompare(b.name);
+          });
+          
+          return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
+        }).sort((a, b) => a.teamName.localeCompare(b.teamName));
+        
+        setTeams(items);
       }
-      setLoading(false);
-    })();
-  }, [leagueId, seasonId]);
+    } catch (err) {
+      console.error('Roster load error:', err);
+      setError("Failed to load rosters.");
+    }
+    setLoading(false);
+  })();
+}, [leagueId, seasonId]);
 
   return (
     <Section title="Rosters" actions={<span className="badge">Cached from Import</span>}>

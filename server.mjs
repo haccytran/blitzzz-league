@@ -1297,7 +1297,7 @@ app.get("/api/report/current-season", async (req, res) => {
 
 app.post("/api/report/update", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { leagueId, seasonId, updateDefaultSeason } = req.body || {};
+  const { leagueId, seasonId } = req.body || {};
   if (!leagueId || !seasonId) return res.status(400).send("Missing leagueId or seasonId");
   const jobId = (req.query?.jobId || `job_${Date.now()}`);
   
@@ -1333,9 +1333,9 @@ app.post("/api/report/update", async (req, res) => {
     
     await writeJson(`report_${seasonId}.json`, snapshot);
     
-    // REMOVE THESE LINES - Don't force server default season
-    // const defaultSetting = { season: seasonId, updatedAt: Date.now() };
-    // await writeJson("current_display_season.json", defaultSetting);
+    // Update default season for new users (existing users keep their choice)
+    const defaultSetting = { season: seasonId, updatedAt: Date.now() };
+    await writeJson("current_display_season.json", defaultSetting);
 
     setProgress(jobId, 100, "Snapshot complete");
     res.json({ ok: true, weeks: (report?.weekRows || []).length });
@@ -1345,6 +1345,7 @@ app.post("/api/report/update", async (req, res) => {
     res.status(502).send(err?.message || String(err));
   }
 });
+
 // =========================
 // Static hosting
 // =========================

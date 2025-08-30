@@ -1328,16 +1328,26 @@ app.post("/api/report/update", async (req, res) => {
         ON CONFLICT (season_id) DO UPDATE SET 
         report_data = $2, updated_at = CURRENT_TIMESTAMP
       `, [seasonId, JSON.stringify(snapshot)]);
+
+  // ADD THIS: Update default season in database too
+  await client.query(`
+    INSERT INTO league_data (data_type, data_value) 
+    VALUES ('default_season', $1)
+    ON CONFLICT (data_type) DO UPDATE SET 
+    data_value = $1, updated_at = CURRENT_TIMESTAMP
+  `, [JSON.stringify({ season: seasonId, updatedAt: Date.now() })]);
       client.release();
     }
     
-    await writeJson(`report_${seasonId}.json`, snapshot);
-    
-    // Update default season for new users (existing users keep their choice)
-    const defaultSetting = { season: seasonId, updatedAt: Date.now() };
-    await writeJson("current_display_season.json", defaultSetting);
+// In server.mjs, around line 780 in the updateOfficialSnapshot function
+await writeJson(`report_${seasonId}.json`, snapshot);
 
-    setProgress(jobId, 100, "Snapshot complete");
+// ADD THIS LINE BACK:
+const defaultSetting = { season: seasonId, updatedAt: Date.now() };
+await writeJson("current_display_season.json", defaultSetting);
+
+setProgress(jobId, 100, "Snapshot complete");
+
     res.json({ ok: true, weeks: (report?.weekRows || []).length });
   } catch (err) {
     console.error('Report update failed:', err);

@@ -218,8 +218,7 @@ function LeagueHub(){
 
   // Load data from server on mount
   useEffect(() => {
-    loadServerData();
-  loadDisplaySeason(); 
+    loadServerData(); 
   }, []);
 
   async function loadServerData() {
@@ -494,16 +493,18 @@ async function loadOfficialReport(silent=false){
   try{
     if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
     
-    // Simply request the current season's report
+    // Pass the specific season we want to load
     const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     
     if (r.ok){
       const j = await r.json();
-      setEspnReport(j || null);
-      setLastSynced(j?.lastSynced || "");
-      
-         } else {
-      if(!silent) alert(`No snapshot found for ${espn.seasonId}. Update Official Snapshot to create one.`);
+      // Only update if it matches our current season
+      if (j?.seasonId === espn.seasonId || !j?.seasonId) {
+        setEspnReport(j || null);
+        setLastSynced(j?.lastSynced || "");
+      }
+    } else {
+      if(!silent) alert(`No snapshot found for season ${espn.seasonId}. Update Official Snapshot to create one.`);
     }
   } catch(e){
     if(!silent) alert("Failed to load snapshot.");
@@ -513,45 +514,49 @@ async function loadOfficialReport(silent=false){
   }
 }
 
-  async function updateOfficialSnapshot(){
-    if(!espn.leagueId) return alert("Enter league & season first in League Settings.");
+ async function updateOfficialSnapshot(){
+  if(!espn.leagueId) return alert("Enter league & season first in League Settings.");
 
-    const jobId = `job_${Date.now()}`;
-    setSyncing(true); setSyncPct(1); setSyncMsg("Starting…");
+  const jobId = `job_${Date.now()}`;
+  setSyncing(true); setSyncPct(1); setSyncMsg("Starting…");
 
-    let alive = true;
-    const tick = async () => {
-      try{
-        const r = await fetch(API(`/api/progress?jobId=${jobId}`));
-        const j = await r.json();
-        if (j && typeof j.pct === "number") {
-          setSyncPct(j.pct);
-          if (j.msg) setSyncMsg(j.msg);
-        }
-      }catch{}
-      if (alive) setTimeout(tick, 400);
-    };
-    tick();
-
+  let alive = true;
+  const tick = async () => {
     try{
-      const r = await fetch(API(`/api/report/update?jobId=${jobId}`), {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "x-admin": ADMIN_ENV },
-        body: JSON.stringify({ leagueId: espn.leagueId, seasonId: espn.seasonId })
-      });
-      if(!r.ok){
-        const t = await r.text().catch(()=> "");
-        throw new Error(t || "Server rejected update");
+      const r = await fetch(API(`/api/progress?jobId=${jobId}`));
+      const j = await r.json();
+      if (j && typeof j.pct === "number") {
+        setSyncPct(j.pct);
+        if (j.msg) setSyncMsg(j.msg);
       }
-      await loadOfficialReport(true);
-      setSyncPct(100); setSyncMsg("Snapshot ready");
-    } catch(e){
-      alert(e.message || "Update failed.");
-    } finally{
-      alive = false;
-      setTimeout(()=>setSyncing(false), 300);
+    }catch{}
+    if (alive) setTimeout(tick, 400);
+  };
+  tick();
+
+  try{
+    const r = await fetch(API(`/api/report/update?jobId=${jobId}`), {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "x-admin": ADMIN_ENV },
+      body: JSON.stringify({ 
+        leagueId: espn.leagueId, 
+        seasonId: espn.seasonId,
+        updateDefaultSeason: false // Add this flag
+      })
+    });
+    if(!r.ok){
+      const t = await r.text().catch(()=> "");
+      throw new Error(t || "Server rejected update");
     }
+    await loadOfficialReport(true);
+    setSyncPct(100); setSyncMsg("Snapshot ready");
+  } catch(e){
+    alert(e.message || "Update failed.");
+  } finally{
+    alive = false;
+    setTimeout(()=>setSyncing(false), 300);
   }
+}
 
   /* ---- Views ---- */
   const views = {

@@ -468,14 +468,7 @@ async function loadOfficialReport(silent=false){
       setEspnReport(j || null);
       setLastSynced(j?.lastSynced || "");
       
-      // Set this as server's display season
-      if (!silent) {
-        await apiCall('/api/report/set-display-season', {
-          method: 'POST',
-          body: JSON.stringify({ seasonId: espn.seasonId })
-        });
-      }
-    } else {
+         } else {
       if(!silent) alert(`No snapshot found for ${espn.seasonId}. Update Official Snapshot to create one.`);
     }
   } catch(e){
@@ -1202,18 +1195,10 @@ function Rosters({ leagueId, seasonId }) {
 
   // Load server's season setting on mount
   useEffect(() => {
-    async function loadServerSeason() {
-      try {
-        const response = await apiCall('/api/report/default-season');
-        const serverSeason = response.season || DEFAULT_SEASON;
-        setActualSeasonId(serverSeason);
-      } catch (error) {
-        console.error('Failed to load server season:', error);
-        setActualSeasonId(seasonId || DEFAULT_SEASON);
-      }
-    }
-    loadServerSeason();
-  }, [seasonId]);
+    // Use the seasonId directly from League Settings
+useEffect(() => {
+  setActualSeasonId(seasonId || DEFAULT_SEASON);
+}, [seasonId]);
 
   useEffect(() => {
     if (!leagueId || !actualSeasonId) return;

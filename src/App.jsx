@@ -1193,9 +1193,7 @@ function Rosters({ leagueId, seasonId }) {
     return index === -1 ? 999 : index;
   };
 
-  // Load server's season setting on mount
-  useEffect(() => {
-    // Use the seasonId directly from League Settings
+// Use the seasonId directly from League Settings
 useEffect(() => {
   setActualSeasonId(seasonId || DEFAULT_SEASON);
 }, [seasonId]);

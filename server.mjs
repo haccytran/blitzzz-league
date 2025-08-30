@@ -1272,6 +1272,16 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
 });
 
 // Get the default season
+app.get("/api/report/default-season", async (req, res) => {
+  try {
+    const setting = await readJson("current_display_season.json", { season: "2025" });
+    res.json({ season: setting.season });
+  } catch (error) {
+    console.error('Failed to get default season:', error);
+    res.json({ season: "2025" });
+  }
+});
+
 app.get("/api/report/", async (req, res) => {
   try {
     const setting = await readJson("current_display_season.json", { season: "2025" });

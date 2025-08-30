@@ -1275,16 +1275,6 @@ app.get("/api/report/default-season", async (req, res) => {
   }
 });
 
-// Get the default season
-app.get("/api/report/default-season", async (req, res) => {
-  try {
-    const setting = await readJson("current_display_season.json", { season: "2025" });
-    res.json({ season: setting.season }); // Use consistent property name
-  } catch (error) {
-    res.json({ season: "2025" });
-  }
-});
-
 // Get current season setting for rosters/components
 app.get("/api/report/current-season", async (req, res) => {
   try {

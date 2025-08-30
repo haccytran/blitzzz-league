@@ -438,10 +438,10 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
       if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
       const names = [...new Set(teams.map(t => teamName(t)))];
       
-      await apiCall('/api/league-data/import-teams', {
-        method: 'POST',
-        body: JSON.stringify({ teams: names })
-      });
+ await apiCall('/api/league-data/import-teams', {
+  method: 'POST',
+  body: JSON.stringify({ teams: names, seasonId: espn.seasonId })
+});
       await loadServerData();
       alert(`Imported ${names.length} teams.`);
     } catch(e){ alert(e.message || "ESPN fetch failed. Check League/Season."); }
@@ -1040,19 +1040,44 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
 }
 
 function TransactionsView({ report, loadOfficialReport }) {
+  // MOVE ALL HOOKS TO THE VERY TOP - BEFORE ANY OTHER CODE
   const [team, setTeam] = useState("");
   const [action, setAction] = useState("");
   const [q, setQ] = useState("");
+  const [openWeeks, setOpenWeeks] = useState(() => new Set());
 
   // Auto-load snapshot when component mounts and no report exists
   useEffect(() => {
     if (!report && loadOfficialReport) {
-      loadOfficialReport(true);
+      loadOfficialReport(true).catch(() => {
+        console.log('Failed to load report on mount');
+      });
     }
   }, [report, loadOfficialReport]);
+
+  // Update openWeeks when data changes
+  useEffect(() => {
+    if (report) {
+      const all = (report.rawMoves || []).map(r => ({
+        ...r,
+        week: Math.max(1, Number(r.week) || 1)
+      }));
+
+      const filtered = all.filter(r =>
+        (!team || r.team === team) &&
+        (!action || r.action === action) &&
+        (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
+      );
+
+      const weeksSorted = Array.from(new Set(filtered.map(r => Math.max(1, Number(r.week) || 1))))
+        .sort((a, b) => a - b);
+
+      setOpenWeeks(new Set(weeksSorted));
+    }
+  }, [report, q, team, action]);
   
- // Show loading state until a snapshot exists
-if (!report) {
+  // NOW you can have conditional returns AFTER all hooks
+  if (!report) {
     return (
       <Section title="Transactions">
         <p style={{ color: "#64748b" }}>Loading snapshot...</p>
@@ -1060,6 +1085,7 @@ if (!report) {
     );
   }
 
+  // Rest of the component logic...
   const all = (report.rawMoves || []).map(r => ({
     ...r,
     week: Math.max(1, Number(r.week) || 1)
@@ -1089,9 +1115,7 @@ if (!report) {
     byWeek.get(w).push({ ...r, week: w });
   }
 
-  const [openWeeks, setOpenWeeks] = useState(() => new Set(weeksSorted));
-  useEffect(() => { setOpenWeeks(new Set(weeksSorted)); }, [q, team, action]);
-  const toggleWeek = (w) => setOpenWeeks(s => { const n = new Set(s); n.has(w) ? n.delete(w) : n.add(w); return n; });
+    const toggleWeek = (w) => setOpenWeeks(s => { const n = new Set(s); n.has(w) ? n.delete(w) : n.add(w); return n; });
 
   return (
     <Section title="Transactions" actions={

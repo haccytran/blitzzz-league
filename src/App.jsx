@@ -176,7 +176,7 @@ export default function App(){ return <LeagueHub/> }
 
 function LeagueHub(){
   useEffect(()=>{ document.title = "Blitzzz Fantasy Football League"; }, []);
-
+   const currentYear = new Date().getFullYear();
   const VALID_TABS = [
     "announcements","activity","weekly","waivers","dues",
     "transactions","rosters","settings","trading","polls"
@@ -268,19 +268,20 @@ async function loadDisplaySeason() {
   const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
 
   // Weeks
-  const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), seasonYear));
-  useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), seasonYear)); }, [seasonYear]);
+const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), currentYear));
+useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), currentYear)); }, []);
 
   const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])),[data.members]);
 
-  // Manual waivers (count within Wed→Tue)
-  const weekKey = weekKeyFrom(selectedWeek);
-  const waiversThisWeek = useMemo(
-    () => data.waivers.filter(w => weekKeyFrom(leagueWeekOf(new Date(w.date), seasonYear)) === weekKey),
-    [data.waivers, weekKey, seasonYear]
-  );
-  const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
-  const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
+  // Manual waivers (count within Wed→Tue) - always use current year
+
+const weekKey = weekKeyFrom(selectedWeek);
+const waiversThisWeek = useMemo(
+  () => data.waivers.filter(w => weekKeyFrom(leagueWeekOf(new Date(w.date), currentYear)) === weekKey),
+  [data.waivers, weekKey]
+);
+const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
+const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
 
   // Server-side CRUD operations
   const addAnnouncement = async (html) => {
@@ -528,7 +529,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
     announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly,seasonYear}} />,
+  weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly}} />, // Remove seasonYear
     activity: <RecentActivityView espn={espn} />,
   transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
     waivers: (
@@ -865,8 +866,9 @@ async function loadReport() {
   );
 }
 
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
-  const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
+  const currentYear = new Date().getFullYear();
+  const nowWeek = leagueWeekOf(new Date(), currentYear).week || 0;
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
 
   list.sort((a, b) => {
@@ -887,7 +889,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, seasonYear }) {
 
   return (
     <Section title="Weekly Challenges">
-      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} />}
+      {isAdmin && <WeeklyForm seasonYear={currentYear} onAdd={addWeekly} />}
       <div className="grid" style={{ gap: 12, marginTop: 12 }}>
         {list.length === 0 && (
           <div className="card" style={{ padding: 16, color: "#64748b" }}>
@@ -1038,14 +1040,19 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
 }
 
 function TransactionsView({ report, loadOfficialReport }) {
+  const [team, setTeam] = useState("");
+  const [action, setAction] = useState("");
+  const [q, setQ] = useState("");
+
   // Auto-load snapshot when component mounts and no report exists
   useEffect(() => {
     if (!report && loadOfficialReport) {
-      loadOfficialReport(true); // silent=true to avoid sync overlay
+      loadOfficialReport(true);
     }
   }, [report, loadOfficialReport]);
-
-  if (!report) {
+  
+ // Show loading state until a snapshot exists
+if (!report) {
     return (
       <Section title="Transactions">
         <p style={{ color: "#64748b" }}>Loading snapshot...</p>
@@ -1059,9 +1066,6 @@ function TransactionsView({ report, loadOfficialReport }) {
   }));
 
   const teams = Array.from(new Set(all.map(r => r.team))).sort();
-  const [team, setTeam] = useState("");
-  const [action, setAction] = useState("");
-  const [q, setQ] = useState("");
 
   const filtered = all.filter(r =>
     (!team || r.team === team) &&
@@ -1163,6 +1167,7 @@ function Rosters({ leagueId, seasonId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
+  const [actualSeasonId, setActualSeasonId] = useState(seasonId);
 
   const positionOrder = ["QB", "RB", "RB/WR", "WR", "WR/TE", "TE", "FLEX", "OP", "D/ST", "K", "Bench"];
   
@@ -1171,16 +1176,31 @@ function Rosters({ leagueId, seasonId }) {
     return index === -1 ? 999 : index;
   };
 
+  // Load server's season setting on mount
   useEffect(() => {
-    if (!leagueId) return;
+    async function loadServerSeason() {
+      try {
+        const response = await apiCall('/api/report/default-season');
+        const serverSeason = response.season || DEFAULT_SEASON;
+        setActualSeasonId(serverSeason);
+      } catch (error) {
+        console.error('Failed to load server season:', error);
+        setActualSeasonId(seasonId || DEFAULT_SEASON);
+      }
+    }
+    loadServerSeason();
+  }, [seasonId]);
+
+  useEffect(() => {
+    if (!leagueId || !actualSeasonId) return;
     (async () => {
       setLoading(true);
       setError("");
       try {
         const [teamJson, rosJson, setJson] = await Promise.all([
-          fetchEspnJson({ leagueId, seasonId, view: "mTeam" }),
-          fetchEspnJson({ leagueId, seasonId, view: "mRoster" }),
-          fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
+          fetchEspnJson({ leagueId, seasonId: actualSeasonId, view: "mTeam" }),
+          fetchEspnJson({ leagueId, seasonId: actualSeasonId, view: "mRoster" }),
+          fetchEspnJson({ leagueId, seasonId: actualSeasonId, view: "mSettings" }),
         ]);
         const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
         const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
@@ -1213,7 +1233,7 @@ function Rosters({ leagueId, seasonId }) {
       }
       setLoading(false);
     })();
-  }, [leagueId, seasonId]);
+  }, [leagueId, actualSeasonId]);
 
   return (
     <Section title="Rosters" actions={<span className="badge">View-only (ESPN live)</span>}>

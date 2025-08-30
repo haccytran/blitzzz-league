@@ -1266,7 +1266,7 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
 });
 
 // Get the default season
-app.get("/api/report/default-season", async (req, res) => {
+app.get("/api/report/", async (req, res) => {
   try {
     const setting = await readJson("current_display_season.json", { season: "2025" });
     res.json({ season: setting.season }); // Use consistent property name
@@ -1321,11 +1321,11 @@ app.post("/api/report/update", async (req, res) => {
 
   // ADD THIS: Update default season in database too
   await client.query(`
-    INSERT INTO league_data (data_type, data_value) 
-    VALUES ('current_display_season', $1)
-    ON CONFLICT (data_type) DO UPDATE SET 
-    data_value = $1, updated_at = CURRENT_TIMESTAMP
-  `, [JSON.stringify({ season: seasonId, updatedAt: Date.now() })]);
+  INSERT INTO league_data (data_type, data_value) 
+  VALUES ('current_display_season', $1)
+  ON CONFLICT (data_type) DO UPDATE SET 
+  data_value = EXCLUDED.data_value, updated_at = CURRENT_TIMESTAMP
+`, [JSON.stringify({ season: seasonId, updatedAt: Date.now() })]);
       client.release();
     }
     

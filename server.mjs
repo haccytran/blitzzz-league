@@ -1245,6 +1245,27 @@ app.get("/api/report/default-season", async (req, res) => {
     res.json({ season: "2025" });
   }
 });
+
+// Get the default season
+app.get("/api/report/default-season", async (req, res) => {
+  try {
+    const setting = await readJson("current_display_season.json", { season: "2025" });
+    res.json({ season: setting.season }); // Use consistent property name
+  } catch (error) {
+    res.json({ season: "2025" });
+  }
+});
+
+// Get current season setting for rosters/components
+app.get("/api/report/current-season", async (req, res) => {
+  try {
+    const setting = await readJson("current_display_season.json", { season: new Date().getFullYear().toString() });
+    res.json({ season: setting.season });
+  } catch (error) {
+    res.json({ season: new Date().getFullYear().toString() });
+  }
+});
+
 app.post("/api/report/update", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const { leagueId, seasonId } = req.body || {};

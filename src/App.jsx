@@ -259,7 +259,9 @@ async function loadDisplaySeason() {
     // Only load default season if user hasn't set one yet
     if (!espn.seasonId) {
       const response = await apiCall('/api/report/default-season');
+      console.log('Server default season response:', response); // ADD THIS
       const serverSeason = response.season || DEFAULT_SEASON;
+      console.log('Setting season to:', serverSeason); // ADD THIS
       setEspn(prev => ({ ...prev, seasonId: serverSeason }));
     }
   } catch (error) {

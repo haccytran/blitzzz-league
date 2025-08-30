@@ -1322,7 +1322,7 @@ app.post("/api/report/update", async (req, res) => {
   // ADD THIS: Update default season in database too
   await client.query(`
     INSERT INTO league_data (data_type, data_value) 
-    VALUES ('default_season', $1)
+    VALUES ('current_display_season', $1)
     ON CONFLICT (data_type) DO UPDATE SET 
     data_value = $1, updated_at = CURRENT_TIMESTAMP
   `, [JSON.stringify({ season: seasonId, updatedAt: Date.now() })]);

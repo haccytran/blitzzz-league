@@ -254,18 +254,18 @@ function LeagueHub(){
 const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: "" });
 
 // Define loadDisplaySeason AFTER espn state exists
+
 async function loadDisplaySeason() {
   try {
-    // Only load default season if user hasn't set one yet
-    if (!espn.seasonId) {
-      const response = await apiCall('/api/report/default-season');
-      console.log('Server default season response:', response); // ADD THIS
-      const serverSeason = response.season || DEFAULT_SEASON;
-      console.log('Setting season to:', serverSeason); // ADD THIS
-      setEspn(prev => ({ ...prev, seasonId: serverSeason }));
-    }
+    // Always load default season from server on first mount
+    const response = await apiCall('/api/report/default-season');
+    console.log('Server default season response:', response);
+    const serverSeason = response.season || DEFAULT_SEASON;
+    console.log('Setting season to:', serverSeason);
+    setEspn(prev => ({ ...prev, seasonId: serverSeason }));
   } catch (error) {
     console.error('Failed to load display season:', error);
+    // Fallback to DEFAULT_SEASON only if server call fails
     if (!espn.seasonId) {
       setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
     }

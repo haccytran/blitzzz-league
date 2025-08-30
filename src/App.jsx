@@ -219,16 +219,7 @@ function LeagueHub(){
 // Load data from server on mount
   useEffect(() => {
     loadServerData();
-    loadDisplaySeason(); // Add this line back
   }, []);
-
-  // Add this useEffect for auto-loading data when season changes
-  useEffect(() => {
-    if (espn.seasonId) {
-      // Auto-load official report when season changes
-      loadOfficialReport(true);
-    }
-  }, [espn.seasonId]);
 
   async function loadServerData() {
     try {
@@ -238,23 +229,6 @@ function LeagueHub(){
       console.error('Failed to load server data:', error);
     }
   }
-
-
-async function loadDisplaySeason() {
-  try {
-    // Only load default season if user hasn't set one yet
-    if (!espn.seasonId) {
-      const response = await apiCall('/api/report/default-season');
-      const serverSeason = response.season || DEFAULT_SEASON;
-      setEspn(prev => ({ ...prev, seasonId: serverSeason }));
-    }
-  } catch (error) {
-    console.error('Failed to load display season:', error);
-    if (!espn.seasonId) {
-      setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
-    }
-  }
-}
 
   // Commissioner mode
   const [isAdmin,setIsAdmin] = useState(localStorage.getItem("ffl_is_admin")==="1");
@@ -276,8 +250,39 @@ async function loadDisplaySeason() {
   };
   const logout = ()=>{ setIsAdmin(false); localStorage.removeItem("ffl_is_admin"); };
 
-  // ESPN config
-  const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: "" });
+// ESPN config
+const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: "" });
+
+// Define loadDisplaySeason AFTER espn state exists
+async function loadDisplaySeason() {
+  try {
+    // Only load default season if user hasn't set one yet
+    if (!espn.seasonId) {
+      const response = await apiCall('/api/report/default-season');
+      const serverSeason = response.season || DEFAULT_SEASON;
+      setEspn(prev => ({ ...prev, seasonId: serverSeason }));
+    }
+  } catch (error) {
+    console.error('Failed to load display season:', error);
+    if (!espn.seasonId) {
+      setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
+    }
+  }
+}
+
+// Load default season after espn state is initialized
+useEffect(() => {
+  loadDisplaySeason();
+}, []);
+
+// Auto-load official report when season changes
+useEffect(() => {
+  if (espn.seasonId) {
+    loadOfficialReport(true);
+  }
+}, [espn.seasonId]);
+
+
   const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
 
   // Weeks

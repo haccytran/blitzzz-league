@@ -257,25 +257,45 @@ const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: "" });
 
 async function loadDisplaySeason() {
   try {
-    // Always load default season from server on first mount
+    console.log('Loading display season from server...');
     const response = await apiCall('/api/report/default-season');
     console.log('Server default season response:', response);
-    const serverSeason = response.season || DEFAULT_SEASON;
-    console.log('Setting season to:', serverSeason);
-    setEspn(prev => ({ ...prev, seasonId: serverSeason }));
+    
+    // More robust season extraction
+    let serverSeason = response?.season || response?.defaultSeason;
+    
+    // Convert to string and validate
+    if (serverSeason) {
+      serverSeason = String(serverSeason).trim();
+      console.log('Extracted server season:', serverSeason);
+    }
+    
+    // Use server season if valid, otherwise fallback to DEFAULT_SEASON
+    const finalSeason = serverSeason || DEFAULT_SEASON;
+    console.log('Final season to use:', finalSeason);
+    
+    setEspn(prev => ({ ...prev, seasonId: finalSeason }));
   } catch (error) {
     console.error('Failed to load display season:', error);
-    // Fallback to DEFAULT_SEASON only if server call fails
-    if (!espn.seasonId) {
-      setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
-    }
+    console.log('Using DEFAULT_SEASON fallback:', DEFAULT_SEASON);
+    
+    // Always set a season on error
+    setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
   }
 }
 
-// Load default season after espn state is initialized
+// Load default season after espn state is initialized - with debugging
 useEffect(() => {
-  loadDisplaySeason();
-}, []);
+  console.log('useEffect triggered - loading display season...');
+  console.log('Current espn state:', espn);
+  console.log('DEFAULT_SEASON constant:', DEFAULT_SEASON);
+  
+  loadDisplaySeason().then(() => {
+    console.log('loadDisplaySeason completed');
+  }).catch((error) => {
+    console.error('loadDisplaySeason failed:', error);
+  });
+}, []); // Empty dependency array - only run on mount
 
 // Auto-load official report when season changes
 useEffect(() => {

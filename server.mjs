@@ -341,7 +341,7 @@ app.delete("/api/league-data/members", requireAdmin, async (req, res) => {
 
 app.post("/api/league-data/import-teams", requireAdmin, async (req, res) => {
   try {
-  const { teams, seasonId } = req.body;
+    const { teams } = req.body; // ← Remove seasonId from destructuring
     if (!Array.isArray(teams)) {
       return res.status(400).json({ error: "Teams array required" });
     }
@@ -359,12 +359,8 @@ app.post("/api/league-data/import-teams", requireAdmin, async (req, res) => {
     });
     
     await saveLeagueData(data);
-if (seasonId) {
-  const defaultSetting = { season: seasonId, updatedAt: Date.now() };
-  await writeJson("current_display_season.json", defaultSetting);
-}
-
-res.json({ success: true, imported: teams.length });
+    
+    res.json({ success: true, imported: teams.length });
   } catch (error) {
     console.error('Failed to import teams:', error);
     res.status(500).json({ error: "Failed to import teams" });

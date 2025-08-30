@@ -431,21 +431,55 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
   };
 
   const importEspnTeams = async () => {
-    if(!espn.leagueId) return alert("Enter League ID");
-    try{
-      const json = await fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" });
-      const teams = json?.teams || [];
-      if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
-      const names = [...new Set(teams.map(t => teamName(t)))];
+  if(!espn.leagueId) return alert("Enter League ID");
+  try{
+    // Fetch team data AND roster data
+    const [teamJson, rosJson, setJson] = await Promise.all([
+      fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" }),
+      fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mRoster" }),
+      fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mSettings" }),
+    ]);
+    
+    const teams = teamJson?.teams || [];
+    if(!Array.isArray(teams) || teams.length===0) return alert("No teams found (check ID/season).");
+    
+    const names = [...new Set(teams.map(t => teamName(t)))];
+    const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
+    const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
+    
+    // Build roster data
+    const rosterData = (rosJson?.teams || []).map(t => {
+      const entries = (t.roster?.entries || []).map(e => {
+        const p = e.playerPoolEntry?.player;
+        const fullName = p?.fullName || "Player";
+        const slot = slotMap[e.lineupSlotId] || "—";
+        
+        const displayName = slot === "Bench" 
+          ? fullName
+          : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+        
+        return { name: displayName, slot };
+      });
       
-await apiCall('/api/league-data/import-teams', {
-  method: 'POST',
-  body: JSON.stringify({ teams: names }) // ← seasonId removed
-});
-      await loadServerData();
-      alert(`Imported ${names.length} teams.`);
-    } catch(e){ alert(e.message || "ESPN fetch failed. Check League/Season."); }
-  };
+      return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
+    }).sort((a, b) => a.teamName.localeCompare(b.teamName));
+
+    // Save both member names and roster data to server
+    await apiCall('/api/league-data/import-teams', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        teams: names,
+        seasonId: espn.seasonId,
+        rosterData: rosterData
+      })
+    });
+    
+    await loadServerData();
+    alert(`Imported ${names.length} teams with rosters for season ${espn.seasonId}.`);
+  } catch(e){ 
+    alert(e.message || "ESPN fetch failed. Check League/Season."); 
+  }
+};
 
   // Sync overlay state
   const [syncing, setSyncing] = useState(false);
@@ -1184,7 +1218,6 @@ function Rosters({ leagueId, seasonId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
-  const [actualSeasonId, setActualSeasonId] = useState(seasonId);
 
   const positionOrder = ["QB", "RB", "RB/WR", "WR", "WR/TE", "TE", "FLEX", "OP", "D/ST", "K", "Bench"];
   
@@ -1193,58 +1226,63 @@ function Rosters({ leagueId, seasonId }) {
     return index === -1 ? 999 : index;
   };
 
-// Use the seasonId directly from League Settings
-useEffect(() => {
-  setActualSeasonId(seasonId || DEFAULT_SEASON);
-}, [seasonId]);
-
+  // Load roster data from server
   useEffect(() => {
-    if (!leagueId || !actualSeasonId) return;
+    if (!seasonId) return;
+    
     (async () => {
       setLoading(true);
       setError("");
       try {
-        const [teamJson, rosJson, setJson] = await Promise.all([
-          fetchEspnJson({ leagueId, seasonId: actualSeasonId, view: "mTeam" }),
-          fetchEspnJson({ leagueId, seasonId: actualSeasonId, view: "mRoster" }),
-          fetchEspnJson({ leagueId, seasonId: actualSeasonId, view: "mSettings" }),
-        ]);
-        const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
-        const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
-        const items = (rosJson?.teams || []).map(t => {
-          const entries = (t.roster?.entries || []).map(e => {
-            const p = e.playerPoolEntry?.player;
-            const fullName = p?.fullName || "Player";
-            const slot = slotMap[e.lineupSlotId] || "—";
-            
-            // ONLY remove parentheses from NON-bench players
-            const displayName = slot === "Bench" 
-              ? fullName  // Keep original name with parentheses for bench players
-              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(); // Remove parentheses for starters only
-            
-            return { name: displayName, slot };
-          });
+        const response = await apiCall(`/api/league-data/rosters?seasonId=${seasonId}`);
+        if (response.rosterData && response.rosterData.length > 0) {
+          // Use server-stored roster data
+          setTeams(response.rosterData);
+        } else if (leagueId) {
+          // Fallback to live ESPN data if no server data
+          const [teamJson, rosJson, setJson] = await Promise.all([
+            fetchEspnJson({ leagueId, seasonId, view: "mTeam" }),
+            fetchEspnJson({ leagueId, seasonId, view: "mRoster" }),
+            fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
+          ]);
           
-          entries.sort((a, b) => {
-            const aPriority = getPositionPriority(a.slot);
-            const bPriority = getPositionPriority(b.slot);
-            if (aPriority !== bPriority) return aPriority - bPriority;
-            return a.name.localeCompare(b.name);
-          });
+          const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
+          const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
+          const items = (rosJson?.teams || []).map(t => {
+            const entries = (t.roster?.entries || []).map(e => {
+              const p = e.playerPoolEntry?.player;
+              const fullName = p?.fullName || "Player";
+              const slot = slotMap[e.lineupSlotId] || "—";
+              
+              const displayName = slot === "Bench" 
+                ? fullName
+                : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+              
+              return { name: displayName, slot };
+            });
+            
+            entries.sort((a, b) => {
+              const aPriority = getPositionPriority(a.slot);
+              const bPriority = getPositionPriority(b.slot);
+              if (aPriority !== bPriority) return aPriority - bPriority;
+              return a.name.localeCompare(b.name);
+            });
+            
+            return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
+          }).sort((a, b) => a.teamName.localeCompare(b.teamName));
           
-          return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
-        }).sort((a, b) => a.teamName.localeCompare(b.teamName));
-        setTeams(items);
+          setTeams(items);
+        }
       } catch {
         setError("Failed to load rosters.");
       }
       setLoading(false);
     })();
-  }, [leagueId, actualSeasonId]);
+  }, [leagueId, seasonId]);
 
   return (
-    <Section title="Rosters" actions={<span className="badge">View-only (ESPN live)</span>}>
-      {!leagueId && <p style={{ color: "#64748b" }}>Set your ESPN League ID & Season in <b>League Settings</b>.</p>}
+    <Section title="Rosters" actions={<span className="badge">Cached from Import</span>}>
+      {!seasonId && <p style={{ color: "#64748b" }}>Set your ESPN Season in <b>League Settings</b>.</p>}
       {loading && <p>Loading rosters…</p>}
       {error && <p style={{ color: "#dc2626" }}>{error}</p>}
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -1257,7 +1295,7 @@ useEffect(() => {
           </div>
         ))}
       </div>
-      {!loading && teams.length === 0 && leagueId && <p style={{ color: "#64748b" }}>No roster data yet (pre-draft?).</p>}
+      {!loading && teams.length === 0 && <p style={{ color: "#64748b" }}>No roster data. Use Import ESPN Teams in League Settings.</p>}
     </Section>
   );
 }

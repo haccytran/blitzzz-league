@@ -170,7 +170,7 @@ async function getLeagueData() {
     buyins: {},
     leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
     tradeBlock: [],
-    rosters: {},
+    rosters: {}, // Add this line
     lastUpdated: new Date().toISOString()
   });
 }
@@ -339,9 +339,10 @@ app.delete("/api/league-data/members", requireAdmin, async (req, res) => {
   }
 });
 
+// === ROSTERS ===
 app.post("/api/league-data/import-teams", requireAdmin, async (req, res) => {
   try {
-    const { teams } = req.body; // ← Remove seasonId from destructuring
+    const { teams, seasonId, rosterData } = req.body;
     if (!Array.isArray(teams)) {
       return res.status(400).json({ error: "Teams array required" });
     }
@@ -358,12 +359,42 @@ app.post("/api/league-data/import-teams", requireAdmin, async (req, res) => {
       return existing ? existing : { id: nid(), name };
     });
     
+    // Store roster data if provided
+    if (seasonId && rosterData) {
+      data.rosters = data.rosters || {};
+      data.rosters[seasonId] = {
+        rosterData,
+        lastUpdated: new Date().toISOString()
+      };
+    }
+    
     await saveLeagueData(data);
     
     res.json({ success: true, imported: teams.length });
   } catch (error) {
     console.error('Failed to import teams:', error);
     res.status(500).json({ error: "Failed to import teams" });
+  }
+});
+
+app.get("/api/league-data/rosters", async (req, res) => {
+  try {
+    const { seasonId } = req.query;
+    if (!seasonId) {
+      return res.status(400).json({ error: "Season ID required" });
+    }
+
+    const data = await getLeagueData();
+    const seasonRosters = data.rosters && data.rosters[seasonId];
+    
+    if (seasonRosters) {
+      res.json(seasonRosters);
+    } else {
+      res.json({ rosterData: [], lastUpdated: null });
+    }
+  } catch (error) {
+    console.error('Failed to load rosters:', error);
+    res.status(500).json({ error: "Failed to load rosters" });
   }
 });
 

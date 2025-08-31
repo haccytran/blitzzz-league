@@ -1029,6 +1029,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
 // DUES PAYMENT TRACKER
 
 function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDuesPayments }) {
+ const displayYear = new Date().getFullYear();
   if (!report || !report.totalsRows) return null;
 
   const seasonKey = String(seasonId);
@@ -1127,7 +1128,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
   return (
     <div className="card" style={{ padding: 12, marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ marginTop: 0 }}>League Owner Dues</h3>
+        <h3 style={{ marginTop: 0 }}> {displayYear - 1} Waiver Dues Checklist{"\u2705"}</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="badge">
             ${paidAmount} / ${totalOwed} collected ({paidCount} / {report.totalsRows.length} paid)
@@ -2192,7 +2193,7 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
   return (
     <div className="card" style={{ padding: 16, marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ marginTop: 0 }}>${BUYIN} Season Buy-In — {displayYear}</h3>
+        <h3 style={{ marginTop: 0 }}>${BUYIN} Buy-in Checklist ✅</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="badge">{paidCount} / {members.length} paid</span>
           {isAdmin && (
@@ -2215,7 +2216,6 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
         <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 16 }}>
           <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <strong>Buy-In Paid Checklist ✅</strong>
               {isAdmin && (
                 <div style={{ display: "flex", gap: 8 }}>
                   <button className="btn" onClick={markAll}>Mark all paid</button>

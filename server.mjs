@@ -176,7 +176,7 @@ async function getLeagueData() {
     waivers: [],
     buyins: {},
     duesPayments: {}, // ADD THIS LINE
-    leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
+    leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Thu 12:00 AM PT → Wed 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
     tradeBlock: [],
     rosters: {},
     lastUpdated: new Date().toISOString()
@@ -763,7 +763,7 @@ app.get("/api/progress", (req, res) => {
 // =========================
 // Week helpers
 // =========================
-const WEEK_START_DAY = 3;
+const WEEK_START_DAY = 4;
 function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
 function normalizeEpoch(x){
   if (x == null) return Date.now();
@@ -773,9 +773,9 @@ function normalizeEpoch(x){
 }
 function isWithinWaiverWindow(dateLike){
   const z = new Date(dateLike);
-  if (z.getDay() !== 3) return false;
+  if (z.getDay() !== 4) return false; // Thursday
   const minutes = z.getHours()*60 + z.getMinutes();
-  return minutes <= 4*60 + 30;
+  return minutes <= 4*60 + 30; // 4:30 AM (keep same early morning window)
 }
 function startOfLeagueWeek(date){
   const z = new Date(date);
@@ -785,36 +785,37 @@ function startOfLeagueWeek(date){
   if (z < base) base.setDate(base.getDate() - 7);
   return base;
 }
-function firstWednesdayOfSeptember(year){
+function firstThursdayOfSeptember(year){
   const d = new Date(year, 8, 1);
-  const offset = (3 - d.getDay() + 7) % 7;
+  const offset = (4 - d.getDay() + 7) % 7; // 4 = Thursday
   d.setDate(d.getDate() + offset);
   d.setHours(0,0,0,0);
   return d;
 }
 const DAY = 24*60*60*1000;
-const WAIVER_EARLY_WED_SHIFT_MS = 5 * 60 * 60 * 1000;
 function weekBucket(date, seasonYear) {
-  let z = new Date(date);
-  if (z.getDay() === 3 && z.getHours() < 5) z = new Date(z.getTime() - WAIVER_EARLY_WED_SHIFT_MS);
-  const w1 = firstWednesdayOfSeptember(Number(seasonYear));
+  const z = new Date(date);
+  const w1 = firstThursdayOfSeptember(Number(seasonYear)); // Updated to use Thursday
   const diff = z.getTime() - w1.getTime();
-  const week = Math.max(1, Math.floor(diff / (7 * DAY)) + 1);
-  const start = new Date(w1.getTime() + (week - 1) * 7 * DAY);
+  const week = Math.max(1, Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1);
+  const start = new Date(w1.getTime() + (week - 1) * 7 * 24 * 60 * 60 * 1000);
   return { week, start };
 }
+
+
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeek(date);
-  const week1 = startOfLeagueWeek(firstWednesdayOfSeptember(seasonYear));
+  const week1 = startOfLeagueWeek(firstThursdayOfSeptember(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0;
   return { week, start };
 }
+
 function weekRangeLabelDisplay(start){
-  const wed = new Date(start); wed.setHours(0,0,0,0);
-  const tue = new Date(wed); tue.setDate(tue.getDate()+6); tue.setHours(23,59,0,0);
+  const thu = new Date(start); thu.setHours(0,0,0,0);
+  const wed = new Date(thu); wed.setDate(wed.getDate()+6); wed.setHours(23,59,0,0);
   const short = (d)=> new Date(d).toLocaleDateString(undefined,{month:"short", day:"numeric"});
-  return `${short(wed)}–${short(tue)} (cutoff Tue 11:59 PM PT)`;
+  return `${short(thu)}–${short(wed)} (cutoff Wed 11:59 PM PT)`;
 }
 
 // =========================

@@ -211,6 +211,7 @@ function LeagueHub(){
     members: [],
     waivers: [],
     buyins: {},
+    duesPayments: {}, 
     tradeBlock: [],
     leagueSettingsHtml: "",
     lastUpdated: null
@@ -530,6 +531,20 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
   const [espnReport, setEspnReport] = useState(null);
   const [lastSynced, setLastSynced] = useState("");
 
+// Add this function to your App.jsx file with your other server API functions
+
+const updateDuesPayments = async (seasonId, updates) => {
+  try {
+    await apiCall('/api/league-data/dues-payments', {
+      method: 'POST',
+      body: JSON.stringify({ seasonId, updates })
+    });
+  } catch (error) {
+    console.error('Failed to update dues payments:', error);
+    throw error;
+  }
+};
+
 async function loadOfficialReport(silent=false){
   try{
     if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
@@ -684,6 +699,7 @@ async function loadOfficialReport(silent=false){
       setData={setData}
       seasonYear={seasonYear}
       updateBuyIns={updateBuyIns}
+      updateDuesPayments={updateDuesPayments}
     />,
     rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
     settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
@@ -1007,8 +1023,159 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
   );
 }
 
+// DUES PAYMENT TRACKER
 
-function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns }) {
+function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDuesPayments }) {
+  if (!report || !report.totalsRows) return null;
+
+  const seasonKey = String(seasonId);
+  const currentPayments = (data.duesPayments && data.duesPayments[seasonKey]) || {};
+
+  const updatePayment = async (teamName, isPaid) => {
+    if (!isAdmin) return;
+
+    const updates = { ...currentPayments, [teamName]: isPaid };
+    
+    // Optimistically update local state
+    setData(prevData => ({
+      ...prevData,
+      duesPayments: {
+        ...(prevData.duesPayments || {}),
+        [seasonKey]: updates
+      }
+    }));
+
+    // Save to server
+    try {
+      await updateDuesPayments(seasonKey, updates);
+    } catch (error) {
+      console.error('Failed to update dues payment:', error);
+      // Revert local state on failure
+      setData(prevData => ({
+        ...prevData,
+        duesPayments: {
+          ...(prevData.duesPayments || {}),
+          [seasonKey]: currentPayments
+        }
+      }));
+      alert('Failed to save payment status: ' + error.message);
+    }
+  };
+
+  const markAllPaid = async () => {
+    if (!isAdmin) return;
+    const allPaid = Object.fromEntries(report.totalsRows.map(row => [row.name, true]));
+    
+    setData(prevData => ({
+      ...prevData,
+      duesPayments: {
+        ...(prevData.duesPayments || {}),
+        [seasonKey]: allPaid
+      }
+    }));
+
+    try {
+      await updateDuesPayments(seasonKey, allPaid);
+    } catch (error) {
+      console.error('Failed to mark all paid:', error);
+      setData(prevData => ({
+        ...prevData,
+        duesPayments: {
+          ...(prevData.duesPayments || {}),
+          [seasonKey]: currentPayments
+        }
+      }));
+      alert('Failed to save payment status: ' + error.message);
+    }
+  };
+
+  const resetAll = async () => {
+    if (!isAdmin) return;
+    
+    setData(prevData => ({
+      ...prevData,
+      duesPayments: {
+        ...(prevData.duesPayments || {}),
+        [seasonKey]: {}
+      }
+    }));
+
+    try {
+      await updateDuesPayments(seasonKey, {});
+    } catch (error) {
+      console.error('Failed to reset payments:', error);
+      setData(prevData => ({
+        ...prevData,
+        duesPayments: {
+          ...(prevData.duesPayments || {}),
+          [seasonKey]: currentPayments
+        }
+      }));
+      alert('Failed to reset payment status: ' + error.message);
+    }
+  };
+
+  const paidCount = Object.values(currentPayments).filter(Boolean).length;
+  const totalOwed = report.totalsRows.reduce((sum, row) => sum + row.owes, 0);
+  const paidAmount = report.totalsRows
+    .filter(row => currentPayments[row.name])
+    .reduce((sum, row) => sum + row.owes, 0);
+
+  return (
+    <div className="card" style={{ padding: 12, marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <h3 style={{ marginTop: 0 }}>League Owner Dues</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="badge">
+            ${paidAmount} / ${totalOwed} collected ({paidCount} / {report.totalsRows.length} paid)
+          </span>
+          {isAdmin && (
+            <>
+              <button className="btn" style={btnSec} onClick={markAllPaid}>Mark all paid</button>
+              <button className="btn" style={btnSec} onClick={resetAll}>Reset all</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={th}>Paid</th>
+            <th style={th}>Team</th>
+            <th style={th}>Adds</th>
+            <th style={th}>Owes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.totalsRows.map(row => (
+            <tr key={row.name} style={{ opacity: currentPayments[row.name] ? 0.6 : 1 }}>
+              <td style={td}>
+                <input
+                  type="checkbox"
+                  checked={!!currentPayments[row.name]}
+                  onChange={(e) => updatePayment(row.name, e.target.checked)}
+                  disabled={!isAdmin}
+                />
+              </td>
+              <td style={{ 
+                ...td, 
+                textDecoration: currentPayments[row.name] ? "line-through" : "none" 
+              }}>
+                {row.name}
+              </td>
+              <td style={td}>{row.adds}</td>
+              <td style={td}>${row.owes}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns, updateDuesPayments 
+}) {
   useEffect(() => {
     if (!isAdmin && !report) {
       loadOfficialReport(true); // silent=true to avoid showing sync overlay
@@ -1043,67 +1210,59 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
 </p>
       {!report && <p style={{ color: "#64748b" }}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
 
-      {report && (
-        <div className="dues-grid dues-tight">
-          <div className="dues-left">
-            <div className="card" style={{ padding: 12 }}>
-              <h3 style={{ marginTop: 0 }}>League Owner Dues</h3>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Team</th>
-                    <th style={th}>Adds</th>
-                    <th style={th}>Owes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.totalsRows.map(r => (
-                    <tr key={r.name}>
-                      <td style={td}>{r.name}</td>
-                      <td style={td}>{r.adds}</td>
-                      <td style={td}>${r.owes}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <BuyInTracker
-              isAdmin={isAdmin}
-              members={data.members}
-              seasonYear={seasonYear}
-              data={data}
-              setData={setData}
-              updateBuyIns={updateBuyIns}
-            />
-          </div>
-          <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
-            <h3 style={{ marginTop: 0 }}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
-            {report.weekRows.map(w => (
-              <div key={w.week} style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} — {w.range}</div>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Team</th>
-                      <th style={th}>Adds</th>
-                      <th style={th}>Owes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {w.entries.map(e => (
-                      <tr key={e.name}>
-                        <td style={{ ...td, whiteSpace: "normal" }}>{e.name}</td>
-                        <td style={td}>{e.count}</td>
-                        <td style={td}>${e.owes}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
+{report && (
+  <div className="dues-grid dues-tight">
+    <div className="dues-left">
+     
+      {/* New Dues Payment Tracker */}
+      <DuesPaymentTracker
+        isAdmin={isAdmin}
+        data={data}
+        setData={setData}
+        seasonId={seasonYear}
+        report={report}
+        updateDuesPayments={updateDuesPayments}
+      />
+
+      <BuyInTracker
+        isAdmin={isAdmin}
+        members={data.members}
+        seasonYear={seasonYear}
+        data={data}
+        setData={setData}
+        updateBuyIns={updateBuyIns}
+      />
+    </div>
+    
+    {/* Rest of your dues view stays the same */}
+    <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
+      <h3 style={{ marginTop: 0 }}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
+      {report.weekRows.map(w => (
+        <div key={w.week} style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} — {w.range}</div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={th}>Team</th>
+                <th style={th}>Adds</th>
+                <th style={th}>Owes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {w.entries.map(e => (
+                <tr key={e.name}>
+                  <td style={{ ...td, whiteSpace: "normal" }}>{e.name}</td>
+                  <td style={td}>{e.count}</td>
+                  <td style={td}>${e.owes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
+      ))}
+    </div>
+  </div>
+)}
     </Section>
   );
 }

@@ -9,7 +9,7 @@ const ADMIN_ENV = import.meta.env.VITE_ADMIN_PASSWORD || "changeme";
 const DEFAULT_LEAGUE_ID = import.meta.env.VITE_ESPN_LEAGUE_ID || "";
 const DEFAULT_SEASON = import.meta.env.VITE_ESPN_SEASON || new Date().getFullYear();
 const LEAGUE_TZ = "America/Los_Angeles";
-const WEEK_START_DAY = 3; // Wednesday
+const WEEK_START_DAY = 4; // Thursday
 
 const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
 
@@ -76,20 +76,23 @@ function startOfLeagueWeekPT(date){
   if (z < base) base.setDate(base.getDate() - 7);
   return base;
 }
-function firstWednesdayOfSeptemberPT(year){
+
+function firstThursdayOfSeptemberPT(year){
   const d = toPT(new Date(year, 8, 1));
-  const offset = (3 - d.getDay() + 7) % 7;
+  const offset = (4 - d.getDay() + 7) % 7; // 4 = Thursday
   d.setDate(d.getDate() + offset);
   d.setHours(0,0,0,0);
   return d;
 }
+
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeekPT(date);
-  const week1 = startOfLeagueWeekPT(firstWednesdayOfSeptemberPT(seasonYear));
+  const week1 = startOfLeagueWeekPT(firstThursdayOfSeptemberPT(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0;
   return { week, start, key: localDateKey(start) };
 }
+
 function weekKeyFrom(w){ return w.key || localDateKey(w.start || new Date()) }
 function localDateKey(d){ const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const da=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${da}` }
 function fmtShort(d){ return toPT(d).toLocaleDateString(undefined,{month:"short", day:"numeric"}) }
@@ -701,7 +704,7 @@ async function loadOfficialReport(silent=false){
       updateBuyIns={updateBuyIns}
       updateDuesPayments={updateDuesPayments}
     />,
-    rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} />,
+    rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" />,
     settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
     trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>,
     polls: <PollsView {...{isAdmin, members:data.members, espn}}/>
@@ -1206,7 +1209,7 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <p style={{ marginTop: -8, color: "#64748b" }}>
   Last updated: <b>{lastSynced || "—"}</b>
   <br />
-  Rule: first two transactions per Wed→Tue week are free, then $5 each.
+  Rule: first two transactions per Thu→Wed week are free, then $5 each.
 </p>
       {!report && <p style={{ color: "#64748b" }}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
 
@@ -2422,7 +2425,7 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
     setSelectedWeek(w.week > 0 ? w : anchor);
   };
   
-  const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
+  const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Thu→Wed)` : `Preseason (Thu→Wed)`;
   
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

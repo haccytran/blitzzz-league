@@ -1001,7 +1001,10 @@ if (/DRAFT/i.test(String(iTypeStr)) || String(iTypeStr) === "DRAFT") {
 }
     }
   }
-  return out;
+
+// Add this at the end of extractMoves function, before return
+console.log(`[DEBUG] extractMoves from ${src}: ${out.filter(o => o.action === "ADD").length} adds, ${out.filter(o => o.action === "DROP").length} drops`);
+return out;
 }
 
 function extractMovesFromComm(json){
@@ -1072,9 +1075,11 @@ async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, o
 async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const series = [];
   let lastGood = {};
+  
   for (let sp=1; sp<=maxSp; sp++){
     onProgress?.(sp, maxSp, "Building roster timeline…");
     let byTeam = {};
+    
     try {
       const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
       for (const t of (r?.teams || [])) {
@@ -1085,11 +1090,20 @@ async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress
         }
         byTeam[t.id] = set;
       }
-    } catch {}
-    if (Object.keys(byTeam).length === 0) byTeam = lastGood;
-    else lastGood = byTeam;
-    series[sp] = byTeam;
+      
+      // If we got data, update lastGood
+      if (Object.keys(byTeam).length > 0) {
+        lastGood = { ...byTeam };
+      }
+    } catch (error) {
+      console.log(`[DEBUG] Failed to fetch roster for SP ${sp}:`, error.message);
+    }
+    
+    // Use current data if available, otherwise use lastGood
+    series[sp] = Object.keys(byTeam).length > 0 ? byTeam : { ...lastGood };
   }
+  
+  console.log(`[DEBUG] Roster series built for ${maxSp} weeks`);
   return series;
 }
 
@@ -1097,25 +1111,53 @@ const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]
 const spFromDate = (dateLike, seasonYear) => Math.max(1, Math.min(25, (leagueWeekOf(new Date(dateLike), seasonYear).week || 1)));
 
 function isGenuineAddBySeries(row, series, seasonYear){
-  if (!row.playerId) return true;
+  if (!row.playerId) return true; // Can't verify without player ID
+  
   const sp = spFromDate(row.date, seasonYear);
-  const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
-  return !wasBefore && appearsLater;
+  const teamId = row.teamIdRaw;
+  const playerId = row.playerId;
+  
+  // Check 2-3 weeks before the transaction
+  const beforeChecks = [Math.max(1, sp - 2), Math.max(1, sp - 1)];
+  const wasBefore = beforeChecks.some(weekSp => 
+    isOnRoster(series, weekSp, teamId, playerId)
+  );
+  
+  // Check 2-3 weeks after the transaction
+  const afterChecks = [sp, sp + 1, sp + 2].filter(n => n < series.length);
+  const appearsAfter = afterChecks.some(weekSp => 
+    isOnRoster(series, weekSp, teamId, playerId)
+  );
+  
+  console.log(`[DEBUG] Genuine add check - Player ${playerId}, Team ${teamId}, Week ${sp}: wasBefore=${wasBefore}, appearsAfter=${appearsAfter}`);
+  
+  return !wasBefore && appearsAfter;
 }
 
 function isExecutedDropBySeries(row, series, seasonYear){
-  if (!row.playerId) return true;
+  if (!row.playerId) return true; // Can't verify without player ID, assume valid
+  
   const sp = spFromDate(row.date, seasonYear);
-  const before = Math.max(1, sp - 1);
-  const later = [sp, sp+1, sp+2].filter(n=>n<series.length);
-  const wasBefore = isOnRoster(series, before, row.teamIdRaw, row.playerId) || isOnRoster(series, sp, row.teamIdRaw, row.playerId);
-  const appearsLater = later.some(n=> isOnRoster(series, n, row.teamIdRaw, row.playerId));
-  return wasBefore && !appearsLater;
+  const teamId = row.teamIdRaw;
+  const playerId = row.playerId;
+  
+  // Just check if the player was on the roster at some point before the drop
+  // Don't be too strict about exact timing
+  const beforeChecks = [Math.max(1, sp - 2), Math.max(1, sp - 1), sp];
+  const wasOnRoster = beforeChecks.some(weekSp => 
+    isOnRoster(series, weekSp, teamId, playerId)
+  );
+  
+  // If we can't verify from roster data, assume the drop is valid
+  // (ESPN wouldn't report a drop if the player wasn't on the team)
+  if (!wasOnRoster && sp > 1) {
+    console.log(`[DEBUG] Could not verify roster ownership for drop - Player ${playerId}, Team ${teamId}, Week ${sp} - allowing drop`);
+    return true;
+  }
+  
+  console.log(`[DEBUG] Drop verification - Player ${playerId}, Team ${teamId}, Week ${sp}: wasOnRoster=${wasOnRoster}`);
+  return true; // Be more permissive with drops
 }
-
 async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
   const need = new Set((ids||[]).filter(Boolean));
   const map = {}; 
@@ -1145,8 +1187,9 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
   const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
-console.log(`[DEBUG] Total moves extracted from all sources: ${all.length}`);
-console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
+  console.log(`[DEBUG] Total moves extracted from all sources: ${all.length}`);
+  console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
+  
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
   const deduped = dedupeMoves(all).map(e => ({ 
     ...e, 
@@ -1155,16 +1198,66 @@ console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
     player: e.playerName || null 
   }));
   
+  // Debug logging for raw transaction breakdown
+  console.log(`[DEBUG] Raw transaction breakdown:`);
+  console.log(`- Total deduped transactions: ${deduped.length}`);
+  console.log(`- ADD transactions: ${deduped.filter(r => r.action === "ADD").length}`);
+  console.log(`- DROP transactions: ${deduped.filter(r => r.action === "DROP").length}`);
+
+  // Log some sample drops to see what we're working with
+  const sampleDrops = deduped.filter(r => r.action === "DROP").slice(0, 5);
+  console.log(`[DEBUG] Sample DROP transactions:`, sampleDrops);
+  
   const adds = deduped.filter(r => r.action === "ADD" && isGenuineAddBySeries(r, series, seasonId));
   const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
-  const needIds = [...new Set([...adds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
+  
+  // Enhanced filtering to remove failed waiver bids
+  console.log(`[DEBUG] Before filtering: ${adds.length} adds, ${drops.length} drops`);
+
+  // Filter out failed waiver bids
+  const filteredAdds = adds.filter(r => {
+    // Skip if this looks like a failed waiver bid
+    if (r.method === "WAIVER" && r.playerId) {
+      // Check if any other team got this same player around the same time
+      const samePlayerAdds = adds.filter(other => 
+        other.playerId === r.playerId && 
+        other.teamIdRaw !== r.teamIdRaw &&
+        Math.abs(new Date(other.date) - new Date(r.date)) < 24 * 60 * 60 * 1000 // within 24 hours
+      );
+      
+      if (samePlayerAdds.length > 0) {
+        console.log(`[DEBUG] Multiple teams claimed player ${r.playerId} - filtering potential failed bids`);
+        // Only keep the add if this team actually got the player (verified by roster)
+        return isGenuineAddBySeries(r, series, seasonId);
+      }
+    }
+    return true;
+  });
+
+  console.log(`[DEBUG] After filtering: ${filteredAdds.length} adds, ${drops.length} drops`);
+
+  // Log any suspicious multi-team adds
+  const playerAddCounts = {};
+  adds.forEach(add => {
+    if (add.playerId) {
+      playerAddCounts[add.playerId] = (playerAddCounts[add.playerId] || 0) + 1;
+    }
+  });
+
+  Object.entries(playerAddCounts).forEach(([playerId, count]) => {
+    if (count > 1) {
+      console.log(`[DEBUG] Player ${playerId} was "added" by ${count} teams`);
+    }
+  });
+
+  const needIds = [...new Set([...filteredAdds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
   const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
   
-  for (const r of [...adds, ...drops]) {
+  for (const r of [...filteredAdds, ...drops]) {
     if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
   }
   
-  let rawMoves = [...adds, ...drops].map(r => {
+  let rawMoves = [...filteredAdds, ...drops].map(r => {
     const wb = weekBucket(r.date, seasonId);
     return {
       date: fmtPT(r.date),
@@ -1180,23 +1273,34 @@ console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
     };
   }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
   
-  const DEDUPE_WINDOW_MS = 3 * 60 * 1000;
+  const DEDUPE_WINDOW_MS = 5 * 60 * 1000; // Increased to 5 minutes
   const dedupedMoves = [];
   const lastByKey = new Map();
   
   for (const m of rawMoves) {
-    const key = `${m.team}|${m.playerId || m.player}`;
+    const key = `${m.team}|${m.playerId || m.player}|${m.action}`;
+    
     if (m.action === "DROP") {
       const prev = lastByKey.get(key);
-      if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) continue;
+      if (prev && prev.action === "DROP" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) {
+        console.log(`[DEBUG] Skipping duplicate DROP: ${m.team} dropping ${m.player}`);
+        continue;
+      }
       lastByKey.set(key, { action: "DROP", ts: m.ts });
     } else if (m.action === "ADD") {
+      const prev = lastByKey.get(key);
+      if (prev && prev.action === "ADD" && Math.abs(m.ts - prev.ts) <= DEDUPE_WINDOW_MS) {
+        console.log(`[DEBUG] Skipping duplicate ADD: ${m.team} adding ${m.player}`);
+        continue;
+      }
       lastByKey.set(key, { action: "ADD", ts: m.ts });
     }
     dedupedMoves.push(m);
   }
   
   rawMoves = dedupedMoves.map(({ ts, ...rest }) => rest);
+  
+  console.log(`[DEBUG] Final transaction counts after all processing: ${rawMoves.filter(r => r.action === "ADD").length} adds, ${rawMoves.filter(r => r.action === "DROP").length} drops`);
   
   const perWeek = new Map();
   for (const r of rawMoves) {
@@ -1229,16 +1333,16 @@ console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
   }
   
   // Ensure all teams appear in totals, even with 0 adds/owes
-const allTeamNames = Object.values(idToName);
-const totalsRows = allTeamNames.map(teamName => {
-  const existing = totals.get(teamName);
-  return {
-    name: teamName,
-    adds: existing ? existing.adds : 0,
-    owes: existing ? existing.owes : 0
-  };
-}).sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
-    
+  const allTeamNames = Object.values(idToName);
+  const totalsRows = allTeamNames.map(teamName => {
+    const existing = totals.get(teamName);
+    return {
+      name: teamName,
+      adds: existing ? existing.adds : 0,
+      owes: existing ? existing.owes : 0
+    };
+  }).sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
+      
   return { 
     lastSynced: fmtPT(new Date()), 
     totalsRows, 

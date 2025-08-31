@@ -167,6 +167,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 // =========================
 const LEAGUE_DATA_FILE = "league_data.json";
 
+// Update your getLeagueData function in server.mjs to include duesPayments
 async function getLeagueData() {
   return await readJson(LEAGUE_DATA_FILE, {
     announcements: [],
@@ -174,13 +175,13 @@ async function getLeagueData() {
     members: [],
     waivers: [],
     buyins: {},
+    duesPayments: {}, // ADD THIS LINE
     leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
     tradeBlock: [],
-    rosters: {}, // Add this line
+    rosters: {},
     lastUpdated: new Date().toISOString()
   });
 }
-
 async function saveLeagueData(data) {
   data.lastUpdated = new Date().toISOString();
   await writeJson(LEAGUE_DATA_FILE, data);
@@ -503,6 +504,7 @@ app.post("/api/league-data/trading", requireAdmin, async (req, res) => {
   }
 });
 
+
 app.delete("/api/league-data/trading", requireAdmin, async (req, res) => {
   try {
     const { id } = req.body;
@@ -518,6 +520,26 @@ app.delete("/api/league-data/trading", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Failed to delete trade:', error);
     res.status(500).json({ error: "Failed to delete trade" });
+  }
+});
+
+// === DUES PAYMENTS ===
+app.post("/api/league-data/dues-payments", requireAdmin, async (req, res) => {
+  try {
+    const { seasonId, updates } = req.body;
+    if (!seasonId || !updates) {
+      return res.status(400).json({ error: "Season ID and updates required" });
+    }
+
+    const data = await getLeagueData();
+    data.duesPayments = data.duesPayments || {};
+    data.duesPayments[seasonId] = { ...data.duesPayments[seasonId], ...updates };
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to update dues payments:', error);
+    res.status(500).json({ error: "Failed to update dues payments" });
   }
 });
 

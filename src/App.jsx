@@ -1298,6 +1298,7 @@ function TransactionsView({ report, loadOfficialReport }) {
 
       const filtered = all.filter(r =>
         (!team || r.team === team) &&
+        (!action || r.action === action) &&
         (!method || r.method === method) &&
         (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
       );
@@ -1307,7 +1308,7 @@ function TransactionsView({ report, loadOfficialReport }) {
 
       setOpenWeeks(new Set(weeksSorted));
     }
-  }, [report, q, team, action]);
+  }, [report, q, team, action, method]);
   
   // NOW you can have conditional returns AFTER all hooks
   if (!report) {
@@ -1329,6 +1330,7 @@ function TransactionsView({ report, loadOfficialReport }) {
   const filtered = all.filter(r =>
     (!team || r.team === team) &&
     (!action || r.action === action) &&
+    (!method || r.method === method) &&
     (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
   );
 
@@ -1348,7 +1350,7 @@ function TransactionsView({ report, loadOfficialReport }) {
     byWeek.get(w).push({ ...r, week: w });
   }
 
-    const toggleWeek = (w) => setOpenWeeks(s => { const n = new Set(s); n.has(w) ? n.delete(w) : n.add(w); return n; });
+  const toggleWeek = (w) => setOpenWeeks(s => { const n = new Set(s); n.has(w) ? n.delete(w) : n.add(w); return n; });
 
   return (
     <Section title="Transactions" actions={
@@ -1362,12 +1364,11 @@ function TransactionsView({ report, loadOfficialReport }) {
           <option value="ADD">ADD</option>
           <option value="DROP">DROP</option>
         </select>
-<select className="input" value={method} onChange={e => setMethod(e.target.value)}>
-  <option value="">All methods</option>
-  <option value="DRAFT">Draft</option>
-  <option value="WAIVER">Waiver</option>
-  <option value="FA">Free Agent</option>
-</select>
+        <select className="input" value={method} onChange={e => setMethod(e.target.value)}>
+          <option value="">All methods</option>
+          <option value="PROCESS">Waivers</option>
+          <option value="EXECUTE">Free Agents</option>
+        </select>        
         <input className="input" placeholder="Search player/team…" value={q} onChange={e => setQ(e.target.value)} />
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set())}>Collapse all</button>
@@ -1399,6 +1400,7 @@ function TransactionsView({ report, loadOfficialReport }) {
                       <th style={th}>Team</th>
                       <th style={th}>Player</th>
                       <th style={th}>Action</th>
+                      <th style={th}>Method</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1410,10 +1412,11 @@ function TransactionsView({ report, loadOfficialReport }) {
                           {r.player || (r.playerId ? `#${r.playerId}` : "—")}
                         </td>
                         <td style={td}>{r.action}</td>
+                        <td style={td}>{methodLabel(r.method)}</td>
                       </tr>
                     ))}
                     {rows.length === 0 && (
-                      <tr><td style={td} colSpan={4}>&nbsp;No transactions in this week.</td></tr>
+                      <tr><td style={td} colSpan={5}>&nbsp;No transactions in this week.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1425,7 +1428,6 @@ function TransactionsView({ report, loadOfficialReport }) {
     </Section>
   );
 }
-
 function Rosters({ leagueId, seasonId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -2443,6 +2445,20 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
     </div>
   );
 }
+
+// put near other helpers
+const methodLabel = (m) => {
+  switch ((m || "").toUpperCase()) {
+    case "PROCESS":
+    case "WAIVER":      return "Waivers";
+    case "EXECUTE":
+    case "FA":          return "Free Agent";
+    case "DRAFT":       return "Draft";
+    case "CANCEL":      return "Canceled";
+    default:            return m || "—";
+  }
+};
+
 
 function posIdToName(id) {
   const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };

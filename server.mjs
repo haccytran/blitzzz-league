@@ -818,6 +818,72 @@ function weekRangeLabelDisplay(start){
   return `${short(thu)}–${short(wed)} (cutoff Wed 11:59 PM PT)`;
 }
 
+// Enhanced method inference with better classification
+function enhancedInferMethod(typeStr, typeNum, transaction, item) {
+  const s = String(typeStr ?? "").toUpperCase();
+  
+  if (/DRAFT/i.test(s) || typeNum === 0) return "DRAFT";
+  if (/WAIVER|CLAIM|PROCESS/i.test(s) || [5, 7].includes(typeNum)) return "WAIVER";
+  
+  if (transaction?.executionType) {
+    const execType = String(transaction.executionType).toUpperCase();
+    if (execType === "EXECUTE") return "FA";
+    if (execType === "PROCESS") return "WAIVER";
+  }
+  
+  if (transaction?.waiverProcessDate || item?.waiverProcessDate || 
+      transaction?.bidAmount != null || transaction?.winningBid != null) {
+    return "WAIVER";
+  }
+  
+  return "FA";
+}
+
+// Enhanced draft data fetching
+async function fetchDraftData({ leagueId, seasonId, req, onProgress }) {
+  onProgress?.(0, 1, "Fetching draft data...");
+  
+  try {
+    const draftJson = await espnFetch({ 
+      leagueId, seasonId, view: "mDraftDetail", req, requireCookie: true 
+    });
+    
+    const picks = (draftJson?.draftDetail?.picks || []).map(pick => ({
+      teamId: pick.teamId,
+      playerId: pick.playerId || pick.player?.id,
+      pickNumber: pick.pickNumber || pick.overallPickNumber,
+      round: pick.roundId,
+      executionDate: pick.date || draftJson?.draftDetail?.draftSettings?.date
+    })).filter(p => p.playerId && p.teamId);
+    
+    console.log(`[DEBUG] Found ${picks.length} draft picks`);
+    return picks;
+  } catch (error) {
+    console.error('[DEBUG] Failed to fetch draft data:', error.message);
+    return [];
+  }
+}
+
+// Enhanced transaction validation with draft awareness
+function isGenuineAddWithDraftContext(move, series, draftPicks, seasonYear) {
+  if (move.method === "DRAFT") return true;
+  if (!move.playerId) return true;
+  
+  const teamId = move.teamIdRaw || move.teamId;
+  const playerId = move.playerId; // Define playerId here
+  
+  const wasDrafted = draftPicks.some(pick => 
+    pick.teamId === teamId && pick.playerId === playerId
+  );
+  
+  if (wasDrafted) {
+    console.log(`[DEBUG] Player ${playerId} was drafted by team ${teamId}, skipping add validation`);
+    return false;
+  }
+  
+  return isGenuineAddBySeries(move, series, seasonYear);
+}
+
 // =========================
 // ESPN proxy
 // =========================
@@ -950,7 +1016,7 @@ function extractMoves(json, src="tx"){
     
     if (!items.length) {
       const action = /DROP/i.test(typeStr) ? "DROP" : "ADD";
-      const method = inferMethod(typeStr, typeNum, t, null);
+      const method = enhancedInferMethod(typeStr, typeNum, t, it);
       const teamId = t.toTeamId ?? t.teamId ?? t.forTeamId ?? t.targetTeamId ?? t.fromTeamId ?? null;
       if (teamId != null) {
         out.push({
@@ -972,7 +1038,14 @@ function extractMoves(json, src="tx"){
           out.push({
             teamId: toTeamId, date:when, action:"ADD", method, src, 
             eventId: it.id ?? eventId ?? null,
-            playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
+            playerId: it?.playerId ?? it?.player?.id ?? it?.entityId ?? null,
+playerName: it?.playerPoolEntry?.player?.fullName || 
+           it?.player?.fullName || 
+           t?.playerPoolEntry?.player?.fullName || 
+           t?.player?.fullName || null,
+executionType: t?.executionType,
+bidAmount: t?.bidAmount,
+waiverProcessDate: t?.waiverProcessDate || it?.waiverProcessDate
           });
         }
       }
@@ -1158,34 +1231,59 @@ function isExecutedDropBySeries(row, series, seasonYear){
   console.log(`[DEBUG] Drop verification - Player ${playerId}, Team ${teamId}, Week ${sp}: wasOnRoster=${wasOnRoster}`);
   return true; // Be more permissive with drops
 }
+
 async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgress }){
   const need = new Set((ids||[]).filter(Boolean));
   const map = {}; 
   if (need.size===0) return map;
   
-  for (let sp=1; sp<=maxSp; sp++){
-    onProgress?.(sp, maxSp, "Resolving player names…");
-    try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
-      for (const t of (r?.teams||[])) {
-        for (const e of (t.roster?.entries||[])) {
-          const p = e.playerPoolEntry?.player;
-          const pid = p?.id;
-          if (pid && need.has(pid)) { 
-            map[pid] = p.fullName || p.name || `#${pid}`; 
-            need.delete(pid); 
-          }
+  console.log(`[DEBUG] Resolving ${need.size} player names via ESPN API`);
+  
+  // Separate positive IDs (real players) from negative IDs (D/ST)
+  const posIds = [...need].filter(id => id > 0);
+  const negIds = [...need].filter(id => id < 0);
+  
+  // Resolve D/ST names
+  const dstName = (negId) => {
+    const teamId = Math.abs(negId) - 16000;
+    return `Team ${teamId} D/ST`;
+  };
+  negIds.forEach(id => { map[id] = dstName(id); });
+  
+  // Enhanced positive ID resolution
+  const BATCH_SIZE = 40;
+  for (let i = 0; i < posIds.length; i += BATCH_SIZE) {
+    const batch = posIds.slice(i, i + BATCH_SIZE);
+    onProgress?.(i, posIds.length, `Resolving player names (${i + 1}-${Math.min(i + BATCH_SIZE, posIds.length)} of ${posIds.length})...`);
+    
+    await Promise.all(batch.map(async id => {
+      try {
+        const url = `https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/${id}`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const athlete = await response.json();
+          map[id] = athlete.fullName || athlete.displayName || athlete.name || `Player ${id}`;
+        } else {
+          map[id] = `Player ${id}`;
         }
+      } catch (error) {
+        console.log(`[DEBUG] Failed to resolve player ${id}:`, error.message);
+        map[id] = `Player ${id}`;
       }
-      if (need.size===0) break;
-    } catch {}
+    }));
+    
+    await sleep(120);
   }
+  
+  console.log(`[DEBUG] Resolved ${Object.keys(map).length} player names`);
   return map;
 }
-
 async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
+
+// Get draft data for baseline
+const draftPicks = await fetchDraftData({ leagueId, seasonId, req });
   const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
   console.log(`[DEBUG] Total moves extracted from all sources: ${all.length}`);
   console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
@@ -1208,8 +1306,12 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   const sampleDrops = deduped.filter(r => r.action === "DROP").slice(0, 5);
   console.log(`[DEBUG] Sample DROP transactions:`, sampleDrops);
   
-  const adds = deduped.filter(r => r.action === "ADD" && isGenuineAddBySeries(r, series, seasonId));
-  const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
+const adds = deduped.filter(r => 
+  r.action === "ADD" && 
+  r.method !== "DRAFT" && 
+  isGenuineAddWithDraftContext(r, series, draftPicks, seasonId)
+);
+const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
   
   // Enhanced filtering to remove failed waiver bids
   console.log(`[DEBUG] Before filtering: ${adds.length} adds, ${drops.length} drops`);
@@ -1343,12 +1445,21 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
     };
   }).sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
       
-  return { 
-    lastSynced: fmtPT(new Date()), 
-    totalsRows, 
-    weekRows, 
-    rawMoves 
-  };
+return { 
+  lastSynced: fmtPT(new Date()), 
+  totalsRows, 
+  weekRows, 
+  rawMoves,
+  draftSummary: {
+    totalPicks: draftPicks.length,
+    teamCounts: draftPicks.reduce((acc, pick) => {
+      const teamName = idToName[pick.teamId] || `Team ${pick.teamId}`;
+      acc[teamName] = (acc[teamName] || 0) + 1;
+      return acc;
+    }, {})
+  }
+};
+
 }
 
 // Report routes

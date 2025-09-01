@@ -1276,6 +1276,7 @@ function TransactionsView({ report, loadOfficialReport }) {
   const [team, setTeam] = useState("");
   const [action, setAction] = useState("");
   const [q, setQ] = useState("");
+  const [method, setMethod] = useState("");
   const [openWeeks, setOpenWeeks] = useState(() => new Set());
 
   // Auto-load snapshot when component mounts and no report exists
@@ -1297,7 +1298,7 @@ function TransactionsView({ report, loadOfficialReport }) {
 
       const filtered = all.filter(r =>
         (!team || r.team === team) &&
-        (!action || r.action === action) &&
+        (!method || r.method === method) &&
         (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
       );
 
@@ -1361,6 +1362,12 @@ function TransactionsView({ report, loadOfficialReport }) {
           <option value="ADD">ADD</option>
           <option value="DROP">DROP</option>
         </select>
+<select className="input" value={method} onChange={e => setMethod(e.target.value)}>
+  <option value="">All methods</option>
+  <option value="DRAFT">Draft</option>
+  <option value="WAIVER">Waiver</option>
+  <option value="FA">Free Agent</option>
+</select>
         <input className="input" placeholder="Search player/team…" value={q} onChange={e => setQ(e.target.value)} />
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set())}>Collapse all</button>

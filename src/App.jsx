@@ -1375,11 +1375,10 @@ function TransactionsView({ report, loadOfficialReport }) {
           <option value="DROP">DROP</option>
         </select>
         <select className="input" value={method} onChange={e => setMethod(e.target.value)}>
-          <option value="">All methods</option>
-          <option value="DRAFT">Draft</option>
-          <option value="PROCESS">Waiver (Process)</option>
-          <option value="EXECUTE">Free Agent (Execute)</option>
-        </select>        
+  <option value="">All methods</option>
+  <option value="Waivers">Waivers</option>
+  <option value="Free Agent">Free Agents</option>
+</select>   
         <input className="input" placeholder="Search player/team…" value={q} onChange={e => setQ(e.target.value)} />
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set())}>Collapse all</button>

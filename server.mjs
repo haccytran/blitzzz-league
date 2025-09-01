@@ -191,6 +191,7 @@ async function saveLeagueData(data) {
 // League Data API Routes
 // =========================
 
+// MAIN LEAGUE DATA ROUTE - PUT THIS FIRST
 app.get("/api/league-data", async (req, res) => {
   try {
     const data = await getLeagueData();
@@ -198,6 +199,102 @@ app.get("/api/league-data", async (req, res) => {
   } catch (error) {
     console.error('Failed to load league data:', error);
     res.status(500).json({ error: "Failed to load league data" });
+  }
+});
+
+app.get("/api/draft", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.query;
+    if (!leagueId || !seasonId) {
+      return res.status(400).json({ error: "Missing leagueId or seasonId" });
+    }
+
+    // Get NFL teams for D/ST names (same as your console script)
+    let nflTeamById = {};
+    try {
+      const teamsResponse = await fetch("https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams");
+      if (teamsResponse.ok) {
+        const teamsData = await teamsResponse.json();
+        for (const e of (teamsData.sports?.[0]?.leagues?.[0]?.teams || [])) {
+          const t = e.team;
+          nflTeamById[t.id] = t.displayName || t.name || t.abbreviation;
+        }
+      }
+    } catch (error) {
+      console.log('Failed to fetch NFL teams, using fallback names');
+    }
+
+    const dstName = (negId) => {
+      const teamId = Math.abs(negId) - 16000; // ESPN D/ST ids are -16000 - proTeamId
+      const team = nflTeamById[teamId] || `Team ${teamId}`;
+      return `${team} D/ST`;
+    };
+
+    // Get draft data
+    const draftJson = await espnFetch({ 
+      leagueId, 
+      seasonId, 
+      view: "mDraftDetail", 
+      req, 
+      requireCookie: true 
+    });
+
+    const rawPicks = (draftJson?.draftDetail?.picks || []).map(pick => ({
+      pickNumber: pick.pickNumber || pick.overallPickNumber,
+      round: pick.roundId,
+      teamId: pick.teamId,
+      playerId: pick.playerId || pick.player?.id,
+      playerName: pick.player?.fullName || null
+    })).filter(p => p.playerId && p.teamId);
+
+    // Collect all unique player IDs that need names
+    const needNames = rawPicks
+      .filter(p => !p.playerName && p.playerId)
+      .map(p => p.playerId);
+
+    const uniqueIds = [...new Set(needNames)];
+    const nameById = {};
+
+    // Resolve player names
+    const posIds = uniqueIds.filter(id => id > 0);
+    const negIds = uniqueIds.filter(id => id < 0);
+
+    // Resolve positive IDs via ESPN athletes API
+    for (let i = 0; i < posIds.length; i += 20) {
+      const batch = posIds.slice(i, i + 20);
+      await Promise.all(batch.map(async id => {
+        try {
+          const response = await fetch(`https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/${id}`);
+          if (response.ok) {
+            const athlete = await response.json();
+const name = athlete.fullName || athlete.displayName || athlete.name || `Player ${id}`;
+const position = athlete.position?.abbreviation || "";
+nameById[id] = position ? `${name} (${position})` : name;
+          } else {
+            nameById[id] = `Player ${id}`;
+          }
+        } catch (error) {
+          nameById[id] = `Player ${id}`;
+        }
+      }));
+      await sleep(100);
+    }
+
+    // Resolve D/ST names using the NFL teams data
+    negIds.forEach(id => {
+      nameById[id] = dstName(id);
+    });
+
+    // Apply resolved names to picks
+    const picks = rawPicks.map(pick => ({
+      ...pick,
+      playerName: pick.playerName || nameById[pick.playerId] || `Player ${pick.playerId}`
+    }));
+
+    res.json({ picks });
+  } catch (error) {
+    console.error('Draft fetch error:', error);
+    res.status(500).json({ error: "Failed to fetch draft data" });
   }
 });
 
@@ -797,7 +894,8 @@ function weekBucket(date, seasonYear) {
   const z = new Date(date);
   const w1 = firstThursdayOfSeptember(Number(seasonYear)); // Updated to use Thursday
   const diff = z.getTime() - w1.getTime();
-  const week = Math.max(1, Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1);
+  let week = Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1;
+if (week < 1) week = 0; // Pre-season
   const start = new Date(w1.getTime() + (week - 1) * 7 * 24 * 60 * 60 * 1000);
   return { week, start };
 }
@@ -1374,18 +1472,35 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
   
   console.log(`[DEBUG] Resolving ${need.size} player names via ESPN API`);
   
+  // Get NFL teams for proper D/ST names
+  let nflTeamById = {};
+  try {
+    const teamsResponse = await fetch("https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams");
+    if (teamsResponse.ok) {
+      const teamsData = await teamsResponse.json();
+      for (const e of (teamsData.sports?.[0]?.leagues?.[0]?.teams || [])) {
+        const t = e.team;
+        nflTeamById[t.id] = t.displayName || t.name || t.abbreviation;
+      }
+    }
+  } catch (error) {
+    console.log('[DEBUG] Failed to fetch NFL teams, using fallback names');
+  }
+
+  const dstName = (negId) => {
+    const teamId = Math.abs(negId) - 16000; // ESPN D/ST ids are -16000 - proTeamId
+    const team = nflTeamById[teamId] || `Team ${teamId}`;
+    return `${team} D/ST`;
+  };
+  
   // Separate positive IDs (real players) from negative IDs (D/ST)
   const posIds = [...need].filter(id => id > 0);
   const negIds = [...need].filter(id => id < 0);
   
-  // Resolve D/ST names
-  const dstName = (negId) => {
-    const teamId = Math.abs(negId) - 16000;
-    return `Team ${teamId} D/ST`;
-  };
+  // Resolve D/ST names using real NFL team names
   negIds.forEach(id => { map[id] = dstName(id); });
   
-  // Enhanced positive ID resolution
+  // Enhanced positive ID resolution (keep existing logic)
   const BATCH_SIZE = 40;
   for (let i = 0; i < posIds.length; i += BATCH_SIZE) {
     const batch = posIds.slice(i, i + BATCH_SIZE);
@@ -1396,9 +1511,11 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
         const url = `https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/athletes/${id}`;
         const response = await fetch(url);
         if (response.ok) {
-          const athlete = await response.json();
-          map[id] = athlete.fullName || athlete.displayName || athlete.name || `Player ${id}`;
-        } else {
+  const athlete = await response.json();
+  const name = athlete.fullName || athlete.displayName || athlete.name || `Player ${id}`;
+  const position = athlete.position?.abbreviation || "";
+  map[id] = position ? `${name} (${position})` : name;
+} else {
           map[id] = `Player ${id}`;
         }
       } catch (error) {
@@ -1413,6 +1530,7 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
   console.log(`[DEBUG] Resolved ${Object.keys(map).length} player names`);
   return map;
 }
+
 async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
@@ -1450,7 +1568,10 @@ const validatedTransactions = await validateTransactions(deduped, series, draftP
 
 
 const billableAdds = validatedTransactions.filter(r => 
-  r.action === "ADD" && r.method !== "DRAFT"
+  r.action === "ADD" && r.method !== "DRAFT" && r.week > 0  
+);
+const allAdds = validatedTransactions.filter(r => 
+  r.action === "ADD" && r.method !== "DRAFT"  // No week filter - includes Week 0
 );
 const drops = validatedTransactions.filter(r => r.action === "DROP");
 
@@ -1473,18 +1594,18 @@ Object.entries(playerAddCounts).forEach(([playerId, count]) => {
 
 // Resolve missing player names
 const needIds = [...new Set(
-  [...billableAdds, ...drops]
+  [...allAdds, ...drops]  // ← Use allAdds instead of billableAdds
     .map(r => (r.player ? null : r.playerId))
     .filter(Boolean)
 )];
 
 const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp: 25 });
 
-for (const r of [...billableAdds, ...drops]) {
+for (const r of [...allAdds, ...drops]) {  // ← Use allAdds instead of billableAdds
   if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
-}
-  
-let rawMoves = [...billableAdds, ...drops].map(r => {
+} 
+
+let rawMoves = [...allAdds, ...drops].map(r => {
     const wb = weekBucket(r.date, seasonId);
     return {
       date: fmtPT(r.date),
@@ -1494,7 +1615,7 @@ let rawMoves = [...billableAdds, ...drops].map(r => {
       team: r.team,
       player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
       action: r.action,
-      method: r.method,
+      method: r.method === "PROCESS" ? "Waivers" : r.method === "EXECUTE" ? "Free Agent" : r.method,
       source: r.src,
       playerId: r.playerId || null
     };
@@ -1531,8 +1652,7 @@ let rawMoves = [...billableAdds, ...drops].map(r => {
   
   const perWeek = new Map();
   for (const r of rawMoves) {
-    if (r.action !== "ADD" || r.week <= 0) continue;
-    if (!perWeek.has(r.week)) perWeek.set(r.week, new Map());
+    if (r.action !== "ADD" || r.week <= 0) continue;     if (!perWeek.has(r.week)) perWeek.set(r.week, new Map());
     const m = perWeek.get(r.week);
     m.set(r.team, (m.get(r.team) || 0) + 1);
   }

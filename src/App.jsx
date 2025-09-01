@@ -182,7 +182,7 @@ function LeagueHub(){
    const currentYear = new Date().getFullYear();
   const VALID_TABS = [
     "announcements","activity","weekly","waivers","dues",
-    "transactions","rosters","settings","trading","polls"
+     "transactions","drafts","rosters","settings","trading","polls" 
   ];
 
   const initialTabFromHash = () => {
@@ -616,9 +616,10 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
     announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-  weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly}} />, // Remove seasonYear
+    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly}} />, // Remove seasonYear
     activity: <RecentActivityView espn={espn} />,
-  transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
+    transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
+    drafts: <DraftsView espn={espn} />,
     waivers: (
       <Section title="Waivers & Dues" actions={
         <div style={{display:"flex", gap:8}}>
@@ -733,6 +734,7 @@ async function loadOfficialReport(silent=false){
             <NavBtn id="waivers" label="💵 Waivers" active={active} onClick={setActive}/>
             <NavBtn id="dues" label="🧾 Dues" active={active} onClick={setActive}/>
             <NavBtn id="transactions" label="📜 Transactions" active={active} onClick={setActive}/>
+            <NavBtn id="drafts" label="📋 Draft Recap" active={active} onClick={setActive}/>
             <NavBtn id="rosters" label="📋 Rosters" active={active} onClick={setActive}/>
             <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={setActive}/>
             <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={setActive}/>
@@ -920,14 +922,15 @@ async function loadReport() {
           <div style={{ marginTop: 12 }}>
             {activities.map((activity, i) => (
               <div key={i} style={{ 
-                padding: "8px 0", 
-                borderBottom: "1px solid #e2e8f0",
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 14,
-                fontStyle: activity.isDraft ? "italic" : "normal",
-                opacity: activity.isDraft ? 0.8 : 1
-              }}>
+  padding: "8px 0", 
+  borderBottom: "1px solid #e2e8f0",
+  display: "flex",
+  justifyContent: "space-between",
+  fontSize: 14,
+  fontStyle: activity.isDraft ? "italic" : "normal",
+  opacity: activity.isDraft ? 0.8 : 1,
+  color: activity.action === "ADDED" ? "#16a34a" : "#dc2626" // Green for adds, red for drops
+}}>
                 <span>
                   <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
                   {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
@@ -946,8 +949,7 @@ async function loadReport() {
           <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
             Data from official snapshot: {report.lastSynced}
             <br />
-            <span style={{ fontStyle: "italic" }}>Draft picks (Week 0)</span> shown but not billed
-          </div>
+                     </div>
         )}
       </div>
     </Section>
@@ -1293,7 +1295,7 @@ function TransactionsView({ report, loadOfficialReport }) {
     if (report) {
       const all = (report.rawMoves || []).map(r => ({
         ...r,
-        week: Math.max(1, Number(r.week) || 1)
+        week: r.week // Keep original week including 0 and negatives
       }));
 
       const filtered = all.filter(r =>
@@ -1303,7 +1305,8 @@ function TransactionsView({ report, loadOfficialReport }) {
         (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
       );
 
-      const weeksSorted = Array.from(new Set(filtered.map(r => Math.max(1, Number(r.week) || 1))))
+      // Include week 0 in the weeks list
+      const weeksSorted = Array.from(new Set(filtered.map(r => r.week)))
         .sort((a, b) => a - b);
 
       setOpenWeeks(new Set(weeksSorted));
@@ -1322,7 +1325,7 @@ function TransactionsView({ report, loadOfficialReport }) {
   // Rest of the component logic...
   const all = (report.rawMoves || []).map(r => ({
     ...r,
-    week: Math.max(1, Number(r.week) || 1)
+    week: r.week // Keep original week including 0 and negatives
   }));
 
   const teams = Array.from(new Set(all.map(r => r.team))).sort();
@@ -1334,18 +1337,25 @@ function TransactionsView({ report, loadOfficialReport }) {
     (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
   );
 
-  const weeksSorted = Array.from(new Set(filtered.map(r => Math.max(1, Number(r.week) || 1))))
+  // Include week 0 in the weeks list
+  const weeksSorted = Array.from(new Set(filtered.map(r => r.week)))
     .sort((a, b) => a - b);
 
   const rangeByWeek = {};
   for (const r of filtered) {
-    const w = Math.max(1, Number(r.week) || 1);
-    if (!rangeByWeek[w]) rangeByWeek[w] = r.range;
+    const w = r.week;
+    if (!rangeByWeek[w]) {
+      if (w <= 0) {
+        rangeByWeek[w] = "All pre-season transactions are FREE";
+      } else {
+        rangeByWeek[w] = r.range;
+      }
+    }
   }
 
   const byWeek = new Map();
   for (const r of filtered) {
-    const w = Math.max(1, Number(r.week) || 1);
+    const w = r.week;
     if (!byWeek.has(w)) byWeek.set(w, []);
     byWeek.get(w).push({ ...r, week: w });
   }
@@ -1366,8 +1376,9 @@ function TransactionsView({ report, loadOfficialReport }) {
         </select>
         <select className="input" value={method} onChange={e => setMethod(e.target.value)}>
           <option value="">All methods</option>
-          <option value="PROCESS">Waivers</option>
-          <option value="EXECUTE">Free Agents</option>
+          <option value="DRAFT">Draft</option>
+          <option value="PROCESS">Waiver (Process)</option>
+          <option value="EXECUTE">Free Agent (Execute)</option>
         </select>        
         <input className="input" placeholder="Search player/team…" value={q} onChange={e => setQ(e.target.value)} />
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
@@ -1381,12 +1392,14 @@ function TransactionsView({ report, loadOfficialReport }) {
       {weeksSorted.map(week => {
         const rows = byWeek.get(week) || [];
         const open = openWeeks.has(week);
+        const weekLabel = week <= 0 ? `Week ${week} (Pre-season)` : `Week ${week}`;
+        
         return (
           <div key={week} className="card" style={{ padding: 12, marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
               onClick={() => toggleWeek(week)}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontWeight: 700 }}>Week {week}</span>
+                <span style={{ fontWeight: 700 }}>{weekLabel}</span>
                 <span style={{ color: "#64748b" }}>{rangeByWeek[week] || ""}</span>
               </div>
               <span style={{ color: "#64748b" }}>{open ? "Hide ▲" : "Show ▼"}</span>
@@ -1399,7 +1412,6 @@ function TransactionsView({ report, loadOfficialReport }) {
                       <th style={th}>Date (PT)</th>
                       <th style={th}>Team</th>
                       <th style={th}>Player</th>
-                      <th style={th}>Action</th>
                       <th style={th}>Method</th>
                     </tr>
                   </thead>
@@ -1409,14 +1421,13 @@ function TransactionsView({ report, loadOfficialReport }) {
                         <td style={td}>{r.date}</td>
                         <td style={td}>{r.team}</td>
                         <td style={{ ...td, color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-                          {r.player || (r.playerId ? `#${r.playerId}` : "—")}
+                          {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
                         </td>
-                        <td style={td}>{r.action}</td>
-                        <td style={td}>{methodLabel(r.method)}</td>
+                        <td style={td}>{r.method || "—"}</td>
                       </tr>
                     ))}
                     {rows.length === 0 && (
-                      <tr><td style={td} colSpan={5}>&nbsp;No transactions in this week.</td></tr>
+                      <tr><td style={td} colSpan={4}>&nbsp;No transactions in this week.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1428,6 +1439,125 @@ function TransactionsView({ report, loadOfficialReport }) {
     </Section>
   );
 }
+
+function DraftsView({ espn }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [draftData, setDraftData] = useState(null);
+
+  const loadDraftData = async () => {
+    if (!espn.leagueId || !espn.seasonId) {
+      setError("Set League ID and Season in League Settings first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    
+    try {
+      // Get team names
+      const teamJson = await fetchEspnJson({ 
+        leagueId: espn.leagueId, 
+        seasonId: espn.seasonId, 
+        view: "mTeam" 
+      });
+      const teamNames = Object.fromEntries(
+        (teamJson?.teams || []).map(t => [t.id, teamName(t)])
+      );
+
+      // Get draft data
+      const response = await apiCall(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`);
+      const picks = response.picks || [];
+
+      // Group by team and add team names
+      const draftsByTeam = picks.reduce((acc, pick) => {
+        const team = teamNames[pick.teamId] || `Team ${pick.teamId}`;
+        if (!acc[team]) acc[team] = [];
+        acc[team].push({
+          round: pick.round,
+          pickNumber: pick.pickNumber,
+          player: pick.playerName || `Player #${pick.playerId}`,
+          playerId: pick.playerId
+        });
+        return acc;
+      }, {});
+
+      // Sort picks within each team by pick number
+      Object.values(draftsByTeam).forEach(teamPicks => {
+        teamPicks.sort((a, b) => (a.pickNumber || 0) - (b.pickNumber || 0));
+      });
+
+      setDraftData({ draftsByTeam, totalPicks: picks.length });
+
+    } catch (err) {
+      console.error('Failed to load draft data:', err);
+      setError("Failed to load draft data: " + err.message);
+    }
+    
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadDraftData();
+  }, [espn.leagueId, espn.seasonId]);
+
+  const teamNames = draftData ? Object.keys(draftData.draftsByTeam).sort() : [];
+
+  return (
+    <Section title="Draft Results" actions={
+      <div style={{ display: "flex", gap: 8 }}>
+        {draftData && (
+          <span className="badge">
+            {draftData.totalPicks} picks across {teamNames.length} teams
+          </span>
+        )}
+        <button className="btn" style={btnSec} onClick={loadDraftData}>
+          {loading ? "Loading..." : "Refresh"}
+        </button>
+      </div>
+    }>
+      {loading && <p>Loading draft data...</p>}
+      {error && <p style={{ color: "#dc2626" }}>{error}</p>}
+      
+      {!loading && !error && draftData && (
+        <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          {teamNames.map(teamName => {
+            const picks = draftData.draftsByTeam[teamName];
+            
+            return (
+              <div key={teamName} className="card" style={{ padding: 16 }}>
+                <h3 style={{ marginTop: 0 }}>
+                  {teamName}
+                  <span style={{ fontSize: 14, color: "#64748b", fontWeight: 400 }}>
+                    ({picks.length} picks)
+                  </span>
+                </h3>
+                <ul style={{ margin: 0, paddingLeft: 16, listStyle: "none" }}>
+  {picks.map((pick, i) => (
+    <li key={i} style={{ marginBottom: 4 }}>
+      <span style={{ fontWeight: 600, color: "#0b1220" }}>
+        Round {pick.round} - #{pick.pickNumber}
+      </span>
+      {" — "}
+      <span>{pick.player}</span>
+    </li>
+  ))}
+</ul>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      
+      {!loading && !error && !draftData && (
+        <p style={{ color: "#64748b" }}>
+          No draft data available. Check your League ID and Season settings.
+        </p>
+      )}
+    </Section>
+  );
+}
+
 function Rosters({ leagueId, seasonId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

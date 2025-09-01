@@ -822,21 +822,22 @@ function weekRangeLabelDisplay(start){
 function enhancedInferMethod(typeStr, typeNum, transaction, item) {
   const s = String(typeStr ?? "").toUpperCase();
   
-  if (/DRAFT/i.test(s) || typeNum === 0) return "DRAFT";
-  if (/WAIVER|CLAIM|PROCESS/i.test(s) || [5, 7].includes(typeNum)) return "WAIVER";
-  
+  // Handle ESPN's execution types directly
   if (transaction?.executionType) {
     const execType = String(transaction.executionType).toUpperCase();
-    if (execType === "EXECUTE") return "FA";
-    if (execType === "PROCESS") return "WAIVER";
+    if (execType === "CANCEL") return "CANCEL";
+    if (execType === "PROCESS") return "PROCESS"; // Waivers
+    if (execType === "EXECUTE") return "EXECUTE"; // Free agents
   }
   
-  if (transaction?.waiverProcessDate || item?.waiverProcessDate || 
-      transaction?.bidAmount != null || transaction?.winningBid != null) {
-    return "WAIVER";
-  }
+  // Fallback to string matching
+  if (/CANCEL/i.test(s)) return "CANCEL";
+  if (/PROCESS|WAIVER/i.test(s)) return "PROCESS";
+  if (/EXECUTE/i.test(s)) return "EXECUTE";
+  if (/DRAFT/i.test(s) || typeNum === 0) return "DRAFT";
   
-  return "FA";
+  // Default fallback
+  return "EXECUTE";
 }
 
 // Enhanced draft data fetching
@@ -884,6 +885,139 @@ function isGenuineAddWithDraftContext(move, series, draftPicks, seasonYear) {
   return isGenuineAddBySeries(move, series, seasonYear);
 }
 
+const isOwnerAtSomeSP = (series, pid, teamId, sp) => {
+  const candidates = [sp, sp-1, sp+1].filter(x => x>=1 && x < series.length);
+  return candidates.some(s => series?.[s]?.[teamId]?.has(pid));
+};
+
+// Replace your validateTransactions function with this ChatGPT-inspired approach:
+
+async function validateTransactions(transactions, series, draftPicks, seasonYear, { leagueId, seasonId, req }) {
+  console.log(`[DEBUG] Starting roster-verified validation of ${transactions.length} raw transactions`);
+  
+  // Step 1: Only filter out CANCEL transactions
+  let validTransactions = transactions.filter(t => t.method !== "CANCEL");
+  console.log(`[DEBUG] After CANCEL filtering: ${validTransactions.length} transactions`);
+  
+  // Step 2: Build paired transactions by txId (keeps ADD+DROP together)
+  const txPairsByKey = new Map(); // key: `${txId}|${teamId}`
+  
+  for (const r of validTransactions) {
+    const txId = r.eventId || `${r.teamIdRaw || r.teamId}-${Math.floor(new Date(r.date).getTime() / 1000)}`;
+    const key = `${txId}|${r.teamIdRaw || r.teamId}`;
+    
+    let rec = txPairsByKey.get(key);
+    if (!rec) {
+      rec = { 
+        txId, 
+        ts: new Date(r.date).getTime(), 
+        method: r.method, 
+        sp: r.sp || weekBucket(r.date, seasonId).week,
+        teamId: r.teamIdRaw || r.teamId,
+        teamIdRaw: r.teamIdRaw || r.teamId, // PRESERVE THIS
+        team: r.team, // PRESERVE TEAM NAME
+        add: null, 
+        drop: null,
+        originalTransaction: r // PRESERVE ORIGINAL FOR REFERENCE
+      };
+      txPairsByKey.set(key, rec);
+    }
+    
+    if (r.action === "ADD")  rec.add = r.playerId;
+    if (r.action === "DROP") rec.drop = r.playerId;
+  }
+  
+  const txPairs = [...txPairsByKey.values()].filter(x => x.add || x.drop);
+  console.log(`[DEBUG] Built ${txPairs.length} transaction pairs`);
+  
+  // Step 3: Build roster owner map for scoring periods we need (only for PROCESS adds)
+   
+    
+  // Step 4: Keep only winners for waivers; keep all EXECUTEs
+  const kept = [];
+  let processWinners = 0;
+  let processLosers = 0;
+  
+  for (const rec of txPairs) {
+    if (rec.method === "EXECUTE") {
+      kept.push(rec);
+      continue;
+    }
+    
+    if (rec.method === "PROCESS" && rec.add) {
+  const winner = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
+  if (winner) {
+    kept.push(rec);
+    processWinners++;
+    console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
+  } else {
+    processLosers++;
+    console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (checked sp±1)`);
+  }
+  continue;
+}
+    
+    // Handle PROCESS transactions with only drops or other cases
+    if (rec.method === "PROCESS") {
+      kept.push(rec);
+    }
+  }
+  
+  console.log(`[DEBUG] Waiver processing: ${processWinners} winners, ${processLosers} losers filtered out`);
+  
+  // Step 5: Expand back out to individual ADD/DROP transactions - PRESERVE ALL ORIGINAL DATA
+  const finalTransactions = [];
+  
+  for (const r of kept) {
+    const baseTransaction = {
+      date: new Date(r.ts),
+      teamIdRaw: r.teamIdRaw, // PRESERVE THIS
+      teamId: r.teamId, // PRESERVE THIS
+      team: r.team, // PRESERVE TEAM NAME
+      method: r.method,
+      eventId: r.txId,
+      src: r.originalTransaction.src || "validated",
+      playerName: null // Will be filled later
+    };
+    
+    if (r.add) {
+      finalTransactions.push({
+        ...baseTransaction,
+        action: "ADD",
+        playerId: r.add
+      });
+    }
+    
+    if (r.drop) {
+      finalTransactions.push({
+        ...baseTransaction,
+        action: "DROP",
+        playerId: r.drop
+      });
+    }
+  }
+  
+  // Step 6: Final deduplication for truly identical rows
+  const seen = new Set();
+  const dedupedFinal = finalTransactions.filter(r => {
+    const k = `${r.date.getTime()}|${r.teamIdRaw}|${r.playerId}|${r.action}|${r.method}`;
+    if (seen.has(k)) {
+      console.log(`[DEBUG] Removing duplicate: ${r.action} ${r.playerId} by team ${r.teamIdRaw}`);
+      return false;
+    }
+    seen.add(k);
+    return true;
+  });
+  
+  console.log(`[DEBUG] Final validation results:`);
+  console.log(`- Transaction pairs processed: ${txPairs.length}`);
+  console.log(`- Pairs kept after waiver verification: ${kept.length}`);
+  console.log(`- Final individual transactions: ${dedupedFinal.length}`);
+  console.log(`- Final ADDs: ${dedupedFinal.filter(t => t.action === "ADD").length}`);
+  console.log(`- Final DROPs: ${dedupedFinal.filter(t => t.action === "DROP").length}`);
+  
+  return dedupedFinal;
+}
 // =========================
 // ESPN proxy
 // =========================
@@ -1016,12 +1150,13 @@ function extractMoves(json, src="tx"){
     
     if (!items.length) {
       const action = /DROP/i.test(typeStr) ? "DROP" : "ADD";
-      const method = enhancedInferMethod(typeStr, typeNum, t, it);
+      const method = enhancedInferMethod(typeStr, typeNum, t, null);
       const teamId = t.toTeamId ?? t.teamId ?? t.forTeamId ?? t.targetTeamId ?? t.fromTeamId ?? null;
       if (teamId != null) {
         out.push({
           teamId, date:when, action, method, src, eventId,
-          playerId: t.playerId ?? null, playerName: t.playerName ?? null
+          playerId: t.playerId ?? null, 
+playerName: t.playerPoolEntry?.player?.fullName || t.player?.fullName || t.playerName || null
         });
       }
       continue;
@@ -1030,7 +1165,7 @@ function extractMoves(json, src="tx"){
     for (const it of items){
       const iTypeStr = it.type ?? it.moveType ?? it.action;
       const iTypeNum = Number.isFinite(it.type) ? it.type : null;
-      const method = inferMethod(iTypeStr ?? typeStr, iTypeNum ?? typeNum, t, it);
+      const method = enhancedInferMethod(iTypeStr ?? typeStr, iTypeNum ?? typeNum, t, it);
       
       if (/ADD|WAIVER|CLAIM/i.test(String(iTypeStr)) || [1,5,7].includes(iTypeNum)) {
         const toTeamId = it.toTeamId ?? it.teamId ?? it.forTeamId ?? t.toTeamId ?? t.teamId ?? null;
@@ -1112,8 +1247,8 @@ function dedupeMoves(events){
   for (const e of events){
     const tMin = Math.floor(new Date(e.date).getTime() / 60000);
     const key = e.eventId
-      ? `id:${e.eventId}|a:${e.action}`
-      : `tm:${e.teamId}|p:${e.playerId||""}|a:${e.action}|m:${tMin}`;
+  ? `id:${e.eventId}|tm:${e.teamId}|p:${e.playerId||""}|a:${e.action}`
+  : `tm:${e.teamId}|p:${e.playerId||""}|a:${e.action}|m:${tMin}`;
     if (seen.has(key)) continue;
     seen.add(key); 
     out.push(e);
@@ -1129,15 +1264,15 @@ async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, o
     onProgress?.(sp, maxSp, "Reading ESPN activity…");
     try { 
       const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); 
-      all.push(...extractMoves(j,"tx")); 
+      all.push(...extractMoves(j,"tx").map(e => ({ ...e, sp }))); 
     } catch {}
     try { 
       const j = await espnFetch({ leagueId, seasonId, view:"recentActivity", scoringPeriodId: sp, req, requireCookie:true }); 
-      all.push(...extractMoves(j,"recent")); 
+      all.push(...extractMoves(j,"recent").map(e => ({ ...e, sp }))); 
     } catch {}
     try { 
       const j = await espnFetch({ leagueId, seasonId, view:"kona_league_communication", scoringPeriodId: sp, req, requireCookie:true }); 
-      all.push(...extractMovesFromComm(j)); 
+      all.push(...extractMovesFromComm(j).map(e => ({ ...e, sp }))); 
     } catch {}
     await sleep(120 + Math.floor(Math.random() * 120));
   }
@@ -1306,60 +1441,50 @@ const draftPicks = await fetchDraftData({ leagueId, seasonId, req });
   const sampleDrops = deduped.filter(r => r.action === "DROP").slice(0, 5);
   console.log(`[DEBUG] Sample DROP transactions:`, sampleDrops);
   
-const adds = deduped.filter(r => 
-  r.action === "ADD" && 
-  r.method !== "DRAFT" && 
-  isGenuineAddWithDraftContext(r, series, draftPicks, seasonId)
+// Simplified filtering - just exclude CANCEL transactions
+const validatedTransactions = await validateTransactions(deduped, series, draftPicks, seasonId, { 
+  leagueId, 
+  seasonId, 
+  req 
+});
+
+
+const billableAdds = validatedTransactions.filter(r => 
+  r.action === "ADD" && r.method !== "DRAFT"
 );
-const drops = deduped.filter(r => r.action === "DROP" && isExecutedDropBySeries(r, series, seasonId));
-  
-  // Enhanced filtering to remove failed waiver bids
-  console.log(`[DEBUG] Before filtering: ${adds.length} adds, ${drops.length} drops`);
+const drops = validatedTransactions.filter(r => r.action === "DROP");
 
-  // Filter out failed waiver bids
-  const filteredAdds = adds.filter(r => {
-    // Skip if this looks like a failed waiver bid
-    if (r.method === "WAIVER" && r.playerId) {
-      // Check if any other team got this same player around the same time
-      const samePlayerAdds = adds.filter(other => 
-        other.playerId === r.playerId && 
-        other.teamIdRaw !== r.teamIdRaw &&
-        Math.abs(new Date(other.date) - new Date(r.date)) < 24 * 60 * 60 * 1000 // within 24 hours
-      );
-      
-      if (samePlayerAdds.length > 0) {
-        console.log(`[DEBUG] Multiple teams claimed player ${r.playerId} - filtering potential failed bids`);
-        // Only keep the add if this team actually got the player (verified by roster)
-        return isGenuineAddBySeries(r, series, seasonId);
-      }
-    }
-    return true;
-  });
+console.log(`[DEBUG] After simple filtering: ${billableAdds.length} billable adds, ${drops.length} drops`);
+console.log(`[DEBUG] Excluded CANCEL transactions, kept PROCESS and EXECUTE`);
 
-  console.log(`[DEBUG] After filtering: ${filteredAdds.length} adds, ${drops.length} drops`);
+// Enhanced filtering to surface players “added” by multiple teams (likely failed bids)
+const playerAddCounts = billableAdds.reduce((acc, r) => {
+  const key = r.playerId ?? r.player; // prefer id
+  if (!key) return acc;
+  acc[key] = (acc[key] || 0) + 1;
+  return acc;
+}, {});
 
-  // Log any suspicious multi-team adds
-  const playerAddCounts = {};
-  adds.forEach(add => {
-    if (add.playerId) {
-      playerAddCounts[add.playerId] = (playerAddCounts[add.playerId] || 0) + 1;
-    }
-  });
-
-  Object.entries(playerAddCounts).forEach(([playerId, count]) => {
-    if (count > 1) {
-      console.log(`[DEBUG] Player ${playerId} was "added" by ${count} teams`);
-    }
-  });
-
-  const needIds = [...new Set([...filteredAdds, ...drops].map(r => r.player ? null : r.playerId).filter(Boolean))];
-  const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp:25 });
-  
-  for (const r of [...filteredAdds, ...drops]) {
-    if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
+Object.entries(playerAddCounts).forEach(([playerId, count]) => {
+  if (count > 1) {
+    console.log(`[DEBUG] Player ${playerId} was "added" by ${count} teams`);
   }
+});
+
+// Resolve missing player names
+const needIds = [...new Set(
+  [...billableAdds, ...drops]
+    .map(r => (r.player ? null : r.playerId))
+    .filter(Boolean)
+)];
+
+const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp: 25 });
+
+for (const r of [...billableAdds, ...drops]) {
+  if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
+}
   
-  let rawMoves = [...filteredAdds, ...drops].map(r => {
+let rawMoves = [...billableAdds, ...drops].map(r => {
     const wb = weekBucket(r.date, seasonId);
     return {
       date: fmtPT(r.date),

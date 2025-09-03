@@ -1925,15 +1925,16 @@ function PollsView({ isAdmin, members, espn }) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h3 style={{ marginTop: 0 }}>{poll.question}</h3>
                   {isAdmin && (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {poll.closed
-                        ? <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, false)}>Reopen</button>
-                        : <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, true)}>Close</button>}
-                      <button className="btn" style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }} onClick={() => deletePoll(poll.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  )}
+  <div style={{ display: "flex", gap: 8 }}>
+    {poll.closed
+      ? <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, false)}>Reopen</button>
+      : <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, true)}>Close</button>}
+    <button className="btn" style={btnSec} onClick={() => editPoll(poll.id)}>Edit</button>
+    <button className="btn" style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }} onClick={() => deletePoll(poll.id)}>
+      Delete
+    </button>
+  </div>
+)}
                 </div>
 
 <div className="card" style={{ padding: 12, background: "#f8fafc", marginBottom: 12 }}>

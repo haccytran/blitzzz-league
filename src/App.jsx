@@ -77,7 +77,7 @@ function startOfLeagueWeekPT(date){
   return base;
 }
 
-function firstThursdayOfSeptemberPT(year){
+function firstWednesdayOfSeptemberPT(year){
   const d = toPT(new Date(year, 8, 1));
   const offset = (4 - d.getDay() + 7) % 7; // 4 = Thursday
   d.setDate(d.getDate() + offset);
@@ -87,7 +87,7 @@ function firstThursdayOfSeptemberPT(year){
 
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeekPT(date);
-  const week1 = startOfLeagueWeekPT(firstThursdayOfSeptemberPT(seasonYear));
+  const week1 = startOfLeagueWeekPT(firstWednesdayOfSeptemberPT(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0;
   return { week, start, key: localDateKey(start) };

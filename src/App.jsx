@@ -1762,6 +1762,32 @@ function PollsView({ isAdmin, members, espn }) {
     loadPolls();
   }
 
+async function editPoll(pollId) {
+  const poll = polls.find(p => p.id === pollId);
+  if (!poll) return;
+  
+  const newQuestion = prompt("Edit question:", poll.question);
+  if (!newQuestion) return;
+  
+  const newOptionsText = prompt("Add new options (one per line):", "");
+  if (newOptionsText === null) return;
+  
+  const newOptions = newOptionsText.split("\n").map(s => s.trim()).filter(Boolean);
+  
+  try {
+    const r = await fetch(API("/api/polls/edit"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
+      body: JSON.stringify({ pollId, question: newQuestion, newOptions })
+    });
+    
+    if (!r.ok) return alert("Edit failed");
+    await loadPolls();
+  } catch (error) {
+    alert("Edit failed: " + error.message);
+  }
+}
+
   async function onIssueSeasonTeamCodes() {
     if (!isAdmin) return alert("Commissioner only.");
     if (!espn?.leagueId || !espn?.seasonId) {

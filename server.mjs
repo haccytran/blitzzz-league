@@ -823,6 +823,30 @@ app.post("/api/polls/delete", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/polls/edit", async (req, res) => {
+  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const { pollId, question, newOptions } = req.body || {};
+  if (!pollId || !question || !Array.isArray(newOptions)) return res.status(400).send("Bad request");
+  
+  const pollsState = await loadPolls();
+  const poll = pollsState.polls[pollId];
+  if (!poll) return res.status(404).send("Poll not found");
+  
+  // Update question and add new options (keeping existing ones)
+  poll.question = String(question);
+  const existingOptionIds = new Set(poll.options.map(o => o.id));
+  
+  // Add new options that don't already exist
+  for (const newOption of newOptions) {
+    if (!poll.options.find(o => o.label === newOption)) {
+      poll.options.push({ id: nid(), label: String(newOption) });
+    }
+  }
+  
+  await savePolls(pollsState);
+  res.json({ ok: true });
+});
+
 app.get("/api/polls/team-codes", async (req, res) => {
   if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
   const seasonId = req.query?.seasonId;
@@ -860,7 +884,7 @@ app.get("/api/progress", (req, res) => {
 // =========================
 // Week helpers
 // =========================
-const WEEK_START_DAY = 4;
+const WEEK_START_DAY = 3;
 function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
 function normalizeEpoch(x){
   if (x == null) return Date.now();
@@ -910,10 +934,10 @@ function leagueWeekOf(date, seasonYear){
 }
 
 function weekRangeLabelDisplay(start){
-  const thu = new Date(start); thu.setHours(0,0,0,0);
-  const wed = new Date(thu); wed.setDate(wed.getDate()+6); wed.setHours(23,59,0,0);
+  const wed = new Date(start); wed.setHours(0,0,0,0);
+  const tue = new Date(wed); tue.setDate(tue.getDate()+6); tue.setHours(23,59,0,0);
   const short = (d)=> new Date(d).toLocaleDateString(undefined,{month:"short", day:"numeric"});
-  return `${short(thu)}–${short(wed)} (cutoff Wed 11:59 PM PT)`;
+  return `${short(wed)}–${short(tue)} (cutoff Tue 11:59 PM PT)`;
 }
 
 // Enhanced method inference with better classification

@@ -906,9 +906,9 @@ function startOfLeagueWeek(date){
   if (z < base) base.setDate(base.getDate() - 7);
   return base;
 }
-function firstThursdayOfSeptember(year){
+function firstWednesdayOfSeptember(year){
   const d = new Date(year, 8, 1);
-  const offset = (4 - d.getDay() + 7) % 7; // 4 = Thursday
+  const offset = (3 - d.getDay() + 7) % 7; // 3 = Wednesday
   d.setDate(d.getDate() + offset);
   d.setHours(0,0,0,0);
   return d;
@@ -916,7 +916,7 @@ function firstThursdayOfSeptember(year){
 const DAY = 24*60*60*1000;
 function weekBucket(date, seasonYear) {
   const z = new Date(date);
-  const w1 = firstThursdayOfSeptember(Number(seasonYear)); // Updated to use Thursday
+  const w1 = firstWednesdayOfSeptember(Number(seasonYear)); // Updated to use Thursday
   const diff = z.getTime() - w1.getTime();
   let week = Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1;
 if (week < 1) week = 0; // Pre-season
@@ -927,7 +927,7 @@ if (week < 1) week = 0; // Pre-season
 
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeek(date);
-  const week1 = startOfLeagueWeek(firstThursdayOfSeptember(seasonYear));
+  const week1 = startOfLeagueWeek(firstWednesdayOfSeptember(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0;
   return { week, start };

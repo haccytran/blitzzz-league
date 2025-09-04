@@ -1130,7 +1130,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
   return (
     <div className="card" style={{ padding: 12, marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ marginTop: 0 }}> {displayYear - 1} Waiver Dues Checklist{"\u2705"}</h3>
+        <h3 style={{ marginTop: 0 }}>{seasonId} Waiver Dues Checklist{"\u2705"}</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="badge">
             ${paidAmount} / ${totalOwed} collected ({paidCount} / {report.totalsRows.length} paid)
@@ -1217,28 +1217,38 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       {!report && <p style={{ color: "#64748b" }}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
 
 {report && (
+
   <div className="dues-grid dues-tight">
     <div className="dues-left">
-     
-      {/* New Dues Payment Tracker */}
-      <DuesPaymentTracker
-        isAdmin={isAdmin}
-        data={data}
-        setData={setData}
-        seasonId={seasonYear}
-        report={report}
-        updateDuesPayments={updateDuesPayments}
-      />
+  <BuyInTracker
+    isAdmin={isAdmin}
+    members={data.members}
+    seasonYear={seasonYear}
+    data={data}
+    setData={setData}
+    updateBuyIns={updateBuyIns}
+  />
 
-      <BuyInTracker
-        isAdmin={isAdmin}
-        members={data.members}
-        seasonYear={seasonYear}
-        data={data}
-        setData={setData}
-        updateBuyIns={updateBuyIns}
-      />
-    </div>
+  {/* New Dues Payment Tracker */}
+  <DuesPaymentTracker
+    isAdmin={isAdmin}
+    data={data}
+    setData={setData}
+    seasonId={seasonYear}
+    report={report}
+    updateDuesPayments={updateDuesPayments}
+  />
+
+<PaymentSection
+  isAdmin={isAdmin}
+  data={data}
+  setData={setData}
+  updateBuyIns={updateBuyIns}
+/>
+
+</div>
+
+
     
     {/* Rest of your dues view stays the same */}
     <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
@@ -2322,6 +2332,68 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
 
   if (cur.hidden && !isAdmin) return null;
 
+  return (
+    <div className="card" style={{ padding: 16, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <h3 style={{ marginTop: 0 }}>${BUYIN} Buy-in Checklist ✅</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="badge">{paidCount} / {members.length} paid</span>
+          {isAdmin && (
+            cur.hidden
+              ? <button className="btn" onClick={() => patch({ hidden: false })}>Show tracker</button>
+              : allPaid
+                ? <button className="btn" onClick={() => patch({ hidden: true })}>Hide (all paid)</button>
+                : null
+          )}
+        </div>
+      </div>
+
+      {members.length === 0 && (
+        <p style={{ color: "#64748b", marginTop: 0 }}>
+          No members yet. Import teams in <b>League Settings</b> first.
+        </p>
+      )}
+
+      {members.length > 0 && (
+        <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            {isAdmin && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn" onClick={markAll}>Mark all paid</button>
+                <button className="btn" onClick={resetAll}>Reset</button>
+              </div>
+            )}
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {[...members].sort((a, b) => a.name.localeCompare(b.name)).map(m => (
+              <li key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #e2e8f0" }}>
+                <input
+                  type="checkbox"
+                  checked={!!cur.paid[m.id]}
+                  onChange={() => isAdmin && togglePaid(m.id)}
+                  disabled={!isAdmin}
+                />
+                <span style={{ textDecoration: cur.paid[m.id] ? "line-through" : "none" }}>{m.name}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
+  const seasonKey = "current";
+  const cur = (data.buyins && data.buyins[seasonKey]) || {
+    paid: {},
+    hidden: false,
+    venmoLink: "",
+    zelleEmail: "",
+    venmoQR: ""
+  };
+
   const [venmo, setVenmo] = React.useState(cur.venmoLink || "https://venmo.com/u/");
   const [zelle, setZelle] = React.useState(cur.zelleEmail || "");
   
@@ -2329,6 +2401,18 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
     setVenmo(cur.venmoLink || "https://venmo.com/u/"); 
     setZelle(cur.zelleEmail || ""); 
   }, [seasonKey, data.buyins]);
+
+  const patch = async (updates) => {
+    const newData = { ...cur, ...updates };
+    setData(d => ({ ...d, buyins: { ...(d.buyins || {}), [seasonKey]: newData } }));
+    try {
+      await updateBuyIns(seasonKey, newData);
+    } catch (error) {
+      console.error('Failed to update buy-ins:', error);
+      setData(d => ({ ...d, buyins: { ...(d.buyins || {}), [seasonKey]: cur } }));
+      alert('Failed to save buy-in changes: ' + error.message);
+    }
+  };
 
   const saveMeta = async () => {
     const venmoLink = venmo.trim();
@@ -2356,114 +2440,63 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
   };
 
   return (
-    <div className="card" style={{ padding: 16, marginTop: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ marginTop: 0 }}>${BUYIN} Buy-in Checklist ✅</h3>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span className="badge">{paidCount} / {members.length} paid</span>
-          {isAdmin && (
-            cur.hidden
-              ? <button className="btn" onClick={() => patch({ hidden: false })}>Show tracker</button>
-              : allPaid
-                ? <button className="btn" onClick={() => patch({ hidden: true })}>Hide (all paid)</button>
-                : null
-          )}
-        </div>
+    <div className="card" style={{ padding: 12, marginTop: 16 }}>
+      <h4 style={{ marginTop: 0 }}>Pay Dues</h4>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/" && (
+          <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">
+            Pay with Venmo
+          </a>
+        )}
+        {cur.zelleEmail && (
+          <button type="button" className="btn" onClick={copyZelle}>
+            Pay with Zelle
+          </button>
+        )}
       </div>
 
-      {members.length === 0 && (
-        <p style={{ color: "#64748b", marginTop: 0 }}>
-          No members yet. Import teams in <b>League Settings</b> first.
-        </p>
+      {(cur.venmoQR || (cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/") || cur.zelleEmail) && (
+        <div style={{ marginTop: 8 }}>
+          
+            <a href={cur.venmoLink || (cur.zelleEmail ? `mailto:${encodeURIComponent(cur.zelleEmail)}` : "#")}
+            target="_blank"
+            rel="noreferrer"
+            title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}
+          >
+            {cur.venmoQR && (
+              <img src={cur.venmoQR} alt="Venmo QR" style={{ maxWidth: "200px", height: "auto" }} />
+            )}
+          </a>
+        </div>
       )}
 
-      {members.length > 0 && (
-        <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 16 }}>
-          <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              {isAdmin && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn" onClick={markAll}>Mark all paid</button>
-                  <button className="btn" onClick={resetAll}>Reset</button>
-                </div>
-              )}
-            </div>
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {[...members].sort((a, b) => a.name.localeCompare(b.name)).map(m => (
-                <li key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #e2e8f0" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!cur.paid[m.id]}
-                    onChange={() => isAdmin && togglePaid(m.id)}
-                    disabled={!isAdmin}
-                  />
-                  <span style={{ textDecoration: cur.paid[m.id] ? "line-through" : "none" }}>{m.name}</span>
-                </li>
-              ))}
-            </ul>
+      {isAdmin && (
+        <>
+          <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8, marginTop: 8 }}>
+            <input 
+              className="input" 
+              placeholder="https://venmo.com/u/YourHandle" 
+              value={venmo} 
+              onChange={e => setVenmo(e.target.value)}
+            />
+            <input 
+              className="input" 
+              placeholder="Zelle email" 
+              value={zelle} 
+              onChange={e => setZelle(e.target.value)}
+            />
           </div>
-
-          <div className="card buyin-pay" style={{ padding: 12 }}>
-            <h4 style={{ marginTop: 0 }}>Pay Dues</h4>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/" && (
-                <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">
-                  Pay with Venmo
-                </a>
-              )}
-              {cur.zelleEmail && (
-                <button type="button" className="btn" onClick={copyZelle}>
-                  Pay with Zelle
-                </button>
-              )}
-            </div>
-
-            {(cur.venmoQR || (cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/") || cur.zelleEmail) && (
-              <div style={{ marginTop: 8 }}>
-                <a
-                  href={cur.venmoLink || `mailto:${encodeURIComponent(cur.zelleEmail)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}
-                >
-                  {cur.venmoQR && (
-                    <img src={cur.venmoQR} alt="Venmo QR" style={{ maxWidth: "200px", height: "auto" }} />
-                  )}
-                </a>
-              </div>
-            )}
-
-            {isAdmin && (
-              <>
-                <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8, marginTop: 8 }}>
-                  <input 
-                    className="input" 
-                    placeholder="https://venmo.com/u/YourHandle" 
-                    value={venmo} 
-                    onChange={e => setVenmo(e.target.value)}
-                  />
-                  <input 
-                    className="input" 
-                    placeholder="Zelle email" 
-                    value={zelle} 
-                    onChange={e => setZelle(e.target.value)}
-                  />
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-                  <input type="file" accept="image/*" onChange={onUploadQR} />
-                  {cur.venmoQR && <button className="btn" onClick={() => patch({ venmoQR: "" })}>Remove QR</button>}
-                  <button className="btn primary" onClick={saveMeta}>Save links</button>
-                </div>
-              </>
-            )}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+            <input type="file" accept="image/*" onChange={onUploadQR} />
+            {cur.venmoQR && <button className="btn" onClick={() => patch({ venmoQR: "" })}>Remove QR</button>}
+            <button className="btn primary" onClick={saveMeta}>Save links</button>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
 }
-
 function RichEditor({ html, setHtml, readOnly }) {
   const [local, setLocal] = React.useState(html || "");
   const ref = React.useRef(null);

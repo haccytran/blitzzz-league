@@ -491,23 +491,82 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
     const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
     const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
     
-    // Build roster data
+    // Build roster data with proper ordering
     const rosterData = (rosJson?.teams || []).map(t => {
       const entries = (t.roster?.entries || []).map(e => {
         const p = e.playerPoolEntry?.player;
         const fullName = p?.fullName || "Player";
         const slot = slotMap[e.lineupSlotId] || "—";
+        // Try multiple ESPN position sources for better accuracy
+let position = "";
+if (p?.defaultPositionId) {
+  position = posIdToName(p.defaultPositionId);
+}
+// Also check if there's position info in other ESPN fields
+if (!position && p?.eligibleSlots) {
+  // Use the first eligible slot that's a real position
+  const eligiblePos = p.eligibleSlots
+    .map(slotId => posIdToName(slotId))
+    .find(pos => pos && !pos.includes("FLEX") && pos !== "—");
+  if (eligiblePos) position = eligiblePos;
+}
         
-        const displayName = slot === "Bench" 
-          ? fullName
-          : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
-        
-        return { name: displayName, slot };
+        return { 
+          name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
+          slot, 
+          position
+        };
       });
-      
-      return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
-    }).sort((a, b) => a.teamName.localeCompare(b.teamName));
 
+      // Separate starters and bench
+      const starters = entries.filter(e => e.slot !== "Bench");
+      const bench = entries.filter(e => e.slot === "Bench");
+      
+      // Define exact starter order
+      const starterOrder = ["QB", "RB", "RB/WR", "WR", "TE", "FLEX", "D/ST", "K"];
+      
+      // Sort starters by the exact order you want
+const sortedStarters = [];
+const starterOrderWithCounts = [
+  { pos: "QB", max: 1 },
+  { pos: "RB", max: 2 }, 
+  { pos: "RB/WR", max: 1 },
+  { pos: "WR", max: 2 },
+  { pos: "TE", max: 1 },
+  { pos: "FLEX", max: 1 },
+  { pos: "D/ST", max: 1 },
+  { pos: "K", max: 1 }
+];
+
+starterOrderWithCounts.forEach(({ pos, max }) => {
+  const playersInPosition = starters.filter(p => p.slot === pos);
+  for (let i = 0; i < max; i++) {
+    if (playersInPosition[i]) {
+      sortedStarters.push(playersInPosition[i]);
+    }
+  }
+});
+
+      // Sort bench players and add position in parentheses
+      const sortedBench = bench
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => ({
+          name: p.position ? `${p.name} (${p.position})` : p.name,
+          slot: p.slot
+        }));
+      
+      // Combine starters and bench
+      const finalEntries = [
+        ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
+        ...sortedBench
+      ];
+      
+      return { 
+        teamName: teamsById[t.id] || `Team ${t.id}`, 
+        entries: finalEntries 
+      };
+    });
+    
     // Save both member names and roster data to server
     await apiCall('/api/league-data/import-teams', {
       method: 'POST',
@@ -521,6 +580,7 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
     await loadServerData();
     alert(`Imported ${names.length} teams with rosters for season ${espn.seasonId}.`);
   } catch(e){ 
+    console.error('Import error:', e);
     alert(e.message || "ESPN fetch failed. Check League/Season."); 
   }
 };
@@ -1572,12 +1632,17 @@ function Rosters({ leagueId, seasonId }) {
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
 
-  const positionOrder = ["QB", "RB", "RB/WR", "WR", "WR/TE", "TE", "FLEX", "OP", "D/ST", "K", "Bench"];
+  const positionOrder = ["QB", "RB", "RB/WR", "WR", "TE", "FLEX", "D/ST", "K", "Bench"];
+
+const getPositionPriority = (slot) => {
+  // Handle multiple RBs and WRs by giving them same priority
+  if (slot === "RB") return 1;
+  if (slot === "WR") return 4;
+  if (slot === "Bench") return 999; // Always last
   
-  const getPositionPriority = (slot) => {
-    const index = positionOrder.findIndex(pos => slot.includes(pos));
-    return index === -1 ? 999 : index;
-  };
+  const index = positionOrder.findIndex(pos => slot.includes(pos));
+  return index === -1 ? 500 : index;
+};
 
   // Load roster data from server
   // In the Rosters component, update the useEffect:
@@ -1609,9 +1674,10 @@ useEffect(() => {
             const fullName = p?.fullName || "Player";
             const slot = slotMap[e.lineupSlotId] || "—";
             
-            const displayName = slot === "Bench" 
-              ? fullName
-              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+            const position = p?.defaultPositionId ? posIdToName(p.defaultPositionId) : "";
+const displayName = slot === "Bench" 
+  ? (position ? `${fullName} (${position})` : fullName)
+  : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
             
             return { name: displayName, slot };
           });
@@ -1646,8 +1712,22 @@ useEffect(() => {
           <div key={team.teamName} className="card" style={{ padding: 16 }}>
             <h3 style={{ marginTop: 0 }}>{team.teamName}</h3>
             <ul style={{ margin: 0, paddingLeft: 16 }}>
-              {team.entries.map((e, i) => <li key={i}><b>{e.slot}</b> — {e.name}</li>)}
-            </ul>
+  {team.entries.map((e, i) => {
+    const isFirstBench = e.slot === "Bench" && (i === 0 || team.entries[i-1]?.slot !== "Bench");
+    return (
+      <React.Fragment key={i}>
+        {isFirstBench && (
+  <li style={{ margin: "8px 0", padding: 0, listStyle: "none" }}>
+    <hr style={{ border: "none", borderTop: "2px solid #9ca3af", margin: "4px 0" }} />
+  </li>
+)}
+        <li style={{ marginBottom: 4 }}>
+          <b>{e.slot}</b> — {e.name}
+        </li>
+      </React.Fragment>
+    );
+  })}
+</ul>
           </div>
         ))}
       </div>

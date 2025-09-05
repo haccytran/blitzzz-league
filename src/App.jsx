@@ -2525,12 +2525,12 @@ function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/" && (
-          <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">
+          <a className="btn" style={{ background: "#3D95CE", color: "#fff", padding: "10px 12px", textAlign: "center", textDecoration: "none", borderRadius: "6px", fontWeight: "600" }} href={cur.venmoLink} target="_blank" rel="noreferrer">
             Pay with Venmo
           </a>
         )}
         {cur.zelleEmail && (
-          <button type="button" className="btn" onClick={copyZelle}>
+          <button type="button" className="btn" style={{ background: "#6D1ED4", color: "#fff", padding: "10px 12px", fontWeight: "600" }} onClick={copyZelle}>
             Pay with Zelle
           </button>
         )}

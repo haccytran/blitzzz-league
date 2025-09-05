@@ -2530,7 +2530,7 @@ function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
           </a>
         )}
         {cur.zelleEmail && (
-  <button type="button" className="btn" style={{ background: "#6D1ED4", color: "#fff", padding: "10px 12px", fontWeight: "600", fontSize: "16px", border: "none", borderRadius: "6px", cursor: "pointer" }} onClick={copyZelle}>
+  <button type="button" className="btn" style={{ background: "#6D1ED4", color: "#fff", padding: "10px 12px", fontWeight: "600", fontSize: "15px", border: "none", borderRadius: "6px", cursor: "pointer" }} onClick={copyZelle}>
     Pay with Zelle
   </button>
 )}

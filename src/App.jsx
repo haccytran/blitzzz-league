@@ -846,23 +846,6 @@ async function loadOfficialReport(silent=false){
               </div>
             )}
 
-            <h4>History (selected week)</h4>
-<ul style={{listStyle:"none",padding:0,margin:0}}>
-  {historyItems.map(item => (
-    <li key={item.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
-      {item.display}
-      {item.canDelete && (
-        <button 
-          onClick={item.deleteAction} 
-          style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}
-        >
-          Delete
-        </button>
-      )}
-    </li>
-  ))}
-  {historyItems.length === 0 && <p style={{color:"#64748b"}}>No activity this week.</p>}
-</ul>
 {useEspnData && (
   <div style={{fontSize:12, color:"#64748b", marginTop:8, fontStyle:"italic"}}>
     ✓ Using ESPN snapshot data (matches Dues page)

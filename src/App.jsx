@@ -320,13 +320,33 @@ useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), currentYear)); }, []);
   // Manual waivers (count within Wed→Tue) - always use current year
 
 const weekKey = weekKeyFrom(selectedWeek);
-const waiversThisWeek = useMemo(
-  () => data.waivers.filter(w => weekKeyFrom(leagueWeekOf(new Date(w.date), currentYear)) === weekKey),
-  [data.waivers, weekKey]
-);
-const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
-const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
+const waiversThisWeek = useMemo(() => {
+  if (!espnReport?.rawMoves) return [];
+  return espnReport.rawMoves.filter(move => {
+    if (move.action !== "ADD" || move.week <= 0) return false;
+    const moveWeek = leagueWeekOf(new Date(move.date), currentYear);
+    return weekKeyFrom(moveWeek) === weekKey;
+  });
+}, [espnReport, weekKey, currentYear]);
 
+const waiverCounts = useMemo(() => {
+  const c = {};
+  waiversThisWeek.forEach(move => {
+    const teamName = move.team;
+    c[teamName] = (c[teamName] || 0) + 1;
+  });
+  return c;
+}, [waiversThisWeek]);
+
+const waiverOwed = useMemo(() => {
+  const owed = {};
+  for (const m of data.members) {
+    const count = waiverCounts[m.name] || 0;
+    owed[m.id] = Math.max(0, count - 2) * 5;
+  }
+  return owed;
+}, [data.members, waiverCounts]);
+   
   // Server-side CRUD operations
   const addAnnouncement = async (html) => {
     try {

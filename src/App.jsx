@@ -1022,20 +1022,31 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
 
   list.sort((a, b) => {
-    const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
-    const aIsCur = wa === cur, bIsCur = wb === cur;
-    if (aIsCur && !bIsCur) return -1;
-    if (bIsCur && !aIsCur) return 1;
-
-    const aFuture = wa > cur, bFuture = wb > cur;
-    if (aFuture && !bFuture) return -1;
-    if (bFuture && !aFuture) return 1;
-    if (aFuture && bFuture) return wa - wb;
-
-    const aPast = wa < cur, bPast = wb < cur;
-    if (aPast && bPast) return wb - wa;
-    return 0;
-  });
+  const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
+  
+  const aIsPast = wa > 0 && wa < cur;
+  const bIsPast = wb > 0 && wb < cur;
+  const aIsCurrent = wa === cur;
+  const bIsCurrent = wb === cur;
+  const aIsFuture = wa > cur;
+  const bIsFuture = wb > cur;
+  
+  // Current week first
+  if (aIsCurrent && !bIsCurrent) return -1;
+  if (bIsCurrent && !aIsCurrent) return 1;
+  
+  // Future weeks next (ascending order)
+  if (aIsFuture && !bIsFuture && !bIsCurrent) return -1;
+  if (bIsFuture && !aIsFuture && !aIsCurrent) return 1;
+  if (aIsFuture && bIsFuture) return wa - wb;
+  
+  // Past weeks last (descending order - most recent past first)
+  if (aIsPast && bIsPast) return wb - wa;
+  if (!aIsPast && bIsPast) return -1;
+  if (aIsPast && !bIsPast) return 1;
+  
+  return 0;
+});
 
   return (
     <Section title="Weekly Challenges">

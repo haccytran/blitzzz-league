@@ -847,15 +847,32 @@ async function loadOfficialReport(silent=false){
             )}
 
             <h4>History (selected week)</h4>
-            <ul style={{listStyle:"none",padding:0,margin:0}}>
-              {waiversThisWeek.map(w=>(
-                <li key={w.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
-                  <span><b>{membersById[w.userId]?.name||"Unknown"}</b> picked up <b>{w.player}</b> on {w.date}</span>
-                  {isAdmin && <button onClick={()=>deleteWaiver(w.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Delete</button>}
-                </li>
-              ))}
-              {waiversThisWeek.length===0 && <p style={{color:"#64748b"}}>No activity this week.</p>}
-            </ul>
+<ul style={{listStyle:"none",padding:0,margin:0}}>
+  {historyItems.map(item => (
+    <li key={item.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
+      {item.display}
+      {item.canDelete && (
+        <button 
+          onClick={item.deleteAction} 
+          style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}
+        >
+          Delete
+        </button>
+      )}
+    </li>
+  ))}
+  {historyItems.length === 0 && <p style={{color:"#64748b"}}>No activity this week.</p>}
+</ul>
+{useEspnData && (
+  <div style={{fontSize:12, color:"#64748b", marginTop:8, fontStyle:"italic"}}>
+    ✓ Using ESPN snapshot data (matches Dues page)
+  </div>
+)}
+{!useEspnData && (
+  <div style={{fontSize:12, color:"#94a3b8", marginTop:8, fontStyle:"italic"}}>
+    ⚠ Using manual tracking (may differ from Dues page)
+  </div>
+)}
           </div>
         </div>
 

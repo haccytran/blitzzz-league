@@ -358,6 +358,90 @@ const waiverCounts = useMemo(() => {
     return c;
   }
 }, [waiversThisWeek, data.members, useEspnData]);
+
+   // Add this after your existing waiver calculations in the main LeagueHub function
+
+// Calculate waiver owed amounts based on the data source
+const waiverOwed = useMemo(() => {
+  if (useEspnData) {
+    // Use ESPN data - calculate owes based on weekly totals
+    const owed = {};
+    data.members.forEach(member => {
+      const count = waiverCounts[member.id] || 0;
+      owed[member.id] = Math.max(0, count - 2) * 5;
+    });
+    return owed;
+  } else {
+    // Use manual tracking
+    const owed = {};
+    data.members.forEach(member => {
+      const count = waiverCounts[member.id] || 0;
+      owed[member.id] = Math.max(0, count - 2) * 5;
+    });
+    return owed;
+  }
+}, [waiverCounts, data.members, useEspnData]);
+
+// Update the history display logic in your waivers view
+const historyItems = useMemo(() => {
+  if (useEspnData) {
+    // Format ESPN data for display
+    return waiversThisWeek.map(move => ({
+      id: `${move.team}-${move.player}-${move.date}`, // Create unique ID
+      display: (
+        <span>
+          <b>{move.team}</b> picked up <b>{move.player}</b> on {move.date}
+        </span>
+      ),
+      canDelete: false // Can't delete ESPN data from manual interface
+    }));
+  } else {
+    // Format manual tracking data
+    return waiversThisWeek.map(w => ({
+      id: w.id,
+      display: (
+        <span>
+          <b>{membersById[w.userId]?.name || "Unknown"}</b> picked up <b>{w.player}</b> on {w.date}
+        </span>
+      ),
+      canDelete: isAdmin,
+      deleteAction: () => deleteWaiver(w.id)
+    }));
+  }
+}, [waiversThisWeek, membersById, useEspnData, isAdmin]);
+
+// Then update your Waivers view JSX to use this new structure:
+
+// Replace the history section with:
+<h4>History (selected week)</h4>
+<ul style={{listStyle:"none",padding:0,margin:0}}>
+  {historyItems.map(item => (
+    <li key={item.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
+      {item.display}
+      {item.canDelete && (
+        <button 
+          onClick={item.deleteAction} 
+          style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}
+        >
+          Delete
+        </button>
+      )}
+    </li>
+  ))}
+  {historyItems.length === 0 && <p style={{color:"#64748b"}}>No activity this week.</p>}
+</ul>
+
+// Also add a data source indicator
+{useEspnData && (
+  <div style={{fontSize:12, color:"#64748b", marginTop:8, fontStyle:"italic"}}>
+    ✓ Using ESPN snapshot data (matches Dues page)
+  </div>
+)}
+{!useEspnData && (
+  <div style={{fontSize:12, color:"#94a3b8", marginTop:8, fontStyle:"italic"}}>
+    ⚠ Using manual tracking (may differ from Dues page)
+  </div>
+)}
    
   // Server-side CRUD operations
   const addAnnouncement = async (html) => {
@@ -713,22 +797,35 @@ async function loadOfficialReport(silent=false){
     transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
     drafts: <DraftsView espn={espn} />,
     waivers: (
-      <Section title="Waivers & Dues" actions={
-        <div style={{display:"flex", gap:8}}>
-          {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-          <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-          {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
-            if(confirm("Reset waivers and announcements?")) {
-              try {
-                await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
-                await loadServerData();
-              } catch (error) {
-                alert('Reset failed: ' + error.message);
-              }
+  <Section title="Waivers & Dues" actions={
+    <div style={{display:"flex", gap:8}}>
+      {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
+      <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
+      {isAdmin && useEspnData && (
+        <button 
+          className="btn" 
+          style={btnSec} 
+          onClick={async () => {
+            if (confirm("Sync manual waivers with ESPN data? This will replace manual entries.")) {
+              alert("Sync functionality coming soon!");
             }
-          }}>Reset Season</button>}
-        </div>
-      }>
+          }}
+        >
+          Sync with ESPN
+        </button>
+      )}
+      {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
+        if(confirm("Reset waivers and announcements?")) {
+          try {
+            await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
+            await loadServerData();
+          } catch (error) {
+            alert('Reset failed: ' + error.message);
+          }
+        }
+      }}>Reset Season</button>}
+    </div>
+  }>
         <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
           <div className="card" style={{padding:16}}>
             <h3>League Members</h3>

@@ -377,6 +377,18 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
     }
   };
 
+   const editWeekly = async (id, updatedEntry) => {
+  try {
+    await apiCall('/api/league-data/weekly/edit', {
+      method: 'POST',
+      body: JSON.stringify({ id, updatedEntry })
+    });
+    await loadServerData();
+  } catch (error) {
+    alert('Failed to edit weekly challenge: ' + error.message);
+  }
+};
+
   const addMember = async (name) => {
     try {
       await apiCall('/api/league-data/members', {
@@ -676,7 +688,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
     announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly}} />, // Remove seasonYear
+    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editweekly}} />, // Remove seasonYear
     activity: <RecentActivityView espn={espn} />,
     transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
     drafts: <DraftsView espn={espn} />,
@@ -1016,37 +1028,32 @@ async function loadReport() {
   );
 }
 
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly }) {
+  const [editingId, setEditingId] = useState(null);
   const currentYear = new Date().getFullYear();
   const nowWeek = leagueWeekOf(new Date(), currentYear).week || 0;
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
 
+  // Keep existing sorting logic...
   list.sort((a, b) => {
-  const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
-  
-  const aIsPast = wa > 0 && wa <= cur;
-  const bIsPast = wb > 0 && wb <= cur;
-  const aIsCurrent = wa === cur;
-  const bIsCurrent = wb === cur;
-  const aIsFuture = wa > cur;
-  const bIsFuture = wb > cur;
-  
-  // Past weeks go to bottom
-  if (aIsPast && !bIsPast) return 1;
-  if (bIsPast && !aIsPast) return -1;
-  
-  // Among past weeks, sort by week number descending (most recent first)
-  if (aIsPast && bIsPast) return wb - wa;
-  
-  // Current week first among non-past
-  if (aIsCurrent && !bIsCurrent) return -1;
-  if (bIsCurrent && !aIsCurrent) return 1;
-  
-  // Future weeks after current, ascending order
-  if (aIsFuture && bIsFuture) return wa - wb;
-  
-  return 0;
-});
+    const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
+    
+    const aIsPast = wa > 0 && wa <= cur;
+    const bIsPast = wb > 0 && wb <= cur;
+    const aIsCurrent = wa === cur;
+    const bIsCurrent = wb === cur;
+    const aIsFuture = wa > cur;
+    const bIsFuture = wb > cur;
+    
+    if (aIsPast && !bIsPast) return 1;
+    if (bIsPast && !aIsPast) return -1;
+    if (aIsPast && bIsPast) return wb - wa;
+    if (aIsCurrent && !bIsCurrent) return -1;
+    if (bIsCurrent && !aIsCurrent) return 1;
+    if (aIsFuture && bIsFuture) return wa - wb;
+    
+    return 0;
+  });
 
   return (
     <Section title="Weekly Challenges">
@@ -1059,43 +1066,115 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
         )}
         {list.map(item => {
           const isPast = (item.week || 0) > 0 && (item.week || 0) <= nowWeek;
+          const isEditing = editingId === item.id;
+          
           return (
             <div key={item.id} className="card" style={{ padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <h3 style={{ margin: 0 }}>
-                    {item.weekLabel || "Week"}
-                    {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
-                  </h3>
-                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
-                    Added {new Date(item.createdAt).toLocaleString()}
+              {isEditing ? (
+                <WeeklyEditForm 
+                  item={item} 
+                  onSave={(updatedEntry) => {
+                    editWeekly(item.id, updatedEntry);
+                    setEditingId(null);
+                  }}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div>
+                      <h3 style={{ margin: 0 }}>
+                        {item.weekLabel || "Week"}
+                        {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
+                      </h3>
+                      <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                        Added {new Date(item.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+                    {isAdmin && (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="btn"
+                          style={btnSec}
+                          onClick={() => setEditingId(item.id)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }}
+                          onClick={() => deleteWeekly(item.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
-                {isAdmin && (
-                  <button
-                    className="btn"
-                    style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }}
-                    onClick={() => deleteWeekly(item.id)}
+                  <div
+                    style={{
+                      marginTop: 8,
+                      whiteSpace: "pre-wrap",
+                      textDecoration: isPast ? "line-through" : "none",
+                      color: isPast ? "#64748b" : "#0b1220"
+                    }}
                   >
-                    Delete
-                  </button>
-                )}
-              </div>
-              <div
-                style={{
-                  marginTop: 8,
-                  whiteSpace: "pre-wrap",
-                  textDecoration: isPast ? "line-through" : "none",
-                  color: isPast ? "#64748b" : "#0b1220"
-                }}
-              >
-                {item.text}
-              </div>
+                    {item.text}
+                  </div>
+                </>
+              )}
             </div>
           );
         })}
       </div>
     </Section>
+  );
+}
+
+function WeeklyEditForm({ item, onSave, onCancel }) {
+  const [weekLabel, setWeekLabel] = useState(item.weekLabel || "");
+  const [title, setTitle] = useState(item.title || "");
+  const [text, setText] = useState(item.text || "");
+
+  const handleSave = () => {
+    if (!weekLabel.trim()) return alert("Enter a week label");
+    if (!text.trim()) return alert("Enter a description");
+    
+    onSave({
+      weekLabel: weekLabel.trim(),
+      title: title.trim(),
+      text: text.trim(),
+      week: parseInt(String(weekLabel || "").replace(/\D/g, ""), 10) || 0
+    });
+  };
+
+  return (
+    <div>
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
+        <input
+          className="input"
+          placeholder="Week label (e.g., Week 1)"
+          value={weekLabel}
+          onChange={(e) => setWeekLabel(e.target.value)}
+        />
+        <input
+          className="input"
+          placeholder="Title of Challenge"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </div>
+      <textarea
+        className="input"
+        style={{ minHeight: 120, marginBottom: 8 }}
+        placeholder="Describe this week's challenge..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn" style={btnSec} onClick={onCancel}>Cancel</button>
+        <button className="btn" style={btnPri} onClick={handleSave}>Save</button>
+      </div>
+    </div>
   );
 }
 

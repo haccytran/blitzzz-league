@@ -845,17 +845,6 @@ async function loadOfficialReport(silent=false){
                 <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
               </div>
             )}
-
-{useEspnData && (
-  <div style={{fontSize:12, color:"#64748b", marginTop:8, fontStyle:"italic"}}>
-    ✓ Using ESPN snapshot data (matches Dues page)
-  </div>
-)}
-{!useEspnData && (
-  <div style={{fontSize:12, color:"#94a3b8", marginTop:8, fontStyle:"italic"}}>
-    ⚠ Using manual tracking (may differ from Dues page)
-  </div>
-)}
           </div>
         </div>
 

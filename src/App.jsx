@@ -363,24 +363,13 @@ const waiverCounts = useMemo(() => {
 
 // Calculate waiver owed amounts based on the data source
 const waiverOwed = useMemo(() => {
-  if (useEspnData) {
-    // Use ESPN data - calculate owes based on weekly totals
-    const owed = {};
-    data.members.forEach(member => {
-      const count = waiverCounts[member.id] || 0;
-      owed[member.id] = Math.max(0, count - 2) * 5;
-    });
-    return owed;
-  } else {
-    // Use manual tracking
-    const owed = {};
-    data.members.forEach(member => {
-      const count = waiverCounts[member.id] || 0;
-      owed[member.id] = Math.max(0, count - 2) * 5;
-    });
-    return owed;
-  }
-}, [waiverCounts, data.members, useEspnData]);
+  const owed = {};
+  data.members.forEach(member => {
+    const count = waiverCounts[member.id] || 0;
+    owed[member.id] = Math.max(0, count - 2) * 5;
+  });
+  return owed;
+}, [waiverCounts, data.members]);
 
 // Update the history display logic in your waivers view
 const historyItems = useMemo(() => {

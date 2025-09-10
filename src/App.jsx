@@ -1024,26 +1024,26 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
   list.sort((a, b) => {
   const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
   
-  const aIsPast = wa > 0 && wa < cur;
-  const bIsPast = wb > 0 && wb < cur;
+  const aIsPast = wa > 0 && wa <= cur;
+  const bIsPast = wb > 0 && wb <= cur;
   const aIsCurrent = wa === cur;
   const bIsCurrent = wb === cur;
   const aIsFuture = wa > cur;
   const bIsFuture = wb > cur;
   
-  // Current week first
+  // Past weeks go to bottom
+  if (aIsPast && !bIsPast) return 1;
+  if (bIsPast && !aIsPast) return -1;
+  
+  // Among past weeks, sort by week number descending (most recent first)
+  if (aIsPast && bIsPast) return wb - wa;
+  
+  // Current week first among non-past
   if (aIsCurrent && !bIsCurrent) return -1;
   if (bIsCurrent && !aIsCurrent) return 1;
   
-  // Future weeks next (ascending order)
-  if (aIsFuture && !bIsFuture && !bIsCurrent) return -1;
-  if (bIsFuture && !aIsFuture && !aIsCurrent) return 1;
+  // Future weeks after current, ascending order
   if (aIsFuture && bIsFuture) return wa - wb;
-  
-  // Past weeks last (descending order - most recent past first)
-  if (aIsPast && bIsPast) return wb - wa;
-  if (!aIsPast && bIsPast) return -1;
-  if (aIsPast && !bIsPast) return 1;
   
   return 0;
 });

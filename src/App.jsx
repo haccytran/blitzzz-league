@@ -1058,7 +1058,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
           </div>
         )}
         {list.map(item => {
-          const isPast = (item.week || 0) > 0 && (item.week || 0) < nowWeek;
+          const isPast = (item.week || 0) > 0 && (item.week || 0) <= nowWeek;
           return (
             <div key={item.id} className="card" style={{ padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>

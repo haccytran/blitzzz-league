@@ -321,32 +321,43 @@ useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), currentYear)); }, []);
 
 const weekKey = weekKeyFrom(selectedWeek);
 
+// In WaiversView, replace the manual waiver calculations with:
+const useEspnData = espnReport && espnReport.rawMoves;
+
 const waiversThisWeek = useMemo(() => {
-  if (!espnReport?.rawMoves) return [];
-  return espnReport.rawMoves.filter(move => {
-    if (move.action !== "ADD" || move.week <= 0) return false;
-    const moveWeek = leagueWeekOf(new Date(move.date), currentYear);
-    return weekKeyFrom(moveWeek) === weekKey;
-  });
-}, [espnReport, weekKey, currentYear]);
+  if (useEspnData) {
+    // Use ESPN snapshot data (same logic as Dues page)
+    return espnReport.rawMoves
+      .filter(move => 
+        move.action === "ADD" && 
+        move.week === selectedWeek.week &&
+        move.week > 0 // Only count billable weeks
+      );
+  } else {
+    // Fallback to manual tracking
+    return data.waivers.filter(w => 
+      weekKeyFrom(leagueWeekOf(new Date(w.date), currentYear)) === weekKey
+    );
+  }
+}, [espnReport, data.waivers, selectedWeek.week, weekKey, useEspnData]);
 
 const waiverCounts = useMemo(() => {
-  const counts = {};
-  data.members.forEach(member => {
-    const teamAdds = waiversThisWeek.filter(move => move.team === member.name).length;
-    counts[member.id] = teamAdds;
-  });
-  return counts;
-}, [waiversThisWeek, data.members]);
-
-const waiverOwed = useMemo(() => {
-  const owed = {};
-  for (const m of data.members) {
-    const count = waiverCounts[m.id] || 0;
-    owed[m.id] = Math.max(0, count - 2) * 5;
+  if (useEspnData) {
+    const counts = {};
+    waiversThisWeek.forEach(move => {
+      // Map team name back to member ID for display
+      const member = data.members.find(m => m.name === move.team);
+      if (member) {
+        counts[member.id] = (counts[member.id] || 0) + 1;
+      }
+    });
+    return counts;
+  } else {
+    const c = {};
+    waiversThisWeek.forEach(w => { c[w.userId] = (c[w.userId] || 0) + 1 });
+    return c;
   }
-  return owed;
-}, [data.members, waiverCounts]);
+}, [waiversThisWeek, data.members, useEspnData]);
    
   // Server-side CRUD operations
   const addAnnouncement = async (html) => {

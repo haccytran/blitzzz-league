@@ -2171,12 +2171,14 @@ function WaiversView({
     
     const weekKey = weekKeyFrom(selectedWeek);
     
-    // Filter adds from the current week
-    const waiversThisWeek = espnReport.rawMoves.filter(move => {
-      if (move.action !== "ADD" || move.week <= 0) return false;
-      const moveWeek = leagueWeekOf(new Date(move.date), seasonYear);
-      return weekKeyFrom(moveWeek) === weekKey;
-    });
+// Filter adds from the current week using server's Wed→Tue calculation
+const waiversThisWeek = espnReport.rawMoves.filter(move => {
+  if (move.action !== "ADD" || move.week <= 0) return false;
+  // Use the server's week calculation (already stored in move.week)
+  // and compare against selected week
+  const selectedServerWeek = selectedWeek.week;
+  return move.week === selectedServerWeek;
+});
     
     // Count adds by team
     const waiverCounts = {};

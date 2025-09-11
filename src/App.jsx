@@ -1074,7 +1074,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
           </div>
         )}
         {list.map(item => {
-          const isPast = (item.week || 0) > 0 && (item.week || 0) <= nowWeek;
+          const isPast = (item.week || 0) > 0 && (item.week || 0) < nowWeek;
           const isEditing = editingId === item.id;
           
           return (

@@ -1059,7 +1059,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
 
   return (
     <Section title="Weekly Challenges">
-      {isAdmin && <WeeklyForm seasonYear={currentYear} onAdd={addWeekly} />}
+      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} />}
       <div className="grid" style={{ gap: 12, marginTop: 12 }}>
         {list.length === 0 && (
           <div className="card" style={{ padding: 16, color: "#64748b" }}>

@@ -690,7 +690,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
     announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly}} />, // Remove seasonYear
+    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} />, // Remove seasonYear
     activity: <RecentActivityView espn={espn} />,
     transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
     drafts: <DraftsView espn={espn} />,
@@ -1030,10 +1030,10 @@ async function loadReport() {
   );
 }
 
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly }) {
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear }) {
   const [editingId, setEditingId] = useState(null);
   const currentYear = new Date().getFullYear();
-  const nowWeek = leagueWeekOf(new Date(), currentYear).week || 0;
+  const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
 
   // Keep existing sorting logic...

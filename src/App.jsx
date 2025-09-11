@@ -1302,7 +1302,7 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <p style={{ marginTop: -8, color: "#64748b" }}>
   Last updated: <b>{lastSynced || "—"}</b>
   <br />
-  Rule: first two transactions per Thu→Wed week are free, then $5 each.
+  Rule: first two transactions per Wednesday→Tuesday week are free, then $5 each.
 </p>
       {!report && <p style={{ color: "#64748b" }}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
 
@@ -2242,7 +2242,7 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
 
         <div className="card" style={{padding:16}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <h3>Activity (Thu→Wed) - ESPN Data</h3>
+            <h3>Activity (Wed→Tue) - ESPN Data</h3>
             <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
           </div>
 
@@ -2859,7 +2859,7 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
     setSelectedWeek(w.week > 0 ? w : anchor);
   };
   
-  const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Thu→Wed)` : `Preseason (Thu→Wed)`;
+  const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
   
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

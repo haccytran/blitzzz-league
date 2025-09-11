@@ -379,27 +379,29 @@ const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ co
 
    const editWeekly = async (id, updatedEntry) => {
   try {
-    await apiCall('/api/league-data/weekly/edit', {
-      method: 'POST',
-      body: JSON.stringify({ id, updatedEntry })
+    // First, delete the existing entry
+    await apiCall('/api/league-data/weekly', {
+      method: 'DELETE',
+      body: JSON.stringify({ id })
     });
+    
+    // Then add it back with updated data
+    const newEntry = {
+      ...updatedEntry,
+      id: Math.random().toString(36).slice(2), // New ID
+      createdAt: Date.now()
+    };
+    
+    await apiCall('/api/league-data/weekly', {
+      method: 'POST',
+      body: JSON.stringify({ entry: newEntry })
+    });
+    
     await loadServerData();
   } catch (error) {
     alert('Failed to edit weekly challenge: ' + error.message);
   }
 };
-
-  const addMember = async (name) => {
-    try {
-      await apiCall('/api/league-data/members', {
-        method: 'POST',
-        body: JSON.stringify({ name })
-      });
-      await loadServerData();
-    } catch (error) {
-      alert('Failed to add member: ' + error.message);
-    }
-  };
 
   const deleteMember = async (id) => {
     try {

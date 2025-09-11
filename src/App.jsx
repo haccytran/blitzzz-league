@@ -1034,6 +1034,13 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
   const [editingId, setEditingId] = useState(null);
   const currentYear = new Date().getFullYear();
   const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
+
+  console.log("=== WeeklyView Debug ===");
+  console.log("seasonYear:", seasonYear);
+  console.log("currentYear:", currentYear);
+  console.log("nowWeek calculated:", nowWeek);
+  console.log("Today's date:", new Date());
+
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
 
   // Keep existing sorting logic...

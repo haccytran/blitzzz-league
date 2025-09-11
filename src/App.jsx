@@ -688,7 +688,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
     announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editweekly}} />, // Remove seasonYear
+    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly}} />, // Remove seasonYear
     activity: <RecentActivityView espn={espn} />,
     transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
     drafts: <DraftsView espn={espn} />,

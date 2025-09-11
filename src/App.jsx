@@ -1047,8 +1047,8 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
   list.sort((a, b) => {
     const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
     
-    const aIsPast = wa > 0 && wa <= cur;
-    const bIsPast = wb > 0 && wb <= cur;
+    const aIsPast = wa > 0 && wa < cur;
+    const bIsPast = wb > 0 && wb < cur;
     const aIsCurrent = wa === cur;
     const bIsCurrent = wb === cur;
     const aIsFuture = wa > cur;
@@ -1096,9 +1096,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                         {item.weekLabel || "Week"}
                         {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
                       </h3>
-                      <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
-                        Added {new Date(item.createdAt).toLocaleString()}
-                      </div>
+
                     </div>
                     {isAdmin && (
                       <div style={{ display: "flex", gap: 8 }}>

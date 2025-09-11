@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import pkg from 'pg';
 const { Pool } = pkg;
 
+const DEFAULT_LEAGUE_ID = process.env.VITE_ESPN_LEAGUE_ID || "";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, "data");
@@ -190,6 +191,11 @@ async function saveLeagueData(data) {
 // =========================
 // League Data API Routes
 // =========================
+
+// Add this simple endpoint for keep-alive pings
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
 
 // MAIN LEAGUE DATA ROUTE - PUT THIS FIRST
 app.get("/api/league-data", async (req, res) => {
@@ -399,34 +405,6 @@ app.delete("/api/league-data/weekly", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Failed to delete weekly challenge:', error);
     res.status(500).json({ error: "Failed to delete weekly challenge" });
-  }
-});
-
-// Add this new route for editing weekly challenges
-app.post('/api/league-data/weekly/edit', requireAdmin, async (req, res) => {
-  try {
-    const { id, updatedEntry } = req.body;
-    
-    // Find and update the entry
-    const weeklyIndex = data.weeklyList.findIndex(item => item.id === id);
-    if (weeklyIndex === -1) {
-      return res.status(404).json({ error: 'Weekly challenge not found' });
-    }
-    
-    // Update the entry with new data
-    data.weeklyList[weeklyIndex] = {
-      ...data.weeklyList[weeklyIndex],
-      ...updatedEntry,
-      // Parse week number from weekLabel for proper sorting
-      week: parseInt(String(updatedEntry.weekLabel || "").replace(/\D/g, ""), 10) || 0
-    };
-    
-    // Save data
-    await saveData();
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Edit weekly error:', error);
-    res.status(500).json({ error: 'Failed to edit weekly challenge' });
   }
 });
 
@@ -1943,6 +1921,166 @@ setProgress(jobId, 100, "Snapshot complete");
 });
 
 // =========================
+// Auto-refresh system
+// =========================
+let autoRefreshInterval = null;
+
+async function runAutoRefresh() {
+  console.log('[AUTO-REFRESH] Starting background refresh cycle...');
+  
+  try {
+    // Get current season from settings
+    const displaySetting = await readJson("current_display_season.json", { season: "2025" });
+    const seasonId = displaySetting.season;
+    
+    if (!DEFAULT_LEAGUE_ID || !seasonId) {
+      console.log('[AUTO-REFRESH] Missing league ID or season, skipping');
+      return;
+    }
+
+    console.log(`[AUTO-REFRESH] Refreshing data for league ${DEFAULT_LEAGUE_ID}, season ${seasonId}`);
+
+    // 1. Update official snapshot
+    console.log('[AUTO-REFRESH] Updating official snapshot...');
+    const report = await buildOfficialReport({ 
+      leagueId: DEFAULT_LEAGUE_ID, 
+      seasonId, 
+      req: { headers: {} } // Mock request object
+    });
+    
+    if (report) {
+      const snapshot = { seasonId, leagueId: DEFAULT_LEAGUE_ID, ...report };
+      
+      // Save to database if available
+      if (DATABASE_URL) {
+        const client = await pool.connect();
+        await client.query(`
+          INSERT INTO reports (season_id, report_data, updated_at) 
+          VALUES ($1, $2, CURRENT_TIMESTAMP)
+          ON CONFLICT (season_id) DO UPDATE SET 
+          report_data = $2, updated_at = CURRENT_TIMESTAMP
+        `, [seasonId, JSON.stringify(snapshot)]);
+        client.release();
+      }
+      
+      await writeJson(`report_${seasonId}.json`, snapshot);
+      console.log('[AUTO-REFRESH] Snapshot updated successfully');
+    }
+
+    // 2. Update rosters
+    console.log('[AUTO-REFRESH] Updating rosters...');
+    
+    const [teamJson, rosJson, setJson] = await Promise.all([
+      espnFetch({ leagueId: DEFAULT_LEAGUE_ID, seasonId, view: "mTeam", req: { headers: {} } }),
+      espnFetch({ leagueId: DEFAULT_LEAGUE_ID, seasonId, view: "mRoster", req: { headers: {} } }),
+      espnFetch({ leagueId: DEFAULT_LEAGUE_ID, seasonId, view: "mSettings", req: { headers: {} } }),
+    ]);
+    
+    const teams = teamJson?.teams || [];
+    if (teams.length > 0) {
+      const names = [...new Set(teams.map(t => teamName(t)))];
+      const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
+      const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
+      
+      // Build roster data (same logic as importEspnTeams)
+      const rosterData = (rosJson?.teams || []).map(t => {
+        const entries = (t.roster?.entries || []).map(e => {
+          const p = e.playerPoolEntry?.player;
+          const fullName = p?.fullName || "Player";
+          const slot = slotMap[e.lineupSlotId] || "—";
+          
+          let position = "";
+          if (p?.defaultPositionId) {
+            position = posIdToName(p.defaultPositionId);
+          }
+          if (!position && p?.eligibleSlots) {
+            const eligiblePos = p.eligibleSlots
+              .map(slotId => posIdToName(slotId))
+              .find(pos => pos && !pos.includes("FLEX") && pos !== "—");
+            if (eligiblePos) position = eligiblePos;
+          }
+          
+          return { 
+            name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
+            slot, 
+            position
+          };
+        });
+
+        // Sort entries (same logic as importEspnTeams)
+        const starters = entries.filter(e => e.slot !== "Bench");
+        const bench = entries.filter(e => e.slot === "Bench");
+        
+        const sortedStarters = [];
+        const starterOrderWithCounts = [
+          { pos: "QB", max: 1 },
+          { pos: "RB", max: 2 }, 
+          { pos: "RB/WR", max: 1 },
+          { pos: "WR", max: 2 },
+          { pos: "TE", max: 1 },
+          { pos: "FLEX", max: 1 },
+          { pos: "D/ST", max: 1 },
+          { pos: "K", max: 1 }
+        ];
+
+        starterOrderWithCounts.forEach(({ pos, max }) => {
+          const playersInPosition = starters.filter(p => p.slot === pos);
+          for (let i = 0; i < max; i++) {
+            if (playersInPosition[i]) {
+              sortedStarters.push(playersInPosition[i]);
+            }
+          }
+        });
+
+        const sortedBench = bench
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(p => ({
+            name: p.position ? `${p.name} (${p.position})` : p.name,
+            slot: p.slot
+          }));
+        
+        const finalEntries = [
+          ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
+          ...sortedBench
+        ];
+        
+        return { 
+          teamName: teamsById[t.id] || `Team ${t.id}`, 
+          entries: finalEntries 
+        };
+      });
+
+      // Save roster data
+      const data = await getLeagueData();
+      data.rosters = data.rosters || {};
+      data.rosters[seasonId] = {
+        rosterData,
+        lastUpdated: new Date().toISOString()
+      };
+      await saveLeagueData(data);
+      
+      console.log(`[AUTO-REFRESH] Updated rosters for ${teams.length} teams`);
+    }
+    
+    console.log('[AUTO-REFRESH] Refresh cycle completed successfully');
+    
+  } catch (error) {
+    console.error('[AUTO-REFRESH] Failed:', error.message);
+  }
+}
+
+// Start auto-refresh cycle (every 10 minutes)
+function startAutoRefresh() {
+  if (autoRefreshInterval) return;
+  
+  console.log('[AUTO-REFRESH] Starting 10-minute refresh cycle');
+  autoRefreshInterval = setInterval(runAutoRefresh, 10 * 60 * 1000);
+  
+  // Run once immediately after 30 seconds
+  setTimeout(runAutoRefresh, 30000);
+}
+
+// =========================
 // Static hosting
 // =========================
 const CLIENT_DIR = path.join(__dirname, "dist");
@@ -1951,11 +2089,13 @@ app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(CLIENT_DIR, "index.html")); 
 });
 
+// Start auto-refresh system
+startAutoRefresh();
+
 // =========================
 // Server startup
 // =========================
 app.listen(PORT, () => { 
   console.log(`Server running on http://localhost:${PORT}`); 
   console.log(`Database: ${DATABASE_URL ? 'PostgreSQL' : 'File system'}`);
-
 });

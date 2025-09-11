@@ -312,17 +312,17 @@ useEffect(() => {
   const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
 
   // Weeks
-const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), currentYear));
-useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), currentYear)); }, []);
+const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), seasonYear));
+useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), seasonYear)); }, [seasonYear]);
 
-  const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])),[data.members]);
+const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])),[data.members]);
 
   // Manual waivers (count within Wed→Tue) - always use current year
 
 const weekKey = weekKeyFrom(selectedWeek);
 const waiversThisWeek = useMemo(
-  () => data.waivers.filter(w => weekKeyFrom(leagueWeekOf(new Date(w.date), currentYear)) === weekKey),
-  [data.waivers, weekKey]
+  () => data.waivers.filter(w => weekKeyFrom(leagueWeekOf(new Date(w.date), seasonYear)) === weekKey),
+  [data.waivers, weekKey, seasonYear]
 );
 const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
 const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
@@ -690,7 +690,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
     announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} />, // Remove seasonYear
+    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} />, 
     activity: <RecentActivityView espn={espn} />,
     transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
     drafts: <DraftsView espn={espn} />,

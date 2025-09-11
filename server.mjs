@@ -402,6 +402,34 @@ app.delete("/api/league-data/weekly", requireAdmin, async (req, res) => {
   }
 });
 
+// Add this new route for editing weekly challenges
+app.post('/api/league-data/weekly/edit', requireAdmin, async (req, res) => {
+  try {
+    const { id, updatedEntry } = req.body;
+    
+    // Find and update the entry
+    const weeklyIndex = data.weeklyList.findIndex(item => item.id === id);
+    if (weeklyIndex === -1) {
+      return res.status(404).json({ error: 'Weekly challenge not found' });
+    }
+    
+    // Update the entry with new data
+    data.weeklyList[weeklyIndex] = {
+      ...data.weeklyList[weeklyIndex],
+      ...updatedEntry,
+      // Parse week number from weekLabel for proper sorting
+      week: parseInt(String(updatedEntry.weekLabel || "").replace(/\D/g, ""), 10) || 0
+    };
+    
+    // Save data
+    await saveData();
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Edit weekly error:', error);
+    res.status(500).json({ error: 'Failed to edit weekly challenge' });
+  }
+});
+
 // === MEMBERS ===
 app.post("/api/league-data/members", requireAdmin, async (req, res) => {
   try {
@@ -1929,4 +1957,5 @@ app.get(/^(?!\/api).*/, (_req, res) => {
 app.listen(PORT, () => { 
   console.log(`Server running on http://localhost:${PORT}`); 
   console.log(`Database: ${DATABASE_URL ? 'PostgreSQL' : 'File system'}`);
+
 });

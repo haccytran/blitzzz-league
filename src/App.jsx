@@ -699,79 +699,6 @@ async function loadOfficialReport(silent=false){
   deleteWaiver={deleteWaiver}
   deleteMember={deleteMember}
 />,
-(
-      <Section title="Waivers & Dues" actions={
-        <div style={{display:"flex", gap:8}}>
-          {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-          <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-          {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
-            if(confirm("Reset waivers and announcements?")) {
-              try {
-                await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
-                await loadServerData();
-              } catch (error) {
-                alert('Reset failed: ' + error.message);
-              }
-            }
-          }}>Reset Season</button>}
-        </div>
-      }>
-        <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
-          <div className="card" style={{padding:16}}>
-            <h3>League Members</h3>
-            <ul style={{listStyle:"none",padding:0,margin:0}}>
-              {data.members.map(m=>(
-                <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-                  <span>{m.name}</span>
-                  <span style={{fontSize:14,color:"#334155"}}>Adds (this week): {waiverCounts[m.id]||0} • Owes: ${waiverOwed[m.id]||0}</span>
-                  {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
-                </li>
-              ))}
-              {data.members.length===0 && <p style={{color:"#64748b"}}>Import teams via League Settings to populate members.</p>}
-            </ul>
-          </div>
-
-          <div className="card" style={{padding:16}}>
-            {isAdmin ? (
-              <>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                  <h3>Log a Pickup</h3>
-                  <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
-                </div>
-                <WaiverForm members={data.members} onAdd={addWaiver} disabled={data.members.length===0} />
-              </>
-            ) : (
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                <h3>Activity (Wed→Tue)</h3>
-                <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
-              </div>
-            )}
-
-            <h4>History (selected week)</h4>
-            <ul style={{listStyle:"none",padding:0,margin:0}}>
-              {waiversThisWeek.map(w=>(
-                <li key={w.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
-                  <span><b>{membersById[w.userId]?.name||"Unknown"}</b> picked up <b>{w.player}</b> on {w.date}</span>
-                  {isAdmin && <button onClick={()=>deleteWaiver(w.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Delete</button>}
-                </li>
-              ))}
-              {waiversThisWeek.length===0 && <p style={{color:"#64748b"}}>No activity this week.</p>}
-            </ul>
-          </div>
-        </div>
-
-        {espnReport && (
-          <div className="card" style={{padding:12, marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-            <div>Official dues snapshot loaded. 
-              <div style={{fontSize:12, color:"#64748b", marginTop:4}}>
-                Last Updated: {new Date().toLocaleString()} 
-              </div>
-            </div>
-            <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-          </div>
-        )}
-      </Section>
-    ),
     dues: <DuesView
       report={espnReport}
       lastSynced={lastSynced}
@@ -834,127 +761,6 @@ async function loadOfficialReport(silent=false){
   );
 }
 
-function WaiversView({ 
-  espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
-  updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember 
-}) {
-  // Calculate waiver data from ESPN report if available
-  const espnWaiverData = useMemo(() => {
-    if (!espnReport?.rawMoves) return { waiversThisWeek: [], waiverCounts: {}, waiverOwed: {} };
-    
-    const weekKey = weekKeyFrom(selectedWeek);
-    
-    // Filter adds from the current week
-    const waiversThisWeek = espnReport.rawMoves.filter(move => {
-      if (move.action !== "ADD" || move.week <= 0) return false;
-      const moveWeek = leagueWeekOf(new Date(move.date), seasonYear);
-      return weekKeyFrom(moveWeek) === weekKey;
-    });
-    
-    // Count adds by team
-    const waiverCounts = {};
-    waiversThisWeek.forEach(move => {
-      waiverCounts[move.team] = (waiverCounts[move.team] || 0) + 1;
-    });
-    
-    // Calculate what each team owes
-    const waiverOwed = {};
-    Object.keys(waiverCounts).forEach(team => {
-      const count = waiverCounts[team] || 0;
-      waiverOwed[team] = Math.max(0, count - 2) * 5;
-    });
-    
-    return { waiversThisWeek, waiverCounts, waiverOwed };
-  }, [espnReport, selectedWeek, seasonYear]);
-
-  const { waiversThisWeek, waiverCounts, waiverOwed } = espnWaiverData;
-
-  return (
-    <Section title="Waivers & Dues" actions={
-      <div style={{display:"flex", gap:8}}>
-        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-        <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-        {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
-          if(confirm("Reset waivers and announcements?")) {
-            try {
-              await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
-              await loadServerData();
-            } catch (error) {
-              alert('Reset failed: ' + error.message);
-            }
-          }
-        }}>Reset Season</button>}
-      </div>
-    }>
-      <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
-        <div className="card" style={{padding:16}}>
-          <h3>League Members (from ESPN data)</h3>
-          <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {espnReport?.totalsRows ? (
-              espnReport.totalsRows.map(row => (
-                <li key={row.name} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-                  <span>{row.name}</span>
-                  <span style={{fontSize:14,color:"#334155"}}>
-                    Adds (this week): {waiverCounts[row.name] || 0} • Owes: ${waiverOwed[row.name] || 0}
-                  </span>
-                </li>
-              ))
-            ) : (
-              data.members.map(m => (
-                <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-                  <span>{m.name}</span>
-                  <span style={{fontSize:14,color:"#334155"}}>No ESPN data available</span>
-                  {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
-                </li>
-              ))
-            )}
-          </ul>
-        </div>
-
-        <div className="card" style={{padding:16}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <h3>Activity (Thu→Wed) - ESPN Data</h3>
-            <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
-          </div>
-
-          <h4>Transactions (selected week)</h4>
-          <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {waiversThisWeek.length > 0 ? waiversThisWeek.map((move, index) => (
-              <li key={index} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
-                <span>
-                  <b>{move.team}</b> picked up <b>{move.player}</b> 
-                  <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
-                </span>
-                <span style={{color:"#64748b"}}>{move.date}</span>
-              </li>
-            )) : (
-              <p style={{color:"#64748b"}}>No activity this week.</p>
-            )}
-          </ul>
-
-          {!espnReport && (
-            <div style={{marginTop:16, padding:12, background:"#fef3c7", borderRadius:6}}>
-              <p style={{margin:0, color:"#92400e"}}>
-                <strong>No ESPN data loaded.</strong> Click "Update Official Snapshot" to load transaction data.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {espnReport && (
-        <div className="card" style={{padding:12, marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-          <div>ESPN transaction data loaded. 
-            <div style={{fontSize:12, color:"#64748b", marginTop:4}}>
-              Last Updated: {espnReport.lastSynced} 
-            </div>
-          </div>
-          <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-        </div>
-      )}
-    </Section>
-  );
-}
 
 /* =========================
    Components
@@ -2353,6 +2159,130 @@ async function editPoll(pollId) {
     </Section>
   );
 }
+
+
+function WaiversView({ 
+  espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
+  updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember 
+}) {
+  // Calculate waiver data from ESPN report if available
+  const espnWaiverData = useMemo(() => {
+    if (!espnReport?.rawMoves) return { waiversThisWeek: [], waiverCounts: {}, waiverOwed: {} };
+    
+    const weekKey = weekKeyFrom(selectedWeek);
+    
+    // Filter adds from the current week
+    const waiversThisWeek = espnReport.rawMoves.filter(move => {
+      if (move.action !== "ADD" || move.week <= 0) return false;
+      const moveWeek = leagueWeekOf(new Date(move.date), seasonYear);
+      return weekKeyFrom(moveWeek) === weekKey;
+    });
+    
+    // Count adds by team
+    const waiverCounts = {};
+    waiversThisWeek.forEach(move => {
+      waiverCounts[move.team] = (waiverCounts[move.team] || 0) + 1;
+    });
+    
+    // Calculate what each team owes
+    const waiverOwed = {};
+    Object.keys(waiverCounts).forEach(team => {
+      const count = waiverCounts[team] || 0;
+      waiverOwed[team] = Math.max(0, count - 2) * 5;
+    });
+    
+    return { waiversThisWeek, waiverCounts, waiverOwed };
+  }, [espnReport, selectedWeek, seasonYear]);
+
+  const { waiversThisWeek, waiverCounts, waiverOwed } = espnWaiverData;
+
+  return (
+    <Section title="Waivers & Dues" actions={
+      <div style={{display:"flex", gap:8}}>
+        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
+        <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
+        {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
+          if(confirm("Reset waivers and announcements?")) {
+            try {
+              await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
+              await loadServerData();
+            } catch (error) {
+              alert('Reset failed: ' + error.message);
+            }
+          }
+        }}>Reset Season</button>}
+      </div>
+    }>
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
+        <div className="card" style={{padding:16}}>
+          <h3>League Members (from ESPN data)</h3>
+          <ul style={{listStyle:"none",padding:0,margin:0}}>
+            {espnReport?.totalsRows ? (
+              espnReport.totalsRows.map(row => (
+                <li key={row.name} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
+                  <span>{row.name}</span>
+                  <span style={{fontSize:14,color:"#334155"}}>
+                    Adds (this week): {waiverCounts[row.name] || 0} • Owes: ${waiverOwed[row.name] || 0}
+                  </span>
+                </li>
+              ))
+            ) : (
+              data.members.map(m => (
+                <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
+                  <span>{m.name}</span>
+                  <span style={{fontSize:14,color:"#334155"}}>No ESPN data available</span>
+                  {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+
+        <div className="card" style={{padding:16}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <h3>Activity (Thu→Wed) - ESPN Data</h3>
+            <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
+          </div>
+
+          <h4>Transactions (selected week)</h4>
+          <ul style={{listStyle:"none",padding:0,margin:0}}>
+            {waiversThisWeek.length > 0 ? waiversThisWeek.map((move, index) => (
+              <li key={index} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
+                <span>
+                  <b>{move.team}</b> picked up <b>{move.player}</b> 
+                  <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
+                </span>
+                <span style={{color:"#64748b"}}>{move.date}</span>
+              </li>
+            )) : (
+              <p style={{color:"#64748b"}}>No activity this week.</p>
+            )}
+          </ul>
+
+          {!espnReport && (
+            <div style={{marginTop:16, padding:12, background:"#fef3c7", borderRadius:6}}>
+              <p style={{margin:0, color:"#92400e"}}>
+                <strong>No ESPN data loaded.</strong> Click "Update Official Snapshot" to load transaction data.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {espnReport && (
+        <div className="card" style={{padding:12, marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+          <div>ESPN transaction data loaded. 
+            <div style={{fontSize:12, color:"#64748b", marginTop:4}}>
+              Last Updated: {espnReport.lastSynced} 
+            </div>
+          </div>
+          <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 
 /* =========================
    Form Components

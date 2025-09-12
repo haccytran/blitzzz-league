@@ -2904,7 +2904,7 @@ function IntroSplash() {
   const [show, setShow] = useState(true);
   useEffect(() => { const t = setTimeout(() => setShow(false), 1600); return () => clearTimeout(t); }, []);
   if (!show) return null;
-  return <div className="splash"><img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 512, height: 512}} /></div>;
+  return <div className="splash"><img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 256, height: 256}} /></div>;
 }
 
 function SyncOverlay({ open, pct, msg }) {

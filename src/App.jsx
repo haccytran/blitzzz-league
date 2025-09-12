@@ -2902,7 +2902,7 @@ function slotIdToName(counts) {
    ========================= */
 function IntroSplash() {
   const [show, setShow] = useState(true);
-  useEffect(() => { const t = setTimeout(() => setShow(false), 1600); return () => clearTimeout(t); }, []);
+  useEffect(() => { const t = setTimeout(() => setShow(false), 4000); return () => clearTimeout(t); }, []);
   if (!show) return null;
   return <div className="splash"><img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 256, height: 256}} /></div>;
 }

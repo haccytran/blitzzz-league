@@ -176,5 +176,5 @@ button { color: var(--ink); }
 }
 
 .splash img {
-  animation: fadeInOut 4.0s ease-in-out;
+  animation: fadeInOut 6.0s ease-in-out;
 }

@@ -731,7 +731,7 @@ async function loadOfficialReport(silent=false){
             }}
           >
             <div className="brand">
-              <Logo size={96}/>
+              <img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 128, height: 128}} />
               <div className="brand-title">Blitzzz <span>Fantasy Football League</span></div>
             </div>
             <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={setActive}/>
@@ -2904,7 +2904,7 @@ function IntroSplash() {
   const [show, setShow] = useState(true);
   useEffect(() => { const t = setTimeout(() => setShow(false), 1600); return () => clearTimeout(t); }, []);
   if (!show) return null;
-  return <div className="splash"><Logo size={160} /></div>;
+  return <div className="splash"><img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 512, height: 512}} /></div>;
 }
 
 function SyncOverlay({ open, pct, msg }) {

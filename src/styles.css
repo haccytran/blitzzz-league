@@ -168,3 +168,13 @@ button { color: var(--ink); }
     grid-template-columns: 220px minmax(0,1fr); /* narrower sidebar to fit phones */
   }
 }
+
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.8); }
+}
+
+.splash img {
+  animation: fadeInOut 1.6s ease-in-out;
+}

@@ -2073,8 +2073,8 @@ async function runAutoRefresh() {
 function startAutoRefresh() {
   if (autoRefreshInterval) return;
   
-  console.log('[AUTO-REFRESH] Starting 10-minute refresh cycle');
-  autoRefreshInterval = setInterval(runAutoRefresh, 10 * 60 * 1000);
+  console.log('[AUTO-REFRESH] Starting 5-minute refresh cycle');
+  autoRefreshInterval = setInterval(runAutoRefresh, 5 * 60 * 1000);
   
   // Run once immediately after 30 seconds
   setTimeout(runAutoRefresh, 30000);
@@ -2099,3 +2099,4 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`); 
   console.log(`Database: ${DATABASE_URL ? 'PostgreSQL' : 'File system'}`);
 });
+

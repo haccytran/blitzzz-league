@@ -1,6 +1,8 @@
-// src/App.jsx - Complete Server-Side Version
+// src/App.jsx - Version 3.0 with Subdomain Support
 import React, { useEffect, useMemo, useState, useRef } from "react";
-import Logo from "./Logo.jsx";
+import { LandingPage } from './components/LandingPage.jsx';
+import { useLeagueConfig } from './hooks/useLeagueConfig.js';
+import { createLeagueAPI, createLeagueStorageKey } from './utils/leagueStorage.js';
 
 /* =========================
    Global Config
@@ -11,7 +13,30 @@ const DEFAULT_SEASON = import.meta.env.VITE_ESPN_SEASON || new Date().getFullYea
 const LEAGUE_TZ = "America/Los_Angeles";
 const WEEK_START_DAY = 4; // Thursday
 
+// This will be updated per league - keeping as fallback
 const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
+
+// Function to detect league from subdomain
+function getLeagueFromSubdomain() {
+  const hostname = window.location.hostname;
+  console.log('Current hostname:', hostname);
+  
+  // Check for subdomain patterns
+  if (hostname.includes('blitzzz.')) {
+    return 'blitzzz';
+  } else if (hostname.includes('sculpin.')) {
+    return 'sculpin';
+  }
+  
+  // Fallback: check for localhost development patterns
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    // Check URL parameters for development
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('league');
+  }
+  
+  return null;
+}
 
 /* ---- playful roasts for wrong commissioner password ---- */
 const ROASTS = [
@@ -60,8 +85,8 @@ function downloadCSV(name, rows){
   const a=document.createElement("a"); a.href=url; a.download=name; a.click();
   URL.revokeObjectURL(url);
 }
-const btnPri = { background:"#0ea5e9", color:"#fff" };
-const btnSec = { background:"#e5e7eb", color:"#0b1220" };
+
+
 
 /* =========================
    Week math helpers
@@ -142,28 +167,6 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, auth =
 }
 
 /* =========================
-   Server API helpers
-   ========================= */
-async function apiCall(endpoint, options = {}) {
-  const url = API(endpoint);
-  const config = {
-    headers: { "Content-Type": "application/json" },
-    ...options
-  };
-  
-  if (config.method && config.method !== 'GET' && !config.headers["x-admin"]) {
-    config.headers["x-admin"] = ADMIN_ENV;
-  }
-  
-  const response = await fetch(url, config);
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || `HTTP ${response.status}`);
-  }
-  return response.json();
-}
-
-/* =========================
    Local storage hook for non-server data
    ========================= */
 function useStored(key, initial=""){
@@ -173,17 +176,120 @@ function useStored(key, initial=""){
 }
 
 /* =========================
-   App Root
+   App Root with Subdomain Detection
    ========================= */
-export default function App(){ return <LeagueHub/> }
+export default function App() {
+  const [selectedLeague, setSelectedLeague] = useState(null);
 
-function LeagueHub(){
+  // Check for subdomain or URL parameter on startup
+  useEffect(() => {
+    const leagueFromSubdomain = getLeagueFromSubdomain();
+    console.log('Detected league from subdomain/URL:', leagueFromSubdomain);
+
+    if (leagueFromSubdomain) {
+      // Import the config to validate the league exists
+      import('./config/leagueConfigs').then(({ leagueConfigs }) => {
+        console.log('Available league configs:', Object.keys(leagueConfigs));
+        console.log('Looking for config:', leagueFromSubdomain);
+
+        if (leagueConfigs[leagueFromSubdomain]) {
+          console.log('Setting selected league to:', { id: leagueFromSubdomain, ...leagueConfigs[leagueFromSubdomain] });
+          setSelectedLeague({ id: leagueFromSubdomain, ...leagueConfigs[leagueFromSubdomain] });
+        } else {
+          console.log('League not found in configs');
+          // Don't clear URL - let them see the landing page
+        }
+      });
+    }
+  }, []);
+
+
+  // Handle league selection from landing page
+  const handleLeagueSelect = (league) => {
+    console.log('League selected from landing page:', league);
+    setSelectedLeague(league);
+    
+    // For development, add URL parameter
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      const url = new URL(window.location);
+      url.searchParams.set('league', league.id);
+      window.history.pushState({}, '', url);
+    }
+  };
+
+  // Handle going back to league selection
+  const handleBackToSelection = () => {
+    setSelectedLeague(null);
+    
+    // For development, remove URL parameter
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      const url = new URL(window.location);
+      url.searchParams.delete('league');
+      window.history.pushState({}, '', url);
+    }
+  };
+
+  if (!selectedLeague) {
+    return <LandingPage onLeagueSelect={handleLeagueSelect} />;
+  }
+
+  return <LeagueHub selectedLeague={selectedLeague} onBackToSelection={handleBackToSelection} />;
+}
+
+
+   function LeagueHub({ selectedLeague, onBackToSelection }){
   useEffect(()=>{ document.title = "Blitzzz Fantasy Football League"; }, []);
    const currentYear = new Date().getFullYear();
+const config = useLeagueConfig(selectedLeague);
+
+console.log('=== LEAGUE DEBUGGING ===');
+console.log('selectedLeague object:', selectedLeague);
+console.log('config returned:', config);
+console.log('config.id:', config.id);
+console.log('URL params:', window.location.search);
+
+const btnPri = config?.id === 'sculpin' 
+  ? { background:"#FFC425", color:"#2F241D" }
+  : config?.id === 'blitzzz'
+  ? { background:"#0080C6", color:"#FFFFFF" }
+  : { background:"#0ea5e9", color:"#fff" };
+
+const btnSec = config?.id === 'sculpin'
+  ? { background:"#fff8e1", color:"#2F241D", border:"1px solid #FFC425" }
+  : config?.id === 'blitzzz'
+  ? { background:"#bce1fc", color:"#0080C6", border:"1px solid #0080C6" }
+  : { background:"#e5e7eb", color:"#0b1220" };
+
+/* =========================
+   Server API helpers
+   ========================= */
+async function apiCallLeague(endpoint, options = {}) {
+  const leagueAPI = createLeagueAPI(config.id);
+  const url = leagueAPI.API(endpoint);
+
+  console.log('League ID:', config.id);  // ← Add this
+  console.log('Generated URL:', url);    // ← Add this
+
+  const configObj = {
+    headers: { "Content-Type": "application/json" },
+    ...options
+  };
+  
+  if (configObj.method && configObj.method !== 'GET' && !configObj.headers["x-admin"]) {
+    configObj.headers["x-admin"] = ADMIN_ENV;
+  }
+  
+  const response = await fetch(url, configObj);
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
   const VALID_TABS = [
-    "announcements","activity","weekly","waivers","dues",
-     "transactions","drafts","rosters","settings","trading","polls" 
-  ];
+  "announcements","activity","weekly","highestscorer","waivers","dues",
+   "transactions","drafts","rosters","settings","trading","polls" 
+];
 
   const initialTabFromHash = () => {
     const h = (window.location.hash || "").replace("#","").trim();
@@ -225,44 +331,74 @@ function LeagueHub(){
     loadServerData();
   }, []);
 
-  async function loadServerData() {
-    try {
-      const serverData = await apiCall('/api/league-data');
-      setData(serverData);
-    } catch (error) {
-      console.error('Failed to load server data:', error);
-    }
+async function loadServerData() {
+  try {
+    const serverData = await apiCallLeague('/data').catch(() => ({
+      announcements: [],
+      weeklyList: [],
+      members: [],
+      waivers: [],
+      buyins: {},
+      duesPayments: {}, 
+      tradeBlock: [],
+      leagueSettingsHtml: "",
+      lastUpdated: null
+    }));
+    setData(serverData);
+  } catch (error) {
+    console.error('Failed to load server data:', error);
   }
-
+}
   // Commissioner mode
-  const [isAdmin,setIsAdmin] = useState(localStorage.getItem("ffl_is_admin")==="1");
+  const adminKey = createLeagueStorageKey(config.id, 'is_admin');
+   const [isAdmin,setIsAdmin] = useState(localStorage.getItem(adminKey)==="1");
   function nextRoast(){
     const idx = Number(localStorage.getItem("ffl_roast_idx")||"0");
     const msg = ROASTS[idx % ROASTS.length];
     localStorage.setItem("ffl_roast_idx", String(idx+1));
     return msg;
   }
-  const login = ()=>{
-    const pass = prompt("Enter Commissioner Password:");
-    if(pass===ADMIN_ENV){
-      setIsAdmin(true);
-      localStorage.setItem("ffl_is_admin","1");
-      alert("Commissioner mode enabled");
-    } else {
-      alert(nextRoast());
-    }
-  };
-  const logout = ()=>{ setIsAdmin(false); localStorage.removeItem("ffl_is_admin"); };
 
-// ESPN config
-const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: "" });
+     const login = ()=>{
+     const pass = prompt("Enter Commissioner Password:");
+     const correctPassword = config.adminPassword || ADMIN_ENV; // Use league-specific password if available
+     if(pass === correctPassword){
+       setIsAdmin(true);
+       localStorage.setItem(adminKey,"1");
+       alert("Commissioner mode enabled");
+     } else {
+       alert(nextRoast());
+     }
+   };
+  const logout = ()=>{ setIsAdmin(false); localStorage.removeItem(adminKey); };
+
+const switchLeague = () => {
+     onBackToSelection(); // Remove the confirm dialog - go directly back
+   };
+
+// ESPN config (replace the old useState)
+
+const [espn, setEspn] = useState({ 
+  leagueId: "", 
+  seasonId: "" 
+});
+
+// Add this useEffect right after the espn useState
+useEffect(() => {
+  if (config && config.espn) {
+    setEspn({
+      leagueId: config.espn.leagueId,
+      seasonId: config.espn.defaultSeason
+    });
+  }
+}, [config]);
 
 // Define loadDisplaySeason AFTER espn state exists
 
 async function loadDisplaySeason() {
   try {
     console.log('Loading display season from server...');
-    const response = await apiCall('/api/report/default-season');
+    const response = await fetch(API('/api/report/default-season'));
     console.log('Server default season response:', response);
     
     // More robust season extraction
@@ -287,6 +423,28 @@ async function loadDisplaySeason() {
     setEspn(prev => ({ ...prev, seasonId: DEFAULT_SEASON }));
   }
 }
+
+// Dynamic title, favicon, and body class for theming
+useEffect(() => {
+  document.title = config.displayName;
+  const favicon = document.querySelector('link[rel="icon"]');
+  if (favicon) favicon.href = config.favicon;
+  
+  // Add league-specific body class for styling
+  document.body.className = ''; // Clear existing classes
+  if (config.id === 'sculpin') {
+    document.body.classList.add('sculpin-league');
+  } else if (config.id === 'blitzzz') {
+    document.body.classList.add('blitzzz-league');
+  }
+}, [config]);
+
+// Cleanup body class when component unmounts
+useEffect(() => {
+  return () => {
+    document.body.className = ''; // Clear league classes on unmount
+  };
+}, []);
 
 // Load default season after espn state is initialized - with debugging
 useEffect(() => {
@@ -320,7 +478,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
   // Server-side CRUD operations
   const addAnnouncement = async (html) => {
     try {
-      await apiCall('/api/league-data/announcements', {
+      await apiCallLeague('/announcements', {
         method: 'POST',
         body: JSON.stringify({ html })
       });
@@ -332,7 +490,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteAnnouncement = async (id) => {
     try {
-      await apiCall('/api/league-data/announcements', {
+      await apiCallLeague('/announcements', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -344,7 +502,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addWeekly = async (entry) => {
     try {
-      await apiCall('/api/league-data/weekly', {
+      await apiCallLeague('/weekly', {
         method: 'POST',
         body: JSON.stringify({ entry })
       });
@@ -357,7 +515,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
   const deleteWeekly = async (id) => {
     if (!confirm("Delete this challenge?")) return;
     try {
-      await apiCall('/api/league-data/weekly', {
+      await apiCallLeague('/weekly', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -370,7 +528,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
    const editWeekly = async (id, updatedEntry) => {
   try {
     // First, delete the existing entry
-    await apiCall('/api/league-data/weekly', {
+    await apiCallLeague('/weekly', {
       method: 'DELETE',
       body: JSON.stringify({ id })
     });
@@ -382,7 +540,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
       createdAt: Date.now()
     };
     
-    await apiCall('/api/league-data/weekly', {
+    await apiCallLeague('/weekly', {
       method: 'POST',
       body: JSON.stringify({ entry: newEntry })
     });
@@ -395,7 +553,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteMember = async (id) => {
     try {
-      await apiCall('/api/league-data/members', {
+      await apiCallLeague('/members', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -407,7 +565,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addWaiver = async (userId, player, date) => {
     try {
-      await apiCall('/api/league-data/waivers', {
+      await apiCallLeague('/waivers', {
         method: 'POST',
         body: JSON.stringify({ userId, player, date: date || today() })
       });
@@ -419,7 +577,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteWaiver = async (id) => {
     try {
-      await apiCall('/api/league-data/waivers', {
+      await apiCallLeague('/waivers', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -431,7 +589,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addTrade = async (trade) => {
     try {
-      await apiCall('/api/league-data/trading', {
+      await apiCallLeague('/trading', {
         method: 'POST',
         body: JSON.stringify({ trade })
       });
@@ -443,7 +601,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const updateBuyIns = async (seasonKey, updates) => {
     try {
-      await apiCall('/api/league-data/buyins', {
+      await apiCallLeague('/buyins', {
         method: 'POST',
         body: JSON.stringify({ seasonKey, updates })
       });
@@ -455,7 +613,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteTrade = async (id) => {
     try {
-      await apiCall('/api/league-data/trading', {
+      await apiCallLeague('/trading', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -467,7 +625,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const saveLeagueSettings = async (html) => {
     try {
-      await apiCall('/api/league-data/settings', {
+      await apiCallLeague('/settings', {
         method: 'POST',
         body: JSON.stringify({ html })
       });
@@ -572,7 +730,7 @@ starterOrderWithCounts.forEach(({ pos, max }) => {
     });
     
     // Save both member names and roster data to server
-    await apiCall('/api/league-data/import-teams', {
+    await apiCallLeague('/import-teams', {
       method: 'POST',
       body: JSON.stringify({ 
         teams: names,
@@ -602,7 +760,7 @@ starterOrderWithCounts.forEach(({ pos, max }) => {
 
 const updateDuesPayments = async (seasonId, updates) => {
   try {
-    await apiCall('/api/league-data/dues-payments', {
+    await apiCallLeague('/dues-payments', {
       method: 'POST',
       body: JSON.stringify({ seasonId, updates })
     });
@@ -617,7 +775,7 @@ async function loadOfficialReport(silent=false){
     if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
     
     // Load the snapshot for the current season
-    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}&leagueId=${config.id}`));
     
     if (r.ok){
       const j = await r.json();
@@ -656,11 +814,11 @@ async function loadOfficialReport(silent=false){
   try{
     const r = await fetch(API(`/api/report/update?jobId=${jobId}`), {
       method: "POST",
-      headers: { "Content-Type":"application/json", "x-admin": ADMIN_ENV },
+      headers: { "Content-Type":"application/json", "x-admin": config.adminPassword },
       body: JSON.stringify({ 
         leagueId: espn.leagueId, 
         seasonId: espn.seasonId,
-        updateDefaultSeason: false // Add this flag
+        currentLeagueId: config.id // Add this line - passes current league ID
       })
     });
     if(!r.ok){
@@ -679,12 +837,13 @@ async function loadOfficialReport(silent=false){
 
   /* ---- Views ---- */
   const views = {
-    announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} />, 
-    activity: <RecentActivityView espn={espn} />,
-    transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
-    drafts: <DraftsView espn={espn} />,
-    waivers: <WaiversView 
+  announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
+  ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} btnPri={btnPri} btnSec={btnSec} /> }),
+  ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
+  activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
+  transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} btnPri={btnPri} btnSec={btnSec} />,
+  drafts: <DraftsView espn={espn} btnPri={btnPri} btnSec={btnSec} />,
+  waivers: <WaiversView 
   espnReport={espnReport}
   isAdmin={isAdmin}
   data={data}
@@ -698,28 +857,32 @@ async function loadOfficialReport(silent=false){
   addWaiver={addWaiver}
   deleteWaiver={deleteWaiver}
   deleteMember={deleteMember}
+  btnPri={btnPri}
+  btnSec={btnSec}
 />,
-    dues: <DuesView
-      report={espnReport}
-      lastSynced={lastSynced}
-      loadOfficialReport={loadOfficialReport}
-      updateOfficialSnapshot={updateOfficialSnapshot}
-      isAdmin={isAdmin}
-      data={data}
-      setData={setData}
-      seasonYear={seasonYear}
-      updateBuyIns={updateBuyIns}
-      updateDuesPayments={updateDuesPayments}
-    />,
-    rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" />,
-    settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
-    trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>,
-    polls: <PollsView {...{isAdmin, members:data.members, espn}}/>
-  };
+  dues: <DuesView
+  report={espnReport}
+  lastSynced={lastSynced}
+  loadOfficialReport={loadOfficialReport}
+  updateOfficialSnapshot={updateOfficialSnapshot}
+  isAdmin={isAdmin}
+  data={data}
+  setData={setData}
+  seasonYear={seasonYear}
+  updateBuyIns={updateBuyIns}
+  updateDuesPayments={updateDuesPayments}
+  btnPri={btnPri}
+  btnSec={btnSec}
+/>,
+  rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
+  settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}} btnPri={btnPri} btnSec={btnSec}/>,
+  trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}} btnPri={btnPri} btnSec={btnSec}/>,
+  polls: <PollsView {...{isAdmin, members:data.members, espn, config}} btnPri={btnPri} btnSec={btnSec}/>
+};
 
   return (
-    <>
-      <IntroSplash/>
+  <>
+    <IntroSplash selectedLeague={selectedLeague}/>
       <div className="container">
         <div className="card app-shell" style={{overflow:"auto"}}>
           <aside
@@ -731,12 +894,29 @@ async function loadOfficialReport(silent=false){
             }}
           >
             <div className="brand">
-              <img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 128, height: 128}} />
-              <div className="brand-title">Blitzzz <span>Fantasy Football League</span></div>
-            </div>
+     <img src={config.logo} alt={`${config.name} Logo`} style={{width: 128, height: 128}} />
+     <div className="brand-title">{config.name} <span>Fantasy Football League</span></div>
+     
+     <button 
+       className="btn" 
+       onClick={switchLeague}
+       style={{
+         marginTop: 8,
+         fontSize: 12,
+         padding: "4px 12px",
+         background: "rgba(255, 255, 255, 0.1)",
+         color: "#e2e8f0",
+         border: "1px solid rgba(255, 255, 255, 0.2)",
+         borderRadius: 6
+       }}
+     >
+       ← Switch League
+     </button>
+   </div>
             <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={setActive}/>
-            <NavBtn id="weekly" label="🗓 Weekly Challenges" active={active} onClick={setActive}/>
-            <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={setActive}/> 
+{config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={setActive}/>}
+{config.id === 'sculpin' && <NavBtn id="highestscorer" label="🏆 Highest Scorer" active={active} onClick={setActive}/>}
+<NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={setActive}/> 
             <NavBtn id="waivers" label="💵 Waivers" active={active} onClick={setActive}/>
             <NavBtn id="dues" label="🧾 Dues" active={active} onClick={setActive}/>
             <NavBtn id="transactions" label="📜 Transactions" active={active} onClick={setActive}/>
@@ -761,6 +941,17 @@ async function loadOfficialReport(silent=false){
   );
 }
 
+function posIdToName(id) {
+  const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };
+  return map?.[id] || "—";
+}
+
+function slotIdToName(counts) {
+  const map = { 0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench", 21: "IR", 23: "FLEX", 24: "EDR", 25: "RDP", 26: "RDP", 27: "RDP", 28: "Head Coach" };
+  const res = {};
+  Object.keys(counts).forEach(k => res[k] = map[k] || `Slot ${k}`);
+  return res;
+}
 
 /* =========================
    Components
@@ -801,7 +992,7 @@ function Section({title, actions, children}){
   );
 }
 
-function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement, espn, seasonYear}){
+function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement, espn, seasonYear, btnPri, btnSec}){
   return (
     <Section title="Announcements" actions={
       <>
@@ -809,7 +1000,8 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
         <button className="btn" style={btnSec} onClick={()=>downloadCSV("league-data-backup.csv", [["Exported", new Date().toLocaleString()]],)}>Export</button>
       </>
     }>
-      {isAdmin && <AnnouncementEditor onPost={(html) => addAnnouncement(html)} disabled={!isAdmin} />}
+      {isAdmin && <AnnouncementEditor onPost={(html) => addAnnouncement(html)} disabled={!isAdmin} btnPri={btnPri} btnSec={btnSec} />}
+
       <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 12 }}>
         {data.announcements.map((a) => (
           <li key={a.id} className="card" style={{ padding: 16 }}>
@@ -840,7 +1032,7 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
   );
 }
 
-function RecentActivityView({ espn }) {
+function RecentActivityView({ espn, config, btnPri, btnSec }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activities, setActivities] = useState([]);
@@ -850,7 +1042,7 @@ async function loadReport() {
   setLoading(true);
   setError("");
   try {
-    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}&leagueId=${config.id}`));
     if (r.ok) {
       const reportData = await r.json();
       setReport(reportData);
@@ -963,7 +1155,7 @@ async function loadReport() {
   );
 }
 
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear }) {
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear, btnPri, btnSec }) {
   const [editingId, setEditingId] = useState(null);
   const currentYear = new Date().getFullYear();
   const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
@@ -999,7 +1191,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
 
   return (
     <Section title="Weekly Challenges">
-      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} />}
+      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} btnPri={btnPri} btnSec={btnSec} />}
       <div className="grid" style={{ gap: 12, marginTop: 12 }}>
         {list.length === 0 && (
           <div className="card" style={{ padding: 16, color: "#64748b" }}>
@@ -1014,13 +1206,15 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
             <div key={item.id} className="card" style={{ padding: 16 }}>
               {isEditing ? (
                 <WeeklyEditForm 
-                  item={item} 
-                  onSave={(updatedEntry) => {
-                    editWeekly(item.id, updatedEntry);
-                    setEditingId(null);
-                  }}
-                  onCancel={() => setEditingId(null)}
-                />
+  item={item} 
+  onSave={(updatedEntry) => {
+    editWeekly(item.id, updatedEntry);
+    setEditingId(null);
+  }}
+  onCancel={() => setEditingId(null)}
+  btnPri={btnPri}
+  btnSec={btnSec}
+/>
               ) : (
                 <>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1070,7 +1264,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
   );
 }
 
-function WeeklyEditForm({ item, onSave, onCancel }) {
+function WeeklyEditForm({ item, onSave, onCancel, btnPri, btnSec }) {
   const [weekLabel, setWeekLabel] = useState(item.weekLabel || "");
   const [title, setTitle] = useState(item.title || "");
   const [text, setText] = useState(item.text || "");
@@ -1120,7 +1314,7 @@ function WeeklyEditForm({ item, onSave, onCancel }) {
 
 // DUES PAYMENT TRACKER
 
-function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDuesPayments }) {
+function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDuesPayments, btnPri, btnSec }) {
  const displayYear = new Date().getFullYear();
   if (!report || !report.totalsRows) return null;
 
@@ -1270,8 +1464,9 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
   );
 }
 
-function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns, updateDuesPayments 
+function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns, updateDuesPayments, btnPri, btnSec 
 }) {
+
   useEffect(() => {
     if (!isAdmin && !report) {
       loadOfficialReport(true); // silent=true to avoid showing sync overlay
@@ -1321,13 +1516,15 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
 
   {/* New Dues Payment Tracker */}
   <DuesPaymentTracker
-    isAdmin={isAdmin}
-    data={data}
-    setData={setData}
-    seasonId={seasonYear}
-    report={report}
-    updateDuesPayments={updateDuesPayments}
-  />
+  isAdmin={isAdmin}
+  data={data}
+  setData={setData}
+  seasonId={seasonYear}
+  report={report}
+  updateDuesPayments={updateDuesPayments}
+  btnPri={btnPri}
+  btnSec={btnSec}
+/>
 
 <PaymentSection
   isAdmin={isAdmin}
@@ -1373,7 +1570,7 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
   );
 }
 
-function TransactionsView({ report, loadOfficialReport }) {
+function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
   // MOVE ALL HOOKS TO THE VERY TOP - BEFORE ANY OTHER CODE
   const [team, setTeam] = useState("");
   const [action, setAction] = useState("");
@@ -1539,62 +1736,66 @@ function TransactionsView({ report, loadOfficialReport }) {
   );
 }
 
-function DraftsView({ espn }) {
+function DraftsView({ espn, btnPri, btnSec }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [draftData, setDraftData] = useState(null);
 
   const loadDraftData = async () => {
-    if (!espn.leagueId || !espn.seasonId) {
-      setError("Set League ID and Season in League Settings first.");
-      return;
+  if (!espn.leagueId || !espn.seasonId) {
+    setError("Set League ID and Season in League Settings first.");
+    return;
+  }
+
+  setLoading(true);
+  setError("");
+  
+  try {
+    // Get team names
+    const teamJson = await fetchEspnJson({ 
+      leagueId: espn.leagueId, 
+      seasonId: espn.seasonId, 
+      view: "mTeam" 
+    });
+    const teamNames = Object.fromEntries(
+      (teamJson?.teams || []).map(t => [t.id, teamName(t)])
+    );
+
+    // Get draft data - use direct API call instead of apiCall
+    const response = await fetch(API(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
     }
+    const data = await response.json();
+    const picks = data.picks || [];
 
-    setLoading(true);
-    setError("");
-    
-    try {
-      // Get team names
-      const teamJson = await fetchEspnJson({ 
-        leagueId: espn.leagueId, 
-        seasonId: espn.seasonId, 
-        view: "mTeam" 
+    // Group by team and add team names
+    const draftsByTeam = picks.reduce((acc, pick) => {
+      const team = teamNames[pick.teamId] || `Team ${pick.teamId}`;
+      if (!acc[team]) acc[team] = [];
+      acc[team].push({
+        round: pick.round,
+        pickNumber: pick.pickNumber,
+        player: pick.playerName || `Player #${pick.playerId}`,
+        playerId: pick.playerId
       });
-      const teamNames = Object.fromEntries(
-        (teamJson?.teams || []).map(t => [t.id, teamName(t)])
-      );
+      return acc;
+    }, {});
 
-      // Get draft data
-      const response = await apiCall(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`);
-      const picks = response.picks || [];
+    // Sort picks within each team by pick number
+    Object.values(draftsByTeam).forEach(teamPicks => {
+      teamPicks.sort((a, b) => (a.pickNumber || 0) - (b.pickNumber || 0));
+    });
 
-      // Group by team and add team names
-      const draftsByTeam = picks.reduce((acc, pick) => {
-        const team = teamNames[pick.teamId] || `Team ${pick.teamId}`;
-        if (!acc[team]) acc[team] = [];
-        acc[team].push({
-          round: pick.round,
-          pickNumber: pick.pickNumber,
-          player: pick.playerName || `Player #${pick.playerId}`,
-          playerId: pick.playerId
-        });
-        return acc;
-      }, {});
+    setDraftData({ draftsByTeam, totalPicks: picks.length });
 
-      // Sort picks within each team by pick number
-      Object.values(draftsByTeam).forEach(teamPicks => {
-        teamPicks.sort((a, b) => (a.pickNumber || 0) - (b.pickNumber || 0));
-      });
-
-      setDraftData({ draftsByTeam, totalPicks: picks.length });
-
-    } catch (err) {
-      console.error('Failed to load draft data:', err);
-      setError("Failed to load draft data: " + err.message);
-    }
-    
-    setLoading(false);
-  };
+  } catch (err) {
+    console.error('Failed to load draft data:', err);
+    setError("Failed to load draft data: " + err.message);
+  }
+  
+  setLoading(false);
+};
 
   useEffect(() => {
     loadDraftData();
@@ -1657,7 +1858,7 @@ function DraftsView({ espn }) {
   );
 }
 
-function Rosters({ leagueId, seasonId }) {
+function Rosters({ leagueId, seasonId, apiCallLeague, btnPri, btnSec }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
@@ -1683,8 +1884,8 @@ useEffect(() => {
     setLoading(true);
     setError("");
     try {
-      // First try to load server-cached roster data
-      const response = await apiCall(`/api/league-data/rosters?seasonId=${seasonId}`);
+      // First try to load server-cached roster data using league-specific API
+      const response = await apiCallLeague(`/rosters?seasonId=${seasonId}`);
       if (response.rosterData && response.rosterData.length > 0) {
         // Use server-stored roster data
         setTeams(response.rosterData);
@@ -1696,6 +1897,7 @@ useEffect(() => {
           fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
         ]);
         
+        // Rest of the ESPN processing code stays the same...
         const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
         const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
         const items = (rosJson?.teams || []).map(t => {
@@ -1705,9 +1907,9 @@ useEffect(() => {
             const slot = slotMap[e.lineupSlotId] || "—";
             
             const position = p?.defaultPositionId ? posIdToName(p.defaultPositionId) : "";
-const displayName = slot === "Bench" 
-  ? (position ? `${fullName} (${position})` : fullName)
-  : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+            const displayName = slot === "Bench" 
+              ? (position ? `${fullName} (${position})` : fullName)
+              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
             
             return { name: displayName, slot };
           });
@@ -1731,7 +1933,6 @@ const displayName = slot === "Bench"
     setLoading(false);
   })();
 }, [leagueId, seasonId]);
-
   return (
     <Section title="Rosters" actions={<span className="badge">Cached from Import</span>}>
       {!seasonId && <p style={{ color: "#64748b" }}>Set your ESPN Season in <b>League Settings</b>.</p>}
@@ -1766,7 +1967,8 @@ const displayName = slot === "Bench"
   );
 }
 
-function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, data, saveLeagueSettings }) {
+function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, data, saveLeagueSettings, btnPri, btnSec }) {
+
   const [editing, setEditing] = useState(false);
 
   const actions = isAdmin ? (
@@ -1821,10 +2023,10 @@ function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, data, saveLeagu
   );
 }
 
-function TradingView({ isAdmin, addTrade, deleteTrade, data }) {
+function TradingView({ isAdmin, addTrade, deleteTrade, data, btnPri, btnSec }) {
   return (
     <Section title="Trading Block">
-      {isAdmin && <TradeForm onSubmit={addTrade} />}
+      {isAdmin && <TradeForm onSubmit={addTrade} btnPri={btnPri} btnSec={btnSec} />}
       <div className="grid">
         {data.tradeBlock.length === 0 && <p style={{ color: "#64748b" }}>Nothing on the block yet.</p>}
         {data.tradeBlock.map(t => (
@@ -1844,43 +2046,98 @@ function TradingView({ isAdmin, addTrade, deleteTrade, data }) {
   );
 }
 
-function PollsView({ isAdmin, members, espn }) {
+function PollsView({ isAdmin, members, espn, config, btnPri, btnSec }) {
   const seasonKey = String(espn?.seasonId ?? "unknown");
   const [teamCode, setTeamCode] = useStored(`poll-teamcode:${seasonKey}`, "");
 
   const [polls, setPolls] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-
-  async function loadPolls() {
-    setLoading(true);
-    setErr("");
-    try {
-      const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}`));
-      const j = await r.json();
-      setPolls(j.polls || []);
-    } catch (e) {
-      setErr("Failed to load polls");
-    }
-    setLoading(false);
-  }
-  useEffect(() => { loadPolls(); }, []);
-
+  const [voteChoice, setVoteChoice] = useState("");
+  const [activePollId, setActivePollId] = useState("");
   const [createQ, setCreateQ] = useState("");
   const [createOpts, setCreateOpts] = useState("Yes\nNo");
-  async function createPoll() {
-    const opts = createOpts.split("\n").map(s => s.trim()).filter(Boolean);
-    if (!createQ || opts.length < 2) return alert("Enter a question and at least two options.");
+  const [showClosed, setShowClosed] = useState(false);
+
+  useEffect(() => { if (polls.length > 0 && !activePollId) setActivePollId(polls[0].id); }, [polls, activePollId]);
+
+
+  async function loadPolls() {
+  setLoading(true);
+  setErr("");
+  try {
+    const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}&leagueId=${config.id}`));  // ← ADD &leagueId=${config.id}
+    if (!r.ok) {
+      throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    }
+    const j = await r.json();
+    console.log('Raw API response:', j);
+    console.log('Polls array:', j.polls);
+    
+    setPolls(j.polls || []);
+    
+    // If we have polls, make sure one is selected
+    if ((j.polls || []).length > 0 && !activePollId) {
+      setActivePollId(j.polls[0].id);
+    }
+    
+  } catch (e) {
+    console.error('Failed to load polls:', e);
+    setErr("Failed to load polls: " + e.message);
+  }
+  setLoading(false);
+}
+
+  useEffect(() => { loadPolls(); }, []);
+
+ 
+
+async function createPoll() {
+  console.log('Creating poll with:', { question: createQ, options: createOpts });
+  const opts = createOpts.split("\n").map(s => s.trim()).filter(Boolean);
+  console.log('Parsed options:', opts);
+  
+  if (!createQ || opts.length < 2) {
+    console.log('Validation failed:', { hasQuestion: !!createQ, optionsCount: opts.length });
+    return alert("Enter a question and at least two options.");
+  }
+  
+  try {
     const r = await fetch(API("/api/polls/create"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
-      body: JSON.stringify({ question: createQ, options: opts })
+      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      body: JSON.stringify({ question: createQ, options: opts,  leagueId: config.id })
     });
-    if (!r.ok) return alert("Create failed (commissioner only?)");
+    
+    console.log('Poll create response:', r.status, r.ok);
+    
+    if (!r.ok) {
+      const errorText = await r.text();
+      console.log('Poll create error:', errorText);
+      return alert("Create failed: " + errorText);
+    }
+    
+    // Success feedback
+    alert("Poll created successfully!");
+    
+    // Clear form
     setCreateQ("");
     setCreateOpts("Yes\nNo");
-    loadPolls();
+    
+    // Force reload polls
+    console.log('Forcing poll reload...');
+    await loadPolls();
+    
+    // Small delay to ensure state updates
+    setTimeout(() => {
+      console.log('Current polls state after reload:', polls);
+    }, 100);
+    
+  } catch (error) {
+    console.error('Poll creation error:', error);
+    alert("Failed to create poll: " + error.message);
   }
+}
 
 async function editPoll(pollId) {
   const poll = polls.find(p => p.id === pollId);
@@ -1897,7 +2154,7 @@ async function editPoll(pollId) {
   try {
     const r = await fetch(API("/api/polls/edit"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
+      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
       body: JSON.stringify({ pollId, question: newQuestion, newOptions })
     });
     
@@ -1909,39 +2166,62 @@ async function editPoll(pollId) {
 }
 
   async function onIssueSeasonTeamCodes() {
-    if (!isAdmin) return alert("Commissioner only.");
-    if (!espn?.leagueId || !espn?.seasonId) {
-      alert("Set League ID and Season in League Settings first.");
-      return;
-    }
-    try {
-      const r = await fetch(API(`/api/espn?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}&view=mTeam`));
-      if (!r.ok) throw new Error(await r.text());
-      const m = await r.json();
-      const teams = (m?.teams || []).map(t => ({
-        id: t.id,
-        name: (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`)
-      }));
-
-      const k = await fetch(API("/api/polls/issue-team-codes"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
-        body: JSON.stringify({ seasonId: espn.seasonId, teams })
-      });
-      if (!k.ok) throw new Error(await k.text());
-      const j = await k.json();
-      alert(`Issued ${j.issued} team codes for season ${espn.seasonId}.`);
-    } catch (e) {
-      alert(e.message || "Failed issuing codes");
-    }
+  if (!isAdmin) return alert("Commissioner only.");
+  if (!espn?.leagueId || !espn?.seasonId) {
+    alert("Set League ID and Season in League Settings first.");
+    return;
   }
+  
+  console.log('=== ISSUE TEAM CODES DEBUG ===');
+  console.log('League ID:', espn.leagueId);
+  console.log('Season ID:', espn.seasonId);
+  console.log('Admin password:', config.adminPassword);
+  
+  try {
+    console.log('Fetching teams from ESPN...');
+    const r = await fetch(API(`/api/espn?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}&view=mTeam`));
+    console.log('ESPN API response status:', r.status, r.ok);
+    
+    if (!r.ok) throw new Error(await r.text());
+    const m = await r.json();
+    console.log('ESPN teams data:', m);
+    
+    const teams = (m?.teams || []).map(t => ({
+      id: t.id,
+      name: (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`)
+    }));
+    console.log('Processed teams:', teams);
+
+    console.log('Calling issue-team-codes API...');
+    const k = await fetch(API("/api/polls/issue-team-codes"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      body: JSON.stringify({ seasonId: espn.seasonId, teams })
+    });
+    console.log('Issue codes response status:', k.status, k.ok);
+    
+    if (!k.ok) {
+      const errorText = await k.text();
+      console.log('Issue codes error:', errorText);
+      throw new Error(errorText);
+    }
+    
+    const j = await k.json();
+    console.log('Issue codes success:', j);
+    alert(`Issued ${j.issued} team codes for season ${espn.seasonId}.`);
+  } catch (e) {
+    console.error('Issue team codes failed:', e);
+    alert(e.message || "Failed issuing codes");
+  }
+  console.log('=== END ISSUE TEAM CODES DEBUG ===');
+}
 
   async function onCopySeasonTeamCodes() {
     if (!isAdmin) return alert("Commissioner only.");
     if (!espn?.seasonId) return alert("Season not set.");
     try {
       const r = await fetch(API(`/api/polls/team-codes?seasonId=${espn.seasonId}`), {
-        headers: { "x-admin": ADMIN_ENV }
+        headers: { "x-admin": config.adminPassword }
       });
       if (!r.ok) throw new Error(await r.text());
       const { codes } = await r.json();
@@ -1962,7 +2242,7 @@ async function editPoll(pollId) {
     if (!confirm("Delete this poll? This removes its results and codes.")) return;
     const r = await fetch(API("/api/polls/delete"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
+      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
       body: JSON.stringify({ pollId })
     });
     if (!r.ok) return alert("Delete failed (commissioner only?)");
@@ -1973,17 +2253,14 @@ async function editPoll(pollId) {
   async function setClosed(pollId, closed) {
     const r = await fetch(API("/api/polls/close"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
+      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
       body: JSON.stringify({ pollId, closed })
     });
     if (!r.ok) return alert("Failed to update poll.");
     loadPolls();
   }
 
-  const [voteChoice, setVoteChoice] = useState("");
-  const [activePollId, setActivePollId] = useState("");
-  useEffect(() => { if (polls.length > 0 && !activePollId) setActivePollId(polls[0].id); }, [polls, activePollId]);
-
+  
   async function castVote() {
     if (!activePollId) return alert("Choose a poll");
     if (!teamCode) {
@@ -2013,7 +2290,7 @@ async function editPoll(pollId) {
     }
   }
 
-  const [showClosed, setShowClosed] = useState(false);
+  
   const visiblePolls = polls.length ? polls.filter(p => showClosed || !p.closed) : [];
   const poll = polls.find(p => p.id === activePollId);
 
@@ -2163,8 +2440,9 @@ async function editPoll(pollId) {
 
 function WaiversView({ 
   espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
-  updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember 
+  updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember, btnPri, btnSec 
 }) {
+
   // Calculate waiver data from ESPN report if available
   const espnWaiverData = useMemo(() => {
     if (!espnReport?.rawMoves) return { waiversThisWeek: [], waiverCounts: {}, waiverOwed: {} };
@@ -2206,7 +2484,7 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
         {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
           if(confirm("Reset waivers and announcements?")) {
             try {
-              await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
+              await apiCallLeague('/reset-waivers', { method: 'POST' });
               await loadServerData();
             } catch (error) {
               alert('Reset failed: ' + error.message);
@@ -2243,7 +2521,7 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
         <div className="card" style={{padding:16}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <h3>Activity (Wed→Tue) - ESPN Data</h3>
-            <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
+            <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec}/>
           </div>
 
           <h4>Transactions (selected week)</h4>
@@ -2286,10 +2564,189 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
 }
 
 
+function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [weeklyWinners, setWeeklyWinners] = useState([]);
+  const [lastUpdated, setLastUpdated] = useState("");
+
+  const loadHighestScorers = async () => {
+    if (!espn.leagueId || !espn.seasonId) {
+      setError("Set League ID and Season in League Settings first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      // Get team names first
+      const teamJson = await fetchEspnJson({ 
+        leagueId: espn.leagueId, 
+        seasonId: espn.seasonId, 
+        view: "mTeam" 
+      });
+      const teamNames = Object.fromEntries(
+        (teamJson?.teams || []).map(t => [t.id, teamName(t)])
+      );
+
+      console.log("Team names:", teamNames);
+
+      const winners = [];
+
+      // Calculate which weeks should show winners based on current date
+const now = new Date();
+
+// Fantasy Week 1 ended Tuesday September 10, 2025 at 11:59 PM PT
+// So results should show after that date
+const week1EndDate = new Date('2025-09-10T23:59:00-07:00'); // September 10, 2025 11:59 PM PT
+
+// Check weeks 1 through 18 sequentially
+for (let week = 1; week <= 18; week++) {
+
+  // Calculate when this week's results should be shown
+const weekEnd = new Date(week1EndDate);
+weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7)); // Add 7 days per week
+  
+  console.log(`Week ${week}: Results should show after ${weekEnd.toLocaleString()}, current time: ${now.toLocaleString()}`);
+  
+  // If current time is before this week's deadline, stop checking
+  if (now < weekEnd) {
+    console.log(`Week ${week} deadline not reached yet, stopping here`);
+    break;
+  }
+  
+  try {
+    console.log(`Checking week ${week}...`);
+    
+    const scoreJson = await fetchEspnJson({ 
+      leagueId: espn.leagueId, 
+      seasonId: espn.seasonId, 
+      view: "mScoreboard",
+      scoringPeriodId: week
+    });
+
+    let highestScore = 0;
+    let winningTeam = "";
+
+    // Check all matchups for this week
+    (scoreJson?.schedule || []).forEach((matchup, index) => {
+      const homeScore = matchup.home?.totalPoints || 0;
+      const awayScore = matchup.away?.totalPoints || 0;
+      
+      // Update highest score if needed
+      if (homeScore > highestScore) {
+        highestScore = homeScore;
+        winningTeam = teamNames[matchup.home.teamId] || `Team ${matchup.home.teamId}`;
+      }
+      if (awayScore > highestScore) {
+        highestScore = awayScore;
+        winningTeam = teamNames[matchup.away.teamId] || `Team ${matchup.away.teamId}`;
+      }
+    });
+
+    // Add the winner if we found scores
+    if (winningTeam && highestScore > 0) {
+      winners.push({
+        week,
+        team: winningTeam,
+        score: highestScore.toFixed(1)
+      });
+      console.log(`Added Week ${week} winner: ${winningTeam} with ${highestScore.toFixed(1)} points`);
+    }
+
+  } catch (weekError) {
+    console.error(`Failed to load week ${week}:`, weekError);
+  }
+}
+
+      console.log(`Total winners found: ${winners.length}`);
+      setWeeklyWinners(winners);
+      setLastUpdated(new Date().toLocaleString());
+      
+      if (winners.length === 0) {
+        setError("No completed weeks yet. Winners will appear after each week is finished.");
+      } else {
+        setError(""); // Clear any previous errors
+      }
+
+    } catch (err) {
+      console.error('Failed to load highest scorers:', err);
+      setError("Failed to load highest scorer data: " + err.message);
+    }
+    
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    if (espn.seasonId && espn.leagueId) {
+      loadHighestScorers();
+    }
+  }, [espn.seasonId, espn.leagueId]);
+
+  return (
+    <Section title="🏆 Highest Scorer Awards" actions={
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn" style={btnSec} onClick={loadHighestScorers} disabled={loading}>
+          {loading ? "Loading..." : "Refresh"}
+        </button>
+      </div>
+    }>
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ marginBottom: 16 }}>
+          <strong>Weekly Highest Scorer Winners</strong>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+            Updated automatically each Tuesday at 11:59 PM PT
+          </div>
+        </div>
+
+        {!espn.seasonId && <div style={{ color: "#64748b" }}>Set your ESPN season in League Settings.</div>}
+        {error && <div style={{ color: "#dc2626" }}>{error}</div>}
+        
+        {weeklyWinners.length > 0 ? (
+          <div>
+            {weeklyWinners.map((winner, i) => (
+              <div key={i} style={{ 
+                padding: "12px 0", 
+                borderBottom: "1px solid #e2e8f0",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center"
+              }}>
+                <div>
+                  <span style={{ fontWeight: "bold", color: "#0b1220" }}>
+                    Week {winner.week}
+                  </span>
+                  <span style={{ marginLeft: 12, fontSize: 16 }}>
+                    🏆 <strong>{winner.team}</strong>
+                  </span>
+                </div>
+                <span style={{ color: "#16a34a", fontWeight: "bold" }}>
+                  {winner.score} pts
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : !loading && !error && (
+          <div style={{ color: "#64748b", marginTop: 8 }}>
+            No completed weeks yet. Winners will appear after each week is finished.
+          </div>
+        )}
+
+        {lastUpdated && (
+          <div style={{ marginTop: 12, fontSize: 12, color: "#64748b" }}>
+            Last updated: {lastUpdated}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 /* =========================
    Form Components
    ========================= */
-function AnnouncementEditor({ onPost, disabled }) {
+function AnnouncementEditor({ onPost, disabled, btnPri, btnSec }) {
   const [local, setLocal] = React.useState("");
   const ref = React.useRef(null);
 
@@ -2379,7 +2836,7 @@ function AnnouncementEditor({ onPost, disabled }) {
   );
 }
 
-function TradeForm({ onSubmit }) {
+function TradeForm({ onSubmit, btnPri, btnSec }) {
   const [player, setPlayer] = useState("");
   const [position, setPosition] = useState("");
   const [owner, setOwner] = useState("");
@@ -2410,7 +2867,7 @@ function parseWeekNumber(weekLabel) {
   return parseInt(String(weekLabel || "").replace(/\D/g, ""), 10) || 0;
 }
 
-function WeeklyForm({ seasonYear, onAdd }) {
+function WeeklyForm({ seasonYear, onAdd, btnPri, btnSec }) {
   const [weekLabel, setWeekLabel] = useState(() => {
     const now = leagueWeekOf(new Date(), seasonYear).week || 1;
     return `Week ${now}`;
@@ -2846,7 +3303,7 @@ function RichEditor({ html, setHtml, readOnly }) {
 /* =========================
    Helper Components
    ========================= */
-function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
+function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear, btnPri, btnSec }) {
   const go = (delta) => {
     const s = new Date(selectedWeek.start);
     s.setDate(s.getDate() + delta * 7);
@@ -2885,28 +3342,28 @@ const methodLabel = (m) => {
 };
 
 
-function posIdToName(id) {
-  const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };
-  return map?.[id] || "—";
-}
-
-function slotIdToName(counts) {
-  const map = { 0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench", 21: "IR", 23: "FLEX", 24: "EDR", 25: "RDP", 26: "RDP", 27: "RDP", 28: "Head Coach" };
-  const res = {};
-  Object.keys(counts).forEach(k => res[k] = map[k] || `Slot ${k}`);
-  return res;
-}
-
 /* =========================
    Splash and Overlays
    ========================= */
-function IntroSplash() {
+function IntroSplash({ selectedLeague }) {
   const [show, setShow] = useState(true);
-  useEffect(() => { const t = setTimeout(() => setShow(false), 6000); return () => clearTimeout(t); }, []);
+  useEffect(() => { 
+    const t = setTimeout(() => setShow(false), 6000); // Extended to 6 seconds
+    return () => clearTimeout(t); 
+  }, []);
+  
   if (!show) return null;
-  return <div className="splash"><img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 256, height: 256}} /></div>;
+  
+  // Choose which logo to show based on selected league
+  const logoSrc = selectedLeague?.logo || "/Blitzzz-logo-transparent.png";
+  const logoAlt = selectedLeague ? `${selectedLeague.name} Logo` : "Blitzzz Logo";
+  
+  return (
+    <div className="splash">
+      <img src={logoSrc} alt={logoAlt} />
+    </div>
+  );
 }
-
 function SyncOverlay({ open, pct, msg }) {
   if (!open) return null;
   return (

@@ -21,23 +21,22 @@ function getLeagueFromSubdomain() {
   const hostname = window.location.hostname;
   console.log('Current hostname:', hostname);
   
-  // Check for subdomain patterns
+  // Check for subdomain patterns first
   if (hostname.includes('blitzzz.')) {
     return 'blitzzz';
   } else if (hostname.includes('sculpin.')) {
     return 'sculpin';
   }
   
-  // Fallback: check for localhost development patterns
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    // Check URL parameters for development
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('league');
+  // Always check URL parameters as fallback (not just localhost)
+  const urlParams = new URLSearchParams(window.location.search);
+  const leagueParam = urlParams.get('league');
+  if (leagueParam) {
+    return leagueParam;
   }
   
   return null;
 }
-
 /* ---- playful roasts for wrong commissioner password ---- */
 const ROASTS = [
   "Wrong again, champ. Try reading the group chat for once.",

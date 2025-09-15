@@ -83,11 +83,26 @@ export function LandingPage({ onLeagueSelect }) {
   setAnimationPhase('selecting');
 
   // Go directly to the site after 2 seconds (when centering animation completes)
-  setTimeout(() => {
+ // Go to site after centering animation plus fade-out time
+setTimeout(() => {
+  // Check if we're on mobile portrait - if so, wait a bit longer for user to rotate
+  const isMobilePortrait = window.innerWidth <= 768 && window.innerHeight > window.innerWidth;
+  
+  if (isMobilePortrait) {
+    // Wait longer on mobile portrait to give user time to see overlay and rotate
+    setTimeout(() => {
+      if (leagueConfigs && leagueConfigs[leagueId]) {
+        onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
+      }
+    }, 2000); // Additional 2 seconds for mobile portrait
+  } else {
+    // Normal timing for landscape and desktop
     if (leagueConfigs && leagueConfigs[leagueId]) {
       onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
     }
-  }, 2000); // Reduced from 3000ms to 2000ms
+  }
+}, 2000);
+
 };
 
   if (!leagueConfigs) {
@@ -140,6 +155,18 @@ export function LandingPage({ onLeagueSelect }) {
 </div>
         </div>
       </div>
+    {/* Add this rotation overlay */}
+    {animationPhase === 'selecting' && (
+      <div className="rotation-overlay">
+        <div className="rotation-content">
+          <div className="phone-icon">📱</div>
+          <div className="rotation-arrow">↻</div>
+          <p>Please rotate your device to landscape mode for the best experience</p>
+        </div>
+      </div>
+    )}
+
     </div>
+
   );
 }

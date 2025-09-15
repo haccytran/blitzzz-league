@@ -243,6 +243,17 @@ button { color: var(--ink); }
   transition: transform 0.3s ease; /* Smooth hover transitions */
   transform: scale(0.5); /* Start at 50% size */
   animation: logoPulse 2s ease-in-out infinite; /* Start pulsing immediately */
+
+  /* Add these lines to prevent blue highlighting on mobile */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  outline: none;
+
 }
 
 .logo-card:hover {
@@ -253,6 +264,17 @@ button { color: var(--ink); }
   width: 512px; /* Large logo size */
   height: 512px;
   object-fit: contain;
+
+ /* Add these lines to prevent selection/highlighting */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  pointer-events: none; /* This makes sure clicks go through to the parent div */
+
 }
 
 /* New pulsing animation */
@@ -715,4 +737,75 @@ body.blitzzz-league .sidebar .navlink:hover {
 /* ULTIMATE OVERRIDE */
 body.blitzzz-league .sidebar [style] {
   color: #FFC20E !important;
+}
+
+/* Rotation overlay - only shows on mobile portrait when logo is clicked */
+.rotation-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.9);
+  display: none; /* Hidden by default */
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+  color: white;
+}
+
+.rotation-content {
+  text-align: center;
+  padding: 2rem;
+  max-width: 300px;
+}
+
+.phone-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+  animation: phoneRotate 2s ease-in-out infinite;
+}
+
+.rotation-arrow {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  animation: arrowSpin 2s linear infinite;
+}
+
+.rotation-content p {
+  font-size: 1.2rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Animation for phone icon */
+@keyframes phoneRotate {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-15deg); }
+  75% { transform: rotate(15deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Animation for rotation arrow */
+@keyframes arrowSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Show overlay only on actual mobile devices in portrait mode */
+@media only screen 
+  and (max-width: 768px) 
+  and (orientation: portrait) 
+  and (hover: none) 
+  and (pointer: coarse) {
+  .rotation-overlay {
+    display: flex;
+  }
+}}
+
+/* Hide overlay in landscape mode */
+@media (orientation: landscape) {
+  .rotation-overlay {
+    display: none !important;
+  }
 }

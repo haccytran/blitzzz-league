@@ -143,48 +143,41 @@ const [animationPhase, setAnimationPhase] = useState('initial');
 </div>
         </div>
       </div>
-    {/* Rotation popup modal */}
-{/* Rotation popup modal */}
-{animationPhase === 'selecting' && showRotationPopup && (
-  <div className="rotation-popup-overlay show">    
-<div className="rotation-popup">
-      <div className="popup-header">
-        <h3>Better Experience Available</h3>
+    {/* Rotation popup modal - centered overlay */}
+{showRotationPopup && (
+  <div className="popup-backdrop">
+    <div className="popup-modal">
+      <div className="popup-icon">📱</div>
+      <h3>Rotate Your Device</h3>
+      <p>For the best experience, please rotate your device to landscape mode.</p>
+      <div className="popup-checkbox">
+        <input 
+          type="checkbox" 
+          id="dontShowRotation" 
+          onChange={(e) => {
+            if (e.target.checked) {
+              localStorage.setItem('hideRotationPrompt', 'true');
+            } else {
+              localStorage.removeItem('hideRotationPrompt');
+            }
+          }}
+        />
+        <label htmlFor="dontShowRotation">Don't show this message again</label>
       </div>
-      <div className="popup-content">
-        <div className="phone-icon">📱</div>
-        <p>For the best viewing experience, please rotate your device to landscape mode.</p>
-        <div className="checkbox-container">
-          <input 
-            type="checkbox" 
-            id="dontShowAgain" 
-            onChange={(e) => {
-              if (e.target.checked) {
-                localStorage.setItem('hideRotationPrompt', 'true');
-              } else {
-                localStorage.removeItem('hideRotationPrompt');
-              }
-            }}
-          />
-          <label htmlFor="dontShowAgain">Don't show this message again</label>
-        </div>
-      </div>
-      <div className="popup-actions">
-        <button 
-  className="ok-button"
-  onClick={() => {
-    setShowRotationPopup(false);
-    setAnimationPhase('selected');
-    setTimeout(() => {
-      if (leagueConfigs && leagueConfigs[selectedLeague]) {
-        onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
-      }
-    }, 100);
-  }}
->
-  OK
-</button>
-      </div>
+      <button 
+        className="popup-ok-btn"
+        onClick={() => {
+          setShowRotationPopup(false);
+          setAnimationPhase('selected');
+          setTimeout(() => {
+            if (leagueConfigs && leagueConfigs[selectedLeague]) {
+              onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
+            }
+          }, 100);
+        }}
+      >
+        OK
+      </button>
     </div>
   </div>
 )}

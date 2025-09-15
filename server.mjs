@@ -1,4 +1,31 @@
 // --- server.mjs (Version 4.0 - Complete PostgreSQL + All Features) ---
+
+// TEMPORARY MIGRATION ROUTE - Remove after running once
+app.post("/api/migrate-to-multi-league", requireAdmin, async (req, res) => {
+  try {
+    // Load old single-league data
+    const oldData = await readJson("league_data.json", {});
+    
+    // Save as Blitzzz league data
+    if (Object.keys(oldData).length > 0) {
+      await writeJson("league_data_blitzzz.json", oldData);
+      console.log("Migrated league data to Blitzzz format");
+    }
+    
+    // Migrate polls to include leagueId
+    const pollsData = await readJson("polls.json", { polls: {}, votes: {}, teamCodes: {} });
+    Object.values(pollsData.polls || {}).forEach(poll => {
+      if (!poll.leagueId) poll.leagueId = 'blitzzz';
+    });
+    await writeJson("polls.json", pollsData);
+    
+    res.json({ success: true, message: "Migration completed" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -2099,4 +2126,5 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`); 
   console.log(`Database: ${DATABASE_URL ? 'PostgreSQL' : 'File system'}`);
 });
+
 

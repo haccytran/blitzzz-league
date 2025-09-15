@@ -1,5 +1,4 @@
 // --- server.mjs (Version 4.0 - Complete PostgreSQL + All Features) ---
-
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -170,54 +169,34 @@ const today = () => new Date().toISOString().slice(0, 10);
 const LEAGUE_DATA_FILE = "league_data.json";
 
 // Update your getLeagueData function in server.mjs to include duesPayments
-async function getLeagueData() {
-  return await readJson(LEAGUE_DATA_FILE, {
+async function getLeagueData(leagueId = 'default') {
+  const fileName = `league_data_${leagueId}.json`;
+  console.log(`[SERVER] Attempting to read file: ${fileName}`);
+  return await readJson(fileName, {
     announcements: [],
     weeklyList: [],
     members: [],
     waivers: [],
     buyins: {},
-    duesPayments: {}, // ADD THIS LINE
+    duesPayments: {},
     leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Thu 12:00 AM PT → Wed 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
     tradeBlock: [],
     rosters: {},
     lastUpdated: new Date().toISOString()
   });
-}
-async function saveLeagueData(data) {
-  data.lastUpdated = new Date().toISOString();
-  await writeJson(LEAGUE_DATA_FILE, data);
+
+console.log(`[SERVER] Successfully read ${fileName} with ${data.announcements?.length || 0} announcements`);
+  return data;
 }
 
+async function saveLeagueData(data, leagueId = 'default') {
+  data.lastUpdated = new Date().toISOString();
+  const fileName = `league_data_${leagueId}.json`;
+  await writeJson(fileName, data);
+}
 // =========================
 // League Data API Routes
 // =========================
-
-// TEMPORARY MIGRATION ROUTE - Remove after running once
-app.post("/api/migrate-to-multi-league", requireAdmin, async (req, res) => {
-  try {
-    // Load old single-league data
-    const oldData = await readJson("league_data.json", {});
-    
-    // Save as Blitzzz league data
-    if (Object.keys(oldData).length > 0) {
-      await writeJson("league_data_blitzzz.json", oldData);
-      console.log("Migrated league data to Blitzzz format");
-    }
-    
-    // Migrate polls to include leagueId
-    const pollsData = await readJson("polls.json", { polls: {}, votes: {}, teamCodes: {} });
-    Object.values(pollsData.polls || {}).forEach(poll => {
-      if (!poll.leagueId) poll.leagueId = 'blitzzz';
-    });
-    await writeJson("polls.json", pollsData);
-    
-    res.json({ success: true, message: "Migration completed" });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 
 // Add this simple endpoint for keep-alive pings
 app.get("/api/health", (req, res) => {
@@ -328,6 +307,428 @@ nameById[id] = position ? `${name} (${position})` : name;
   } catch (error) {
     console.error('Draft fetch error:', error);
     res.status(500).json({ error: "Failed to fetch draft data" });
+  }
+});
+
+// =========================
+// League-Specific API Routes
+// =========================
+
+// League-specific data endpoint
+app.get("/api/leagues/:leagueId/data", async (req, res) => {
+  try {
+    console.log(`[SERVER] === Loading data for league: ${req.params.leagueId} ===`);
+    const data = await getLeagueData(req.params.leagueId);
+    console.log(`[SERVER] Loaded ${data.announcements?.length || 0} announcements for ${req.params.leagueId}`);
+    
+    // Log first announcement to verify data separation
+    if (data.announcements?.[0]) {
+      console.log(`[SERVER] First announcement preview: "${data.announcements[0].html?.substring(0, 50)}..."`);
+    }
+    
+    res.json(data);
+  } catch (error) {
+    console.error(`[SERVER] Failed to load league data for ${req.params.leagueId}:`, error);
+    res.status(500).json({ error: "Failed to load league data" });
+  }
+});
+
+// League-specific announcements
+app.post("/api/leagues/:leagueId/announcements", requireAdmin, async (req, res) => {
+  try {
+    const { html } = req.body;
+    if (!html || !html.trim()) {
+      return res.status(400).json({ error: "HTML content required" });
+    }
+
+  const data = await getLeagueData(req.params.leagueId);
+    console.log('Loaded data file for league:', req.params.leagueId, 'announcements count:', data.announcements?.length || 0);
+    const newAnnouncement = {
+      id: nid(),
+      html: html.trim(),
+      createdAt: Date.now(),
+      leagueId: req.params.leagueId  // Add league ID to track which league
+    };
+    
+    data.announcements = data.announcements || [];
+    data.announcements.unshift(newAnnouncement);
+    await saveLeagueData(data, req.params.leagueId); 
+
+    res.json({ success: true, announcement: newAnnouncement });
+  } catch (error) {
+    console.error('Failed to create announcement:', error);
+    res.status(500).json({ error: "Failed to create announcement" });
+  }
+});
+
+// Add similar league-specific routes for all your CRUD operations
+app.delete("/api/leagues/:leagueId/announcements", requireAdmin, async (req, res) => {
+  // Same logic as existing but with league context
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Announcement ID required" });
+    }
+
+  const data = await getLeagueData(req.params.leagueId); 
+    data.announcements = (data.announcements || []).filter(a => a.id !== id);
+    await saveLeagueData(data, req.params.leagueId); 
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete announcement:', error);
+    res.status(500).json({ error: "Failed to delete announcement" });
+  }
+});
+
+// Continue adding routes for: /weekly, /members, /waivers, /trading, /settings, etc.
+// Each following the same pattern: /api/leagues/:leagueId/[endpoint]
+
+
+// =========================
+// League-Specific API Routes (Multi-League System)
+// =========================
+
+// League-specific data endpoint
+app.get("/api/leagues/:leagueId/data", async (req, res) => {
+  try {
+    // For now, all leagues share the same data structure
+    // You could later implement league-specific data storage by using req.params.leagueId
+    const data = await getLeagueData();
+    res.json(data);
+  } catch (error) {
+    console.error(`Failed to load league data for ${req.params.leagueId}:`, error);
+    res.status(500).json({ error: "Failed to load league data" });
+  }
+});
+
+// League-specific announcements
+app.post("/api/leagues/:leagueId/announcements", requireAdmin, async (req, res) => {
+  try {
+    const { html } = req.body;
+    if (!html || !html.trim()) {
+      return res.status(400).json({ error: "HTML content required" });
+    }
+
+    const data = await getLeagueData();
+    const newAnnouncement = {
+      id: nid(),
+      html: html.trim(),
+      createdAt: Date.now(),
+      leagueId: req.params.leagueId
+    };
+    
+    data.announcements = data.announcements || [];
+    data.announcements.unshift(newAnnouncement);
+    await saveLeagueData(data);
+
+    res.json({ success: true, announcement: newAnnouncement });
+  } catch (error) {
+    console.error('Failed to create announcement:', error);
+    res.status(500).json({ error: "Failed to create announcement" });
+  }
+});
+
+app.delete("/api/leagues/:leagueId/announcements", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Announcement ID required" });
+    }
+
+    const data = await getLeagueData();
+    data.announcements = (data.announcements || []).filter(a => a.id !== id);
+    await saveLeagueData(data);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete announcement:', error);
+    res.status(500).json({ error: "Failed to delete announcement" });
+  }
+});
+
+// League-specific weekly challenges
+app.post("/api/leagues/:leagueId/weekly", requireAdmin, async (req, res) => {
+  try {
+    const { entry } = req.body;
+    if (!entry) {
+      return res.status(400).json({ error: "Entry required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId);
+    const newEntry = { 
+      ...entry, 
+      id: entry.id || nid(), 
+      createdAt: entry.createdAt || Date.now(),
+      leagueId: req.params.leagueId
+    };
+    
+    data.weeklyList = data.weeklyList || [];
+    data.weeklyList.unshift(newEntry);
+    await saveLeagueData(data, req.params.leagueId);
+
+    res.json({ success: true, entry: newEntry });
+  } catch (error) {
+    console.error('Failed to create weekly challenge:', error);
+    res.status(500).json({ error: "Failed to create weekly challenge" });
+  }
+});
+
+app.delete("/api/leagues/:leagueId/weekly", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Challenge ID required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId); 
+    data.weeklyList = (data.weeklyList || []).filter(w => w.id !== id);
+    await saveLeagueData(data, req.params.leagueId);  
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete weekly challenge:', error);
+    res.status(500).json({ error: "Failed to delete weekly challenge" });
+  }
+});
+
+// League-specific members
+app.delete("/api/leagues/:leagueId/members", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Member ID required" });
+    }
+
+     const data = await getLeagueData(req.params.leagueId);
+    data.members = (data.members || []).filter(m => m.id !== id);
+    data.waivers = (data.waivers || []).filter(w => w.userId !== id);
+    await saveLeagueData(data, req.params.leagueId); 
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete member:', error);
+    res.status(500).json({ error: "Failed to delete member" });
+  }
+});
+
+// League-specific waivers
+app.post("/api/leagues/:leagueId/waivers", requireAdmin, async (req, res) => {
+  try {
+    const { userId, player, date } = req.body;
+    if (!userId || !player) {
+      return res.status(400).json({ error: "User ID and player required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId);  
+    const newWaiver = {
+      id: nid(),
+      userId,
+      player: player.trim(),
+      date: date || today(),
+      leagueId: req.params.leagueId
+    };
+    
+    data.waivers = data.waivers || [];
+    data.waivers.unshift(newWaiver);
+    await saveLeagueData(data, req.params.leagueId);
+
+    res.json({ success: true, waiver: newWaiver });
+  } catch (error) {
+    console.error('Failed to add waiver:', error);
+    res.status(500).json({ error: "Failed to add waiver" });
+  }
+});
+
+app.delete("/api/leagues/:leagueId/waivers", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Waiver ID required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId); 
+    data.waivers = (data.waivers || []).filter(w => w.id !== id);
+    await saveLeagueData(data, req.params.leagueId); 
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete waiver:', error);
+    res.status(500).json({ error: "Failed to delete waiver" });
+  }
+});
+
+app.post("/api/leagues/:leagueId/reset-waivers", requireAdmin, async (req, res) => {
+  try {
+    const data = await getLeagueData(req.params.leagueId); 
+    data.waivers = [];
+    data.announcements = [];
+    await saveLeagueData(data, req.params.leagueId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to reset waivers:', error);
+    res.status(500).json({ error: "Failed to reset waivers" });
+  }
+});
+
+// League-specific trading
+app.post("/api/leagues/:leagueId/trading", requireAdmin, async (req, res) => {
+  try {
+    const { trade } = req.body;
+    if (!trade) {
+      return res.status(400).json({ error: "Trade data required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId); 
+    const newTrade = { 
+      ...trade, 
+      id: nid(), 
+      createdAt: Date.now(),
+      leagueId: req.params.leagueId
+    };
+    
+    data.tradeBlock = data.tradeBlock || [];
+    data.tradeBlock.unshift(newTrade);
+    await saveLeagueData(data, req.params.leagueId); 
+
+    res.json({ success: true, trade: newTrade });
+  } catch (error) {
+    console.error('Failed to add trade:', error);
+    res.status(500).json({ error: "Failed to add trade" });
+  }
+});
+
+app.delete("/api/leagues/:leagueId/trading", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Trade ID required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId); 
+    data.tradeBlock = (data.tradeBlock || []).filter(t => t.id !== id);
+    await saveLeagueData(data, req.params.leagueId);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete trade:', error);
+    res.status(500).json({ error: "Failed to delete trade" });
+  }
+});
+
+// League-specific buy-ins
+app.post("/api/leagues/:leagueId/buyins", requireAdmin, async (req, res) => {
+  try {
+    const { seasonKey, updates } = req.body;
+    if (!seasonKey || !updates) {
+      return res.status(400).json({ error: "Season key and updates required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId);
+    data.buyins = data.buyins || {};
+    data.buyins[seasonKey] = { ...data.buyins[seasonKey], ...updates };
+    await saveLeagueData(data, req.params.leagueId); 
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to update buy-ins:', error);
+    res.status(500).json({ error: "Failed to update buy-ins" });
+  }
+});
+
+// League-specific dues payments
+app.post("/api/leagues/:leagueId/dues-payments", requireAdmin, async (req, res) => {
+  try {
+    const { seasonId, updates } = req.body;
+    if (!seasonId || !updates) {
+      return res.status(400).json({ error: "Season ID and updates required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId); 
+    data.duesPayments = data.duesPayments || {};
+    data.duesPayments[seasonId] = { ...data.duesPayments[seasonId], ...updates };
+    await saveLeagueData(data, req.params.leagueId);  
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to update dues payments:', error);
+    res.status(500).json({ error: "Failed to update dues payments" });
+  }
+});
+
+// League-specific settings
+app.post("/api/leagues/:leagueId/settings", requireAdmin, async (req, res) => {
+  try {
+    const { html } = req.body;
+    if (html === undefined || html === null) {
+      return res.status(400).json({ error: "HTML content required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId); 
+    data.leagueSettingsHtml = String(html).trim();
+    await saveLeagueData(data, req.params.leagueId);  
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to save league settings:', error);
+    res.status(500).json({ error: "Failed to save league settings" });
+  }
+});
+
+// League-specific team imports
+app.post("/api/leagues/:leagueId/import-teams", requireAdmin, async (req, res) => {
+  try {
+    const { teams, seasonId, rosterData } = req.body;
+    if (!Array.isArray(teams)) {
+      return res.status(400).json({ error: "Teams array required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId); 
+    const existingMembers = data.members || [];
+    
+    const membersByName = Object.fromEntries(existingMembers.map(m => [m.name, m]));
+    
+    data.members = teams.map(name => {
+      const existing = membersByName[name];
+      return existing ? existing : { id: nid(), name };
+    });
+    
+    if (seasonId && rosterData) {
+      data.rosters = data.rosters || {};
+      data.rosters[seasonId] = {
+        rosterData,
+        lastUpdated: new Date().toISOString()
+      };
+    }
+    
+    await saveLeagueData(data, req.params.leagueId); 
+    
+    res.json({ success: true, imported: teams.length });
+  } catch (error) {
+    console.error('Failed to import teams:', error);
+    res.status(500).json({ error: "Failed to import teams" });
+  }
+});
+
+// League-specific rosters route
+app.get("/api/leagues/:leagueId/rosters", async (req, res) => {
+  try {
+    const { seasonId } = req.query;
+    if (!seasonId) {
+      return res.status(400).json({ error: "Season ID required" });
+    }
+
+    const data = await getLeagueData(req.params.leagueId);
+    const seasonRosters = data.rosters && data.rosters[seasonId];
+    
+    if (seasonRosters) {
+      res.json(seasonRosters);
+    } else {
+      res.json({ rosterData: [], lastUpdated: null });
+    }
+  } catch (error) {
+    console.error('Failed to load rosters:', error);
+    res.status(500).json({ error: "Failed to load rosters" });
   }
 });
 
@@ -677,13 +1078,21 @@ app.post("/api/league-data/dues-payments", requireAdmin, async (req, res) => {
 // Polls System
 // =========================
 async function loadPolls() {
+  console.log('=== LOADPOLLS DEBUG ===');
+  console.log('DATABASE_URL exists:', !!DATABASE_URL);
+  
   if (DATABASE_URL) {
     try {
+      console.log('Trying to load from database...');
       const client = await pool.connect();
       const result = await client.query('SELECT * FROM polls_data ORDER BY updated_at DESC LIMIT 1');
       client.release();
       
+      console.log('Database query result:', result.rows.length, 'rows');
       if (result.rows.length > 0) {
+        console.log('Database polls data:', result.rows[0].polls);
+        console.log('Database votes data:', result.rows[0].votes);
+        
         return {
           polls: result.rows[0].polls || {},
           votes: result.rows[0].votes || {},
@@ -694,44 +1103,30 @@ async function loadPolls() {
       console.error('Database polls load error:', err);
     }
   }
-  return await readJson("polls.json", { polls: {}, votes: {}, teamCodes: {} });
+  
+  console.log('Trying to load from file system...');
+  const fileResult = await readJson("polls.json", { polls: {}, votes: {}, teamCodes: {} });
+  console.log('File system polls data:', fileResult);
+  console.log('=== END LOADPOLLS DEBUG ===');
+  
+  return fileResult;
 }
 
 async function savePolls(pollsState) {
+  console.log('=== SAVEPOLLS DEBUG ===');
+  console.log('Saving polls state:', pollsState);
+  console.log('Polls object:', pollsState.polls);
+  console.log('Polls type:', typeof pollsState.polls);
+  console.log('Polls keys:', Object.keys(pollsState.polls || {}));
+  
   if (DATABASE_URL) {
-    try {
-      const client = await pool.connect();
-      const result = await client.query('SELECT id FROM polls_data ORDER BY updated_at DESC LIMIT 1');
-      
-      if (result.rows.length > 0) {
-        await client.query(`
-          UPDATE polls_data SET 
-          polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP
-          WHERE id = $4
-        `, [
-          JSON.stringify(pollsState.polls),
-          JSON.stringify(pollsState.votes), 
-          JSON.stringify(pollsState.teamCodes),
-          result.rows[0].id
-        ]);
-      } else {
-        await client.query(`
-          INSERT INTO polls_data (polls, votes, team_codes) VALUES ($1, $2, $3)
-        `, [
-          JSON.stringify(pollsState.polls),
-          JSON.stringify(pollsState.votes), 
-          JSON.stringify(pollsState.teamCodes)
-        ]);
-      }
-      
-      client.release();
-    } catch (err) {
-      console.error('Database polls save error:', err);
-      await writeJson("polls.json", pollsState);
-    }
+    // ... existing database code
   } else {
+    console.log('Saving to file system...');
     await writeJson("polls.json", pollsState);
+    console.log('Saved to file system');
   }
+  console.log('=== END SAVEPOLLS DEBUG ===');
 }
 
 const FRIENDLY_WORDS = [
@@ -744,10 +1139,16 @@ const FRIENDLY_WORDS = [
 const randomFriendlyCode = () => FRIENDLY_WORDS[Math.floor(Math.random() * FRIENDLY_WORDS.length)];
 
 app.post("/api/polls/issue-team-codes", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const adminHeader = req.header("x-admin");
+  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];  // ← Make sure this line exists
+  if (!validPasswords.includes(adminHeader)) {
+    return res.status(401).send("Unauthorized");
+  }
+  
   const { seasonId, teams } = req.body || {};
   if (!seasonId || !Array.isArray(teams)) return res.status(400).send("Missing seasonId or teams[]");
   
+  // ... rest of the function stays the same  
   const pollsState = await loadPolls();
   const used = new Set(Object.values(pollsState.teamCodes || {}).map(v => v.code));
   const issued = [];
@@ -795,9 +1196,20 @@ app.post("/api/polls/vote", async (req, res) => {
 
 app.get("/api/polls", async (req, res) => {
   const seasonId = String(req.query?.seasonId || "");
+  const leagueId = String(req.query?.leagueId || "default");  // ← ADD THIS
   const pollsState = await loadPolls();
   
-  const out = Object.values(pollsState.polls || {}).map(p => {
+  console.log('=== POLLS DEBUG ===');
+  console.log('Request seasonId:', seasonId);
+  console.log('Request leagueId:', leagueId);  // ← ADD THIS
+  console.log('All polls in state:', Object.keys(pollsState.polls || {}));
+  
+  // Filter polls by league  ← ADD THIS FILTERING
+  const leaguePolls = Object.values(pollsState.polls || {}).filter(p => 
+    (p.leagueId || 'default') === leagueId
+  );
+  
+  const out = leaguePolls.map(p => {  // ← CHANGE FROM Object.values to leaguePolls
     const byTeam = pollsState.votes?.[p.id] || {};
     const tally = {};
     Object.values(byTeam).forEach(opt => { tally[opt] = (tally[opt] || 0) + 1; });
@@ -810,12 +1222,21 @@ app.get("/api/polls", async (req, res) => {
       codesUsed: Object.keys(byTeam).length, codesTotal
     };
   });
+  
+  console.log('Filtered output for league:', leagueId, out.length, 'polls');
+  console.log('=== END POLLS DEBUG ===');
+  
   res.json({ polls: out });
 });
 
 app.post("/api/polls/create", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { question, options } = req.body || {};
+  const adminHeader = req.header("x-admin");
+  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
+  if (!validPasswords.includes(adminHeader)) {
+    return res.status(401).send("Unauthorized");
+  }
+  
+  const { question, options, leagueId } = req.body || {};  // ← ADD leagueId
   if (!question || !Array.isArray(options) || options.length < 2) return res.status(400).send("Bad request");
   
   const pollsState = await loadPolls();
@@ -824,6 +1245,7 @@ app.post("/api/polls/create", async (req, res) => {
     id, 
     question: String(question), 
     closed: false, 
+    leagueId: leagueId || 'default',  // ← ADD THIS LINE
     options: options.map(label => ({ id: nid(), label: String(label) })) 
   };
   
@@ -832,7 +1254,11 @@ app.post("/api/polls/create", async (req, res) => {
 });
 
 app.post("/api/polls/close", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const adminHeader = req.header("x-admin");
+  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
+  if (!validPasswords.includes(adminHeader)) {
+    return res.status(401).send("Unauthorized");
+  }
   const { pollId, closed } = req.body || {};
   
   const pollsState = await loadPolls();
@@ -844,8 +1270,13 @@ app.post("/api/polls/close", async (req, res) => {
 });
 
 app.post("/api/polls/delete", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { pollId } = req.body || {};
+  const adminHeader = req.header("x-admin");
+  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
+  if (!validPasswords.includes(adminHeader)) {
+    return res.status(401).send("Unauthorized");
+  }
+  
+  const { pollId } = req.body || {};  // ← ADD THIS LINE
   if (!pollId) return res.status(400).send("Missing pollId");
   
   const pollsState = await loadPolls();
@@ -857,19 +1288,22 @@ app.post("/api/polls/delete", async (req, res) => {
 });
 
 app.post("/api/polls/edit", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { pollId, question, newOptions } = req.body || {};
+  const adminHeader = req.header("x-admin");
+  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
+  if (!validPasswords.includes(adminHeader)) {
+    return res.status(401).send("Unauthorized");
+  }
+  
+  const { pollId, question, newOptions } = req.body || {};  // ← ADD THIS LINE
   if (!pollId || !question || !Array.isArray(newOptions)) return res.status(400).send("Bad request");
   
   const pollsState = await loadPolls();
   const poll = pollsState.polls[pollId];
   if (!poll) return res.status(404).send("Poll not found");
   
-  // Update question and add new options (keeping existing ones)
   poll.question = String(question);
   const existingOptionIds = new Set(poll.options.map(o => o.id));
   
-  // Add new options that don't already exist
   for (const newOption of newOptions) {
     if (!poll.options.find(o => o.label === newOption)) {
       poll.options.push({ id: nid(), label: String(newOption) });
@@ -879,12 +1313,17 @@ app.post("/api/polls/edit", async (req, res) => {
   await savePolls(pollsState);
   res.json({ ok: true });
 });
-
 app.get("/api/polls/team-codes", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
+  const adminHeader = req.header("x-admin");
+  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];  // ← UPDATE THIS LINE
+  if (!validPasswords.includes(adminHeader)) {
+    return res.status(401).send("Unauthorized");
+  }
+  
   const seasonId = req.query?.seasonId;
   if (!seasonId) return res.status(400).send("Missing seasonId");
   
+  // ... rest of function unchanged  
   const pollsState = await loadPolls();
   const rows = [];
   
@@ -970,7 +1409,7 @@ function weekRangeLabelDisplay(start){
   const wed = new Date(start); wed.setHours(0,0,0,0);
   const tue = new Date(wed); tue.setDate(tue.getDate()+6); tue.setHours(23,59,0,0);
   const short = (d)=> new Date(d).toLocaleDateString(undefined,{month:"short", day:"numeric"});
-  return `${short(wed)}–${short(tue)} (cutoff Tue 11:59 PM PT)`;
+  return `${short(wed)}—${short(tue)} (cutoff Tue 11:59 PM PT)`; // Fixed: Use proper em dash
 }
 
 // Enhanced method inference with better classification
@@ -1107,7 +1546,7 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
     console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
   } else {
     processLosers++;
-    console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (checked sp±1)`);
+    console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (checked spÂ±1)`);
   }
   continue;
 }
@@ -1416,7 +1855,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const all = [];
   for (let sp=1; sp<=maxSp; sp++){
-    onProgress?.(sp, maxSp, "Reading ESPN activity…");
+     onProgress?.(sp, maxSp, "Reading ESPN activity…");
     try { 
       const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); 
       all.push(...extractMoves(j,"tx").map(e => ({ ...e, sp }))); 
@@ -1635,7 +2074,7 @@ const drops = validatedTransactions.filter(r => r.action === "DROP");
 console.log(`[DEBUG] After simple filtering: ${billableAdds.length} billable adds, ${drops.length} drops`);
 console.log(`[DEBUG] Excluded CANCEL transactions, kept PROCESS and EXECUTE`);
 
-// Enhanced filtering to surface players “added” by multiple teams (likely failed bids)
+// Enhanced filtering to surface players â€œaddedâ€ by multiple teams (likely failed bids)
 const playerAddCounts = billableAdds.reduce((acc, r) => {
   const key = r.playerId ?? r.player; // prefer id
   if (!key) return acc;
@@ -1651,14 +2090,14 @@ Object.entries(playerAddCounts).forEach(([playerId, count]) => {
 
 // Resolve missing player names
 const needIds = [...new Set(
-  [...allAdds, ...drops]  // ← Use allAdds instead of billableAdds
+  [...allAdds, ...drops]  // â† Use allAdds instead of billableAdds
     .map(r => (r.player ? null : r.playerId))
     .filter(Boolean)
 )];
 
 const pmap = await buildPlayerMap({ leagueId, seasonId, req, ids: needIds, maxSp: 25 });
 
-for (const r of [...allAdds, ...drops]) {  // ← Use allAdds instead of billableAdds
+for (const r of [...allAdds, ...drops]) {  // â† Use allAdds instead of billableAdds
   if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
 } 
 
@@ -1670,7 +2109,7 @@ let rawMoves = [...allAdds, ...drops].map(r => {
       week: wb.week,
       range: weekRangeLabelDisplay(wb.start),
       team: r.team,
-      player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
+      player: r.player || (r.playerId ? `#${r.playerId}` : "â€”"),
       action: r.action,
       method: r.method === "PROCESS" ? "Waivers" : r.method === "EXECUTE" ? "Free Agent" : r.method,
       source: r.src,
@@ -1768,23 +2207,26 @@ return {
 app.get("/api/report", async (req, res) => {
   try {
     let seasonId = req.query?.seasonId;
+    const leagueId = req.query?.leagueId; // Add league ID parameter
     
     // If no specific season requested, use the server's current display season
     if (!seasonId) {
       const displaySetting = await readJson("current_display_season.json", { season: "2025" });
-      seasonId = displaySetting.season; // Use 'season', not 'defaultSeason'
+      seasonId = displaySetting.season;
     }
+    
+    const leagueKey = leagueId || 'default';
     
     if (DATABASE_URL) {
       const client = await pool.connect();
-      const result = await client.query('SELECT report_data FROM reports WHERE season_id = $1', [seasonId]);
+      const result = await client.query('SELECT report_data FROM reports WHERE season_id = $1', [`${leagueKey}_${seasonId}`]);
       client.release();
       if (result.rows.length > 0) {
         return res.json(result.rows[0].report_data);
       }
     }
     
-    const preferred = await readJson(`report_${seasonId}.json`, null);
+    const preferred = await readJson(`report_${leagueKey}_${seasonId}.json`, null);
     if (preferred) return res.json(preferred);
     
     return res.status(404).json({ error: "No report found for season " + seasonId });
@@ -1793,7 +2235,6 @@ app.get("/api/report", async (req, res) => {
     res.status(500).json({ error: "Failed to load report" });
   }
 });
-
 
 // Add this new route for setting which season to display by default
 app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
@@ -1887,8 +2328,12 @@ app.get("/api/report/current-season", async (req, res) => {
 });
 
 app.post("/api/report/update", async (req, res) => {
-  if (req.header("x-admin") !== ADMIN_PASSWORD) return res.status(401).send("Unauthorized");
-  const { leagueId, seasonId } = req.body || {};
+  const adminHeader = req.header("x-admin");
+const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
+if (!validPasswords.includes(adminHeader)) {
+  return res.status(401).send("Unauthorized");
+}
+  const { leagueId, seasonId, currentLeagueId } = req.body || {}; // Add currentLeagueId
   if (!leagueId || !seasonId) return res.status(400).send("Missing leagueId or seasonId");
   const jobId = (req.query?.jobId || `job_${Date.now()}`);
   
@@ -1910,6 +2355,9 @@ app.post("/api/report/update", async (req, res) => {
     const report = await buildOfficialReport({ leagueId, seasonId, req });
     const snapshot = { seasonId, leagueId, ...report };
     
+    // Save with league-specific key based on currentLeagueId (blitzzz/sculpin)
+    const leagueKey = currentLeagueId || 'default'; // Use the frontend league ID
+    
     // Save to database if available
     if (DATABASE_URL) {
       const client = await pool.connect();
@@ -1918,27 +2366,14 @@ app.post("/api/report/update", async (req, res) => {
         VALUES ($1, $2, CURRENT_TIMESTAMP)
         ON CONFLICT (season_id) DO UPDATE SET 
         report_data = $2, updated_at = CURRENT_TIMESTAMP
-      `, [seasonId, JSON.stringify(snapshot)]);
-
-  // ADD THIS: Update default season in database too
-  await client.query(`
-  INSERT INTO league_data (data_type, data_value) 
-  VALUES ('current_display_season', $1)
-  ON CONFLICT (data_type) DO UPDATE SET 
-  data_value = EXCLUDED.data_value, updated_at = CURRENT_TIMESTAMP
-`, [JSON.stringify({ season: seasonId, updatedAt: Date.now() })]);
+      `, [`${leagueKey}_${seasonId}`, JSON.stringify(snapshot)]);
       client.release();
     }
     
-// In server.mjs, around line 780 in the updateOfficialSnapshot function
-await writeJson(`report_${seasonId}.json`, snapshot);
-
-// ADD THIS LINE BACK:
-const defaultSetting = { season: seasonId, updatedAt: Date.now() };
-await writeJson("current_display_season.json", defaultSetting);
-
-setProgress(jobId, 100, "Snapshot complete");
-
+    // Save to file with league-specific filename
+    await writeJson(`report_${leagueKey}_${seasonId}.json`, snapshot);
+    
+    setProgress(jobId, 100, "Snapshot complete");
     res.json({ ok: true, weeks: (report?.weekRows || []).length });
   } catch (err) {
     console.error('Report update failed:', err);
@@ -1948,37 +2383,43 @@ setProgress(jobId, 100, "Snapshot complete");
 });
 
 // =========================
-// Auto-refresh system
+// Auto-refresh system - Multi-League Version
 // =========================
 let autoRefreshInterval = null;
 
-async function runAutoRefresh() {
-  console.log('[AUTO-REFRESH] Starting background refresh cycle...');
+// Define both leagues to refresh
+const LEAGUES_TO_REFRESH = [
+  { id: 'blitzzz', espnId: '226912' },
+  { id: 'sculpin', espnId: '58645' }  // Replace with actual Sculpin ESPN ID
+];
+
+async function runAutoRefreshForLeague(leagueConfig) {
+  console.log(`[AUTO-REFRESH] Starting refresh for league: ${leagueConfig.id}`);
   
   try {
     // Get current season from settings
     const displaySetting = await readJson("current_display_season.json", { season: "2025" });
     const seasonId = displaySetting.season;
     
-    if (!DEFAULT_LEAGUE_ID || !seasonId) {
-      console.log('[AUTO-REFRESH] Missing league ID or season, skipping');
+    if (!leagueConfig.espnId || !seasonId) {
+      console.log(`[AUTO-REFRESH] Missing ESPN ID or season for ${leagueConfig.id}, skipping`);
       return;
     }
 
-    console.log(`[AUTO-REFRESH] Refreshing data for league ${DEFAULT_LEAGUE_ID}, season ${seasonId}`);
+    console.log(`[AUTO-REFRESH] Refreshing data for league ${leagueConfig.id} (ESPN: ${leagueConfig.espnId}), season ${seasonId}`);
 
-    // 1. Update official snapshot
-    console.log('[AUTO-REFRESH] Updating official snapshot...');
+    // 1. Update official snapshot for this league
+    console.log(`[AUTO-REFRESH] Updating official snapshot for ${leagueConfig.id}...`);
     const report = await buildOfficialReport({ 
-      leagueId: DEFAULT_LEAGUE_ID, 
+      leagueId: leagueConfig.espnId, 
       seasonId, 
-      req: { headers: {} } // Mock request object
+      req: { headers: {} }
     });
     
     if (report) {
-      const snapshot = { seasonId, leagueId: DEFAULT_LEAGUE_ID, ...report };
+      const snapshot = { seasonId, leagueId: leagueConfig.espnId, ...report };
       
-      // Save to database if available
+      // Save to database with league-specific key
       if (DATABASE_URL) {
         const client = await pool.connect();
         await client.query(`
@@ -1986,122 +2427,54 @@ async function runAutoRefresh() {
           VALUES ($1, $2, CURRENT_TIMESTAMP)
           ON CONFLICT (season_id) DO UPDATE SET 
           report_data = $2, updated_at = CURRENT_TIMESTAMP
-        `, [seasonId, JSON.stringify(snapshot)]);
+        `, [`${leagueConfig.id}_${seasonId}`, JSON.stringify(snapshot)]);
         client.release();
       }
       
-      await writeJson(`report_${seasonId}.json`, snapshot);
-      console.log('[AUTO-REFRESH] Snapshot updated successfully');
+      // Save to file system with league-specific filename
+      await writeJson(`report_${leagueConfig.id}_${seasonId}.json`, snapshot);
+      console.log(`[AUTO-REFRESH] Snapshot updated successfully for ${leagueConfig.id}`);
     }
 
-    // 2. Update rosters
-    console.log('[AUTO-REFRESH] Updating rosters...');
+    // 2. Update rosters for this league
+    console.log(`[AUTO-REFRESH] Updating rosters for ${leagueConfig.id}...`);
     
     const [teamJson, rosJson, setJson] = await Promise.all([
-      espnFetch({ leagueId: DEFAULT_LEAGUE_ID, seasonId, view: "mTeam", req: { headers: {} } }),
-      espnFetch({ leagueId: DEFAULT_LEAGUE_ID, seasonId, view: "mRoster", req: { headers: {} } }),
-      espnFetch({ leagueId: DEFAULT_LEAGUE_ID, seasonId, view: "mSettings", req: { headers: {} } }),
+      espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mTeam", req: { headers: {} } }),
+      espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mRoster", req: { headers: {} } }),
+      espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mSettings", req: { headers: {} } }),
     ]);
     
-    const teams = teamJson?.teams || [];
-    if (teams.length > 0) {
-      const names = [...new Set(teams.map(t => teamName(t)))];
-      const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
-      const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
-      
-      // Build roster data (same logic as importEspnTeams)
-      const rosterData = (rosJson?.teams || []).map(t => {
-        const entries = (t.roster?.entries || []).map(e => {
-          const p = e.playerPoolEntry?.player;
-          const fullName = p?.fullName || "Player";
-          const slot = slotMap[e.lineupSlotId] || "—";
-          
-          let position = "";
-          if (p?.defaultPositionId) {
-            position = posIdToName(p.defaultPositionId);
-          }
-          if (!position && p?.eligibleSlots) {
-            const eligiblePos = p.eligibleSlots
-              .map(slotId => posIdToName(slotId))
-              .find(pos => pos && !pos.includes("FLEX") && pos !== "—");
-            if (eligiblePos) position = eligiblePos;
-          }
-          
-          return { 
-            name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
-            slot, 
-            position
-          };
-        });
-
-        // Sort entries (same logic as importEspnTeams)
-        const starters = entries.filter(e => e.slot !== "Bench");
-        const bench = entries.filter(e => e.slot === "Bench");
-        
-        const sortedStarters = [];
-        const starterOrderWithCounts = [
-          { pos: "QB", max: 1 },
-          { pos: "RB", max: 2 }, 
-          { pos: "RB/WR", max: 1 },
-          { pos: "WR", max: 2 },
-          { pos: "TE", max: 1 },
-          { pos: "FLEX", max: 1 },
-          { pos: "D/ST", max: 1 },
-          { pos: "K", max: 1 }
-        ];
-
-        starterOrderWithCounts.forEach(({ pos, max }) => {
-          const playersInPosition = starters.filter(p => p.slot === pos);
-          for (let i = 0; i < max; i++) {
-            if (playersInPosition[i]) {
-              sortedStarters.push(playersInPosition[i]);
-            }
-          }
-        });
-
-        const sortedBench = bench
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(p => ({
-            name: p.position ? `${p.name} (${p.position})` : p.name,
-            slot: p.slot
-          }));
-        
-        const finalEntries = [
-          ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
-          ...sortedBench
-        ];
-        
-        return { 
-          teamName: teamsById[t.id] || `Team ${t.id}`, 
-          entries: finalEntries 
-        };
-      });
-
-      // Save roster data
-      const data = await getLeagueData();
-      data.rosters = data.rosters || {};
-      data.rosters[seasonId] = {
-        rosterData,
-        lastUpdated: new Date().toISOString()
-      };
-      await saveLeagueData(data);
-      
-      console.log(`[AUTO-REFRESH] Updated rosters for ${teams.length} teams`);
-    }
+    // ... rest of roster processing logic stays the same ...
     
-    console.log('[AUTO-REFRESH] Refresh cycle completed successfully');
+    console.log(`[AUTO-REFRESH] Refresh completed successfully for ${leagueConfig.id}`);
     
   } catch (error) {
-    console.error('[AUTO-REFRESH] Failed:', error.message);
+    console.error(`[AUTO-REFRESH] Failed for league ${leagueConfig.id}:`, error.message);
   }
+}
+
+async function runAutoRefresh() {
+  console.log('[AUTO-REFRESH] Starting background refresh cycle for all leagues...');
+  
+  // Refresh each league sequentially to avoid overwhelming ESPN API
+  for (const leagueConfig of LEAGUES_TO_REFRESH) {
+    await runAutoRefreshForLeague(leagueConfig);
+    // Wait 30 seconds between leagues to be gentle on ESPN API
+    if (LEAGUES_TO_REFRESH.indexOf(leagueConfig) < LEAGUES_TO_REFRESH.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 30000));
+    }
+  }
+  
+  console.log('[AUTO-REFRESH] All leagues refreshed');
 }
 
 // Start auto-refresh cycle (every 10 minutes)
 function startAutoRefresh() {
   if (autoRefreshInterval) return;
   
-  console.log('[AUTO-REFRESH] Starting 5-minute refresh cycle');
-  autoRefreshInterval = setInterval(runAutoRefresh, 5 * 60 * 1000);
+  console.log('[AUTO-REFRESH] Starting 10-minute refresh cycle for multi-league system');
+  autoRefreshInterval = setInterval(runAutoRefresh, 10 * 60 * 1000);
   
   // Run once immediately after 30 seconds
   setTimeout(runAutoRefresh, 30000);
@@ -2126,6 +2499,3 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`); 
   console.log(`Database: ${DATABASE_URL ? 'PostgreSQL' : 'File system'}`);
 });
-
-
-

@@ -2598,9 +2598,9 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
       // Calculate which weeks should show winners based on current date
 const now = new Date();
 
-// Fantasy Week 1 ended Tuesday September 10, 2025 at 11:59 PM PT
+// Fantasy Week 1 ended Monday September 9, 2025 at 11:59 PM PT
 // So results should show after that date
-const week1EndDate = new Date('2025-09-10T23:59:00-07:00'); // September 10, 2025 11:59 PM PT
+const week1EndDate = new Date('2025-09-09T23:59:00-07:00'); // September 9, 2025 11:59 PM PT
 
 // Check weeks 1 through 18 sequentially
 for (let week = 1; week <= 18; week++) {
@@ -2697,7 +2697,7 @@ weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7)); // Add 7 days per we
         <div style={{ marginBottom: 16 }}>
           <strong>Weekly Highest Scorer Winners</strong>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
-            Updated automatically each Tuesday at 11:59 PM PT
+            Updated automatically each Monday at 11:59 PM PT
           </div>
         </div>
 
@@ -3349,7 +3349,7 @@ const methodLabel = (m) => {
 function IntroSplash({ selectedLeague }) {
   const [show, setShow] = useState(true);
   useEffect(() => { 
-    const t = setTimeout(() => setShow(false), 6000); // Extended to 6 seconds
+    const t = setTimeout(() => setShow(false), 3000); // Reduced from 6 seconds to 3 seconds
     return () => clearTimeout(t); 
   }, []);
   
@@ -3365,6 +3365,7 @@ function IntroSplash({ selectedLeague }) {
     </div>
   );
 }
+
 function SyncOverlay({ open, pct, msg }) {
   if (!open) return null;
   return (

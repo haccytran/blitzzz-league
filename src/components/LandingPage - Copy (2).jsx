@@ -25,8 +25,9 @@ export function LandingPage({ onLeagueSelect }) {
   
   // Start fading out the other logo while keeping its pulse
   if (otherLogo) {
-    otherLogo.style.transition = 'opacity 1.2s ease-out';
+    otherLogo.style.transition = 'opacity 2s ease-out';
     otherLogo.style.opacity = '0';
+    // Keep the pulsing animation but make it fade
     otherLogo.style.animation = 'logoPulse 2s ease-in-out infinite';
   }
   
@@ -44,20 +45,7 @@ export function LandingPage({ onLeagueSelect }) {
   const rawMoveX = screenCenterX - logoCenterX;
   const rawMoveY = screenCenterY - logoCenterY;
   
-  // Determine final scale based on screen size
-  let finalScale = 1.33; // Default for desktop
-  
-  // Adjust scale for mobile devices
-  if (window.innerWidth <= 768) {
-    if (window.innerHeight > window.innerWidth) {
-      // Portrait mode
-      finalScale = 1.0;
-    } else {
-      // Landscape mode
-      finalScale = 0.8;
-    }
-  }
-  
+  // Use compensation factor of 1.00 since it's working
   const compensationFactor = 1.00;
   const adjustedMoveX = rawMoveX * compensationFactor;
   const adjustedMoveY = rawMoveY * compensationFactor;
@@ -67,27 +55,29 @@ export function LandingPage({ onLeagueSelect }) {
   clickedLogo.className = 'logo-card';
   clickedLogo.offsetHeight; // Force reflow
   
-  // Apply smooth scaling AND movement animation with responsive scale
+  // Apply smooth scaling AND movement animation
   clickedLogo.setAttribute('style', `
     animation: none !important;
-    transition: transform 2s ease-out, opacity 1.7s ease-out 1.7s !important;
+    transition: transform 3s ease-out, opacity 0s !important;
     transform: translate(${adjustedMoveX}px, ${adjustedMoveY}px) scale(1.00) !important;
     z-index: 1000 !important;
     cursor: default !important;
     pointer-events: none !important;
     transform-origin: center center !important;
-    opacity: 0 !important;
+    opacity: 1 !important;
   `);
 
   setSelectedLeague(leagueId);
   setAnimationPhase('selecting');
 
-  // Go directly to the site after 2 seconds (when centering animation completes)
   setTimeout(() => {
-    if (leagueConfigs && leagueConfigs[leagueId]) {
-      onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
-    }
-  }, 2000); // Reduced from 3000ms to 2000ms
+    setAnimationPhase('selected');
+    setTimeout(() => {
+      if (leagueConfigs && leagueConfigs[leagueId]) {
+        onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
+      }
+    }, 0);
+  }, 3000);
 };
 
   if (!leagueConfigs) {
@@ -106,6 +96,8 @@ export function LandingPage({ onLeagueSelect }) {
   return (
     <div className="landing-container">
       <div className="landing-content">
+        <p className="landing-subtitle">SELECT LEAGUE</p>
+        
         <div className="logo-selection-container">
           {/* Blitzzz Logo */}
 <div 

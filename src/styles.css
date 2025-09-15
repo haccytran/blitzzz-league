@@ -62,17 +62,22 @@ body{ background:var(--bg); color:var(--ink); }
   justify-content:center;
   background:#FFFFFF; 
   z-index:9999; 
-  animation:blitzFade 3s ease forwards; /* Extended to 3 seconds total */
+  animation:blitzFade 2s ease forwards; /* Reduced from 3s to 2s */
 }
 
 .splash img{ 
-  width: 512px; /* Match the large landing page size */
+  width: 512px;
   height: 512px;
   object-fit: contain;
-  animation: splashLogoShow 3s ease forwards;
+  animation: splashLogoShow 2s ease forwards; /* Reduced from 3s to 2s */
 }
-@keyframes blitzFade { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0; visibility:hidden} }
-@keyframes pop { 0%{ transform:scale(.85); filter:blur(2px); } 100%{ transform:scale(1); filter:blur(0); } }
+
+@keyframes blitzFade { 
+  0%{opacity:1} 
+  70%{opacity:1} 
+  100%{opacity:0; visibility:hidden} 
+}
+
 
 /* Smaller cards stack nicely on phones */
 @media (max-width: 760px){
@@ -225,7 +230,7 @@ button { color: var(--ink); }
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 4rem; /* Large gap between logos */
+  gap: 0rem; /* gap between logos */
   flex-wrap: nowrap; /* Changed from wrap to nowrap */
   flex-direction: row; /* Force horizontal layout */
 }
@@ -235,12 +240,13 @@ button { color: var(--ink); }
   border-radius: 20px;
   padding: 2rem;
   cursor: pointer;
-  transition: all 0.3s ease;
-  transform: scale(0.75); /* Start at 75% as requested */
+  transition: transform 0.3s ease; /* Smooth hover transitions */
+  transform: scale(0.5); /* Start at 50% size */
+  animation: logoPulse 2s ease-in-out infinite; /* Start pulsing immediately */
 }
 
 .logo-card:hover {
-  transform: scale(0.8); /* Slight hover growth */
+  transform: scale(0.55); /* Slight hover growth from current pulse size */
 }
 
 .league-logo-large {
@@ -249,61 +255,16 @@ button { color: var(--ink); }
   object-fit: contain;
 }
 
-/* Animation classes for the logo transitions */
-.logo-fade-in {
-  animation: logoFadeIn 3s ease-out forwards;
-}
-
-.logo-grow {
-  animation: logoGrow 3s ease-out forwards;
-}
-
-.logo-fade-out {
-  animation: logoFadeOut 3s ease-out forwards;
-}
-
-@keyframes logoFadeIn {
-  0% { 
-    opacity: 0; 
-    transform: scale(0.5); 
-  }
-  100% { 
-    opacity: 1; 
-    transform: scale(0.75); 
-    animation: logoPulse 2s ease-in-out infinite; /* Start pulsing after fade-in */
-  }
-}
-
-@keyframes logoGrow {
-  0% { 
-    transform: scale(0.75); 
-  }
-  100% { 
-    transform: scale(1); 
-  }
-}
-
-@keyframes logoFadeOut {
-  0% { 
-    opacity: 1; 
-    transform: scale(0.75); 
-  }
-  100% { 
-    opacity: 0; 
-    transform: scale(0.5); 
-  }
-}
-
 /* New pulsing animation */
 @keyframes logoPulse {
   0% { 
-    transform: scale(0.75); 
+    transform: scale(0.50);
   }
   50% { 
-    transform: scale(0.85); /* Grows to 85% at the peak of the pulse */
+    transform: scale(0.75); */ulse to 75% at peak */
   }
   100% { 
-    transform: scale(0.75); /* Returns to normal size */
+    transform: scale(0.500); /* Return to 50% */
   }
 }
 
@@ -319,18 +280,81 @@ button { color: var(--ink); }
 
 /* Mobile responsiveness */
 @media (max-width: 768px) {
-  .logo-selection-container {
-    flex-direction: column;
-    gap: 2rem;
+  /* Portrait mode - stack logos vertically */
+  @media (orientation: portrait) {
+    .logo-selection-container {
+      flex-direction: column;
+      gap: 1rem;
+    }
+    
+    .landing-subtitle {
+      font-size: 1.2rem;
+    }
+    
+    .league-logo-large {
+      width: 280px;
+      height: 280px;
+    }
+    
+    .logo-card {
+      transform: scale(0.4); /* Smaller for portrait phones */
+    }
+    
+    .logo-card:hover {
+      transform: scale(0.44);
+    }
   }
   
-  .landing-subtitle {
-    font-size: 1.2rem;
+  /* Landscape mode - keep side by side but scale down significantly */
+  @media (orientation: landscape) {
+    .logo-selection-container {
+      flex-direction: row;
+      gap: 0.5rem; /* Even closer in landscape */
+    }
+    
+    .landing-subtitle {
+      font-size: 1rem;
+      margin-bottom: 1rem; /* Reduced margin */
+    }
+    
+    .league-logo-large {
+      width: 200px; /* Much smaller for landscape phones */
+      height: 200px;
+    }
+    
+    .logo-card {
+      transform: scale(0.3); /* Very small for landscape phones */
+      padding: 1rem; /* Reduced padding */
+    }
+    
+    .logo-card:hover {
+      transform: scale(0.33);
+    }
+    
+    /* Adjust container padding for landscape */
+    .landing-container {
+      padding: 10px;
+    }
+  }
+}
+
+/* Tablet responsiveness */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .logo-selection-container {
+    gap: 2rem; /* Medium spacing for tablets */
   }
   
   .league-logo-large {
-    width: 300px;
-    height: 300px;
+    width: 400px;
+    height: 400px;
+  }
+  
+  .logo-card {
+    transform: scale(0.6);
+  }
+  
+  .logo-card:hover {
+    transform: scale(0.65);
   }
 }
 
@@ -339,7 +363,7 @@ button { color: var(--ink); }
     opacity: 1; 
     transform: scale(1);
   }
-  50% { 
+  70% { 
     opacity: 1; 
     transform: scale(1);
   }
@@ -348,7 +372,6 @@ button { color: var(--ink); }
     transform: scale(1);
   }
 }
-
 /* ========================================
    SCULPIN LEAGUE - PADRES COLOR SCHEME
    ======================================== */

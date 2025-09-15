@@ -28,10 +28,10 @@ const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', '
   // Show simple browser alert with emojis for mobile portrait users
 if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
   // First prompt - just OK button, no cancel option
-  alert("📱↻ ROTATE YOUR PHONE TO LANDSCAPE MODE, FOO!! 📱↻\n\nClick OK to continue.");
+  alert("📱↻ ROTATE YOUR PHONE TO LANDSCAPE MODE!!📱↻\n\n📱↻\n\n📱↻\n\nClick OK to continue.");
   
   // Second prompt - Yes/No for don't show again
-  const dontShowAgain = confirm("📱↻ Don't show this rotation message reminder again?📱↻\n\n📱↻YOU NOT GONNA FORGET RIGHT, FOO?!📱↻\n\nClick OK for Yes, Cancel for No.");
+  const dontShowAgain = confirm("📱↻ Don't show this rotation message reminder again?📱↻\n\n📱↻YOU NOT GONNA FORGET RIGHT?!📱↻\n\n📱↻\n\n📱↻\n\nClick OK for Yes, Cancel for No.");
   if (dontShowAgain) {
     localStorage.setItem('hideRotationPrompt', 'true');
   }

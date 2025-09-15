@@ -107,81 +107,82 @@ const [animationPhase, setAnimationPhase] = useState('initial');
   const sculpin = leagueConfigs.sculpin;
 
   return (
+  <>
     <div className="landing-container">
       <div className="landing-content">
+        <p className="landing-subtitle">SELECT LEAGUE</p>
+        
         <div className="logo-selection-container">
-          {/* Blitzzz Logo */}
-<div 
-  className="logo-card"
-  onClick={(e) => handleLogoClick('blitzzz', e)}
-  style={{ 
-    cursor: animationPhase === 'selecting' ? 'default' : 'pointer',
-    pointerEvents: animationPhase === 'selecting' ? 'none' : 'auto'
-  }}
->
-  <img 
-    src={blitzzz.logo} 
-    alt={`${blitzzz.name} Logo`} 
-    className="league-logo-large"
-  />
-</div>
+          <div 
+            className="logo-card"
+            onClick={(e) => handleLogoClick('blitzzz', e)}
+            style={{ 
+              cursor: animationPhase === 'selecting' ? 'default' : 'pointer',
+              pointerEvents: animationPhase === 'selecting' ? 'none' : 'auto'
+            }}
+          >
+            <img 
+              src={blitzzz.logo} 
+              alt={`${blitzzz.name} Logo`} 
+              className="league-logo-large"
+            />
+          </div>
 
-          {/* Sculpin Logo */}
-<div 
-  className="logo-card"
-  onClick={(e) => handleLogoClick('sculpin', e)}
-  style={{ 
-    cursor: animationPhase === 'selecting' ? 'default' : 'pointer',
-    pointerEvents: animationPhase === 'selecting' ? 'none' : 'auto'
-  }}
->
-  <img 
-    src={sculpin.logo} 
-    alt={`${sculpin.name} Logo`} 
-    className="league-logo-large"
-  />
-</div>
+          <div 
+            className="logo-card"
+            onClick={(e) => handleLogoClick('sculpin', e)}
+            style={{ 
+              cursor: animationPhase === 'selecting' ? 'default' : 'pointer',
+              pointerEvents: animationPhase === 'selecting' ? 'none' : 'auto'
+            }}
+          >
+            <img 
+              src={sculpin.logo} 
+              alt={`${sculpin.name} Logo`} 
+              className="league-logo-large"
+            />
+          </div>
         </div>
       </div>
-    {/* Rotation popup modal - centered overlay */}
-{showRotationPopup && (
-  <div className="popup-backdrop">
-    <div className="popup-modal">
-      <div className="popup-icon">📱</div>
-      <h3>Rotate Your Device</h3>
-      <p>For the best experience, please rotate your device to landscape mode.</p>
-      <div className="popup-checkbox">
-        <input 
-          type="checkbox" 
-          id="dontShowRotation" 
-          onChange={(e) => {
-            if (e.target.checked) {
-              localStorage.setItem('hideRotationPrompt', 'true');
-            } else {
-              localStorage.removeItem('hideRotationPrompt');
-            }
-          }}
-        />
-        <label htmlFor="dontShowRotation">Don't show this message again</label>
+    </div>
+    
+    {showRotationPopup && (
+      <div className="popup-backdrop">
+        <div className="popup-modal">
+          <div className="popup-icon">📱</div>
+          <h3>Rotate Your Device</h3>
+          <p>For the best experience, please rotate your device to landscape mode.</p>
+          <div className="popup-checkbox">
+            <input 
+              type="checkbox" 
+              id="dontShowRotation" 
+              onChange={(e) => {
+                if (e.target.checked) {
+                  localStorage.setItem('hideRotationPrompt', 'true');
+                } else {
+                  localStorage.removeItem('hideRotationPrompt');
+                }
+              }}
+            />
+            <label htmlFor="dontShowRotation">Don't show this message again</label>
+          </div>
+          <button 
+            className="popup-ok-btn"
+            onClick={() => {
+              setShowRotationPopup(false);
+              setAnimationPhase('selected');
+              setTimeout(() => {
+                if (leagueConfigs && leagueConfigs[selectedLeague]) {
+                  onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
+                }
+              }, 100);
+            }}
+          >
+            OK
+          </button>
+        </div>
       </div>
-      <button 
-        className="popup-ok-btn"
-        onClick={() => {
-          setShowRotationPopup(false);
-          setAnimationPhase('selected');
-          setTimeout(() => {
-            if (leagueConfigs && leagueConfigs[selectedLeague]) {
-              onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
-            }
-          }, 100);
-        }}
-      >
-        OK
-      </button>
-    </div>
-  </div>
-)}
-    </div>
-
-  );
+    )}
+  </>
+);
 }

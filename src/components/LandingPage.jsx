@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 export function LandingPage({ onLeagueSelect }) {
   const [selectedLeague, setSelectedLeague] = useState(null);
 const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', 'selecting', 'selected'
-const [showRotationPopup, setShowRotationPopup] = useState(false);
+
 
   // Load league configs
   const [leagueConfigs, setLeagueConfigs] = useState(null);
@@ -18,10 +18,33 @@ const [showRotationPopup, setShowRotationPopup] = useState(false);
  const handleLogoClick = (leagueId, event) => {
   if (animationPhase === 'selecting') return;
 
+  // Check for mobile portrait FIRST with simple browser alert
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isPortrait = window.innerHeight > window.innerWidth;
+  const isSmallScreen = window.innerWidth <= 768;
+  const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
+  
+  // Show simple browser alert with emojis for mobile portrait users
+  if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
+    const message = "📱 ↻ For the best experience, please rotate your device to landscape mode.\n\nClick OK to continue anyway.";
+    const userChoice = confirm(message);
+    
+    if (userChoice) {
+      // Ask about not showing again
+      const dontShowAgain = confirm("📱 Don't show this rotation message again?");
+      if (dontShowAgain) {
+        localStorage.setItem('hideRotationPrompt', 'true');
+      }
+    } else {
+      // User clicked Cancel - don't proceed
+      return;
+    }
+  }
+
   setSelectedLeague(leagueId);
   setAnimationPhase('selecting');
 
-  // Normal animation flow for ALL devices first
+  // Normal animation flow
   const clickedLogo = event.currentTarget;
   const allLogos = document.querySelectorAll('.logo-card');
   
@@ -41,7 +64,7 @@ const [showRotationPopup, setShowRotationPopup] = useState(false);
   const rawMoveX = screenCenterX - logoCenterX;
   const rawMoveY = screenCenterY - logoCenterY;
   
-  let finalScale = 1.10;
+  let finalScale = 1.33;
   if (window.innerWidth <= 768) {
     if (window.innerHeight > window.innerWidth) {
       finalScale = 1.0;
@@ -69,24 +92,11 @@ const [showRotationPopup, setShowRotationPopup] = useState(false);
     opacity: 0 !important;
   `);
 
-  // Check if we should show popup AFTER animation starts (1 second delay)
   setTimeout(() => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    const isPortrait = window.innerHeight > window.innerWidth;
-    const isSmallScreen = window.innerWidth <= 768;
-    const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
-    
-    if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-      setShowRotationPopup(true);
-    } else {
-      // Auto-continue if no popup needed
-      setTimeout(() => {
-        if (leagueConfigs && leagueConfigs[leagueId]) {
-          onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
-        }
-      }, 1000);
+    if (leagueConfigs && leagueConfigs[leagueId]) {
+      onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
     }
-  }, 1000);
+  }, 2000);
 };
 
   if (!leagueConfigs) {
@@ -140,40 +150,6 @@ const [showRotationPopup, setShowRotationPopup] = useState(false);
         </div>
       </div>
     </div>
-    {showRotationPopup && (
-  <div className="simple-popup-backdrop">
-    <div className="simple-popup">
-      <div className="popup-emojis">📱 ↻</div>
-      <h3>Rotate Your Device</h3>
-      <p>For the best experience, please rotate your device to landscape mode.</p>
-      <div className="popup-checkbox-row">
-        <input 
-          type="checkbox" 
-          id="dontShowAgain" 
-          onChange={(e) => {
-            if (e.target.checked) {
-              localStorage.setItem('hideRotationPrompt', 'true');
-            } else {
-              localStorage.removeItem('hideRotationPrompt');
-            }
-          }}
-        />
-        <label htmlFor="dontShowAgain">Do not show this message again</label>
-      </div>
-      <button 
-        className="popup-continue-btn"
-        onClick={() => {
-          setShowRotationPopup(false);
-          if (leagueConfigs && leagueConfigs[selectedLeague]) {
-            onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
-          }
-        }}
-      >
-        Continue
-      </button>
-    </div>
-  </div>
-)}
-      </>
+          </>
 );
 }

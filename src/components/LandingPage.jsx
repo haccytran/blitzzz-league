@@ -3,8 +3,7 @@ import React, { useState, useEffect } from 'react';
 
 export function LandingPage({ onLeagueSelect }) {
   const [selectedLeague, setSelectedLeague] = useState(null);
-const [animationPhase, setAnimationPhase] = useState('initial');
-  const [showRotationPopup, setShowRotationPopup] = useState(false); // 'initial', 'selecting', 'selected'
+const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', 'selecting', 'selected'
 
   // Load league configs
   const [leagueConfigs, setLeagueConfigs] = useState(null);
@@ -18,24 +17,32 @@ const [animationPhase, setAnimationPhase] = useState('initial');
  const handleLogoClick = (leagueId, event) => {
   if (animationPhase === 'selecting') return;
 
-  setSelectedLeague(leagueId);
-  setAnimationPhase('selecting');
-
-  // Check if we should show popup AFTER setting animation state
+  // Check for mobile portrait FIRST
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   const isPortrait = window.innerHeight > window.innerWidth;
   const isSmallScreen = window.innerWidth <= 768;
   const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
   
-  // Show popup after 500ms delay if mobile portrait and user hasn't disabled it
+  // Show simple browser alert for mobile portrait users
   if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-    setTimeout(() => {
-      setShowRotationPopup(true);
-    }, 500);
-    // Don't return - let the animation continue
+    const userChoice = confirm("For the best experience, please rotate your device to landscape mode.\n\nClick OK to continue anyway, or Cancel to stay here.");
+    
+    if (userChoice) {
+      // User clicked OK - ask about not showing again
+      const dontShowAgain = confirm("Don't show this message again?");
+      if (dontShowAgain) {
+        localStorage.setItem('hideRotationPrompt', 'true');
+      }
+    } else {
+      // User clicked Cancel - don't proceed
+      return;
+    }
   }
 
-  // Normal animation flow for ALL devices
+  setSelectedLeague(leagueId);
+  setAnimationPhase('selecting');
+
+  // Normal animation flow
   const clickedLogo = event.currentTarget;
   const allLogos = document.querySelectorAll('.logo-card');
   
@@ -83,14 +90,11 @@ const [animationPhase, setAnimationPhase] = useState('initial');
     opacity: 0 !important;
   `);
 
-  // Only auto-continue if NOT showing popup
-  if (!(isMobile && isPortrait && isSmallScreen && !hidePrompt)) {
-    setTimeout(() => {
-      if (leagueConfigs && leagueConfigs[leagueId]) {
-        onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
-      }
-    }, 2000);
-  }
+  setTimeout(() => {
+    if (leagueConfigs && leagueConfigs[leagueId]) {
+      onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
+    }
+  }, 2000);
 };
 
   if (!leagueConfigs) {
@@ -145,41 +149,6 @@ const [animationPhase, setAnimationPhase] = useState('initial');
       </div>
     </div>
     
-    {showRotationPopup && (
-  <div className="popup-backdrop">
-    <div className="popup-modal">
-      <div className="popup-icon">📱</div>
-      <h3>Rotate Your Device</h3>
-      <p>For the best experience, please rotate your device to landscape mode.</p>
-      <div className="popup-checkbox">
-        <input 
-          type="checkbox" 
-          id="dontShowRotation" 
-          onChange={(e) => {
-            if (e.target.checked) {
-              localStorage.setItem('hideRotationPrompt', 'true');
-            } else {
-              localStorage.removeItem('hideRotationPrompt');
-            }
-          }}
-        />
-        <label htmlFor="dontShowRotation">Don't show this message again</label>
-      </div>
-      <button 
-        className="popup-ok-btn"
-        onClick={() => {
-          setShowRotationPopup(false);
-          // Continue with normal site loading
-          if (leagueConfigs && leagueConfigs[selectedLeague]) {
-            onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
-          }
-        }}
-      >
-        OK
-      </button>
-    </div>
-  </div>
-)}
-  </>
+      </>
 );
 }

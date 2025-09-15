@@ -18,27 +18,10 @@ const [animationPhase, setAnimationPhase] = useState('initial');
  const handleLogoClick = (leagueId, event) => {
   if (animationPhase === 'selecting') return;
 
-  // Better mobile detection
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  const isPortrait = window.innerHeight > window.innerWidth;
-  const isSmallScreen = window.innerWidth <= 768;
-  const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
-  
-  // Set the selected league first (this is needed for both mobile and desktop)
   setSelectedLeague(leagueId);
-  
-  // Only show popup if it's actually a mobile device in portrait mode
-  if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-    setAnimationPhase('selecting');
-    setShowRotationPopup(true);
-    return;
-  }
-
-  // Reset popup state for non-mobile
-  setShowRotationPopup(false);
   setAnimationPhase('selecting');
 
-  // Normal animation flow for desktop/landscape/users who disabled prompt
+  // Normal animation flow for ALL devices
   const clickedLogo = event.currentTarget;
   const allLogos = document.querySelectorAll('.logo-card');
   
@@ -58,7 +41,7 @@ const [animationPhase, setAnimationPhase] = useState('initial');
   const rawMoveX = screenCenterX - logoCenterX;
   const rawMoveY = screenCenterY - logoCenterY;
   
-  let finalScale = 1.00;
+  let finalScale = 1.10;
   if (window.innerWidth <= 768) {
     if (window.innerHeight > window.innerWidth) {
       finalScale = 1.0;
@@ -145,43 +128,7 @@ const [animationPhase, setAnimationPhase] = useState('initial');
       </div>
     </div>
     
-    {showRotationPopup && (
-      <div className="popup-backdrop">
-        <div className="popup-modal">
-          <div className="popup-icon">📱</div>
-          <h3>Rotate Your Device</h3>
-          <p>For the best experience, please rotate your device to landscape mode.</p>
-          <div className="popup-checkbox">
-            <input 
-              type="checkbox" 
-              id="dontShowRotation" 
-              onChange={(e) => {
-                if (e.target.checked) {
-                  localStorage.setItem('hideRotationPrompt', 'true');
-                } else {
-                  localStorage.removeItem('hideRotationPrompt');
-                }
-              }}
-            />
-            <label htmlFor="dontShowRotation">Don't show this message again</label>
-          </div>
-          <button 
-            className="popup-ok-btn"
-            onClick={() => {
-              setShowRotationPopup(false);
-              setAnimationPhase('selected');
-              setTimeout(() => {
-                if (leagueConfigs && leagueConfigs[selectedLeague]) {
-                  onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
-                }
-              }, 100);
-            }}
-          >
-            OK
-          </button>
-        </div>
-      </div>
-    )}
+    
   </>
 );
 }

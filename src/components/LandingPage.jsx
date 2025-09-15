@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 
 export function LandingPage({ onLeagueSelect }) {
   const [selectedLeague, setSelectedLeague] = useState(null);
-  const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', 'selecting', 'selected'
+const [animationPhase, setAnimationPhase] = useState('initial');
+  const [showRotationPopup, setShowRotationPopup] = useState(false); // 'initial', 'selecting', 'selected'
 
   // Load league configs
   const [leagueConfigs, setLeagueConfigs] = useState(null);
@@ -17,43 +18,48 @@ export function LandingPage({ onLeagueSelect }) {
  const handleLogoClick = (leagueId, event) => {
   if (animationPhase === 'selecting') return;
 
+  // Better mobile detection
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isPortrait = window.innerHeight > window.innerWidth;
+  const isSmallScreen = window.innerWidth <= 768;
+  const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
+  
+  // Only show popup if it's actually a mobile device in portrait mode
+  if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
+    setSelectedLeague(leagueId);
+    setAnimationPhase('selecting');
+    setShowRotationPopup(true);
+    return;
+  }
+
+  // Reset popup state for non-mobile
+  setShowRotationPopup(false);
+
+  // Normal animation flow for desktop/landscape/users who disabled prompt
   const clickedLogo = event.currentTarget;
   const allLogos = document.querySelectorAll('.logo-card');
   
-  // Find the other logo that wasn't clicked
   const otherLogo = Array.from(allLogos).find(logo => logo !== clickedLogo);
   
-  // Start fading out the other logo while keeping its pulse
   if (otherLogo) {
-    otherLogo.style.transition = 'opacity 1.2s ease-out';
+    otherLogo.style.transition = 'opacity 1s ease-out';
     otherLogo.style.opacity = '0';
     otherLogo.style.animation = 'logoPulse 2s ease-in-out infinite';
   }
   
   const rect = clickedLogo.getBoundingClientRect();
-  
-  // Calculate exact screen center
   const screenCenterX = window.innerWidth / 2;
   const screenCenterY = window.innerHeight / 2;
-  
-  // Calculate current logo center
   const logoCenterX = rect.left + rect.width / 2;
   const logoCenterY = rect.top + rect.height / 2;
-  
-  // Calculate raw distance to center
   const rawMoveX = screenCenterX - logoCenterX;
   const rawMoveY = screenCenterY - logoCenterY;
   
-  // Determine final scale based on screen size
-  let finalScale = 1.33; // Default for desktop
-  
-  // Adjust scale for mobile devices
+  let finalScale = 1.33;
   if (window.innerWidth <= 768) {
     if (window.innerHeight > window.innerWidth) {
-      // Portrait mode
       finalScale = 1.0;
     } else {
-      // Landscape mode
       finalScale = 0.8;
     }
   }
@@ -62,12 +68,10 @@ export function LandingPage({ onLeagueSelect }) {
   const adjustedMoveX = rawMoveX * compensationFactor;
   const adjustedMoveY = rawMoveY * compensationFactor;
   
-  // Clear existing animations first
   clickedLogo.style.animation = 'none';
   clickedLogo.className = 'logo-card';
-  clickedLogo.offsetHeight; // Force reflow
+  clickedLogo.offsetHeight;
   
-  // Apply smooth scaling AND movement animation with responsive scale
   clickedLogo.setAttribute('style', `
     animation: none !important;
     transition: transform 2s ease-out, opacity 1.7s ease-out 1.7s !important;
@@ -82,27 +86,11 @@ export function LandingPage({ onLeagueSelect }) {
   setSelectedLeague(leagueId);
   setAnimationPhase('selecting');
 
-  // Go directly to the site after 2 seconds (when centering animation completes)
- // Go to site after centering animation plus fade-out time
-setTimeout(() => {
-  // Check if we're on mobile portrait - if so, wait a bit longer for user to rotate
-  const isMobilePortrait = window.innerWidth <= 768 && window.innerHeight > window.innerWidth;
-  
-  if (isMobilePortrait) {
-    // Wait longer on mobile portrait to give user time to see overlay and rotate
-    setTimeout(() => {
-      if (leagueConfigs && leagueConfigs[leagueId]) {
-        onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
-      }
-    }, 2000); // Additional 2 seconds for mobile portrait
-  } else {
-    // Normal timing for landscape and desktop
+  setTimeout(() => {
     if (leagueConfigs && leagueConfigs[leagueId]) {
       onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
     }
-  }
-}, 2000);
-
+  }, 2000);
 };
 
   if (!leagueConfigs) {
@@ -155,17 +143,51 @@ setTimeout(() => {
 </div>
         </div>
       </div>
-    {/* Add this rotation overlay */}
-    {animationPhase === 'selecting' && (
-      <div className="rotation-overlay">
-        <div className="rotation-content">
-          <div className="phone-icon">📱</div>
-          <div className="rotation-arrow">↻</div>
-          <p>Please rotate your device to landscape mode for the best experience</p>
+    {/* Rotation popup modal */}
+{/* Rotation popup modal */}
+{animationPhase === 'selecting' && showRotationPopup && (
+  <div className="rotation-popup-overlay show">    
+<div className="rotation-popup">
+      <div className="popup-header">
+        <h3>Better Experience Available</h3>
+      </div>
+      <div className="popup-content">
+        <div className="phone-icon">📱</div>
+        <p>For the best viewing experience, please rotate your device to landscape mode.</p>
+        <div className="checkbox-container">
+          <input 
+            type="checkbox" 
+            id="dontShowAgain" 
+            onChange={(e) => {
+              if (e.target.checked) {
+                localStorage.setItem('hideRotationPrompt', 'true');
+              } else {
+                localStorage.removeItem('hideRotationPrompt');
+              }
+            }}
+          />
+          <label htmlFor="dontShowAgain">Don't show this message again</label>
         </div>
       </div>
-    )}
-
+      <div className="popup-actions">
+        <button 
+  className="ok-button"
+  onClick={() => {
+    setShowRotationPopup(false);
+    setAnimationPhase('selected');
+    setTimeout(() => {
+      if (leagueConfigs && leagueConfigs[selectedLeague]) {
+        onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
+      }
+    }, 100);
+  }}
+>
+  OK
+</button>
+      </div>
+    </div>
+  </div>
+)}
     </div>
 
   );

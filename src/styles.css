@@ -739,73 +739,107 @@ body.blitzzz-league .sidebar [style] {
   color: #FFC20E !important;
 }
 
-/* Rotation overlay - only shows on mobile portrait when logo is clicked */
-.rotation-overlay {
+/* Rotation popup modal */
+.rotation-popup-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.9);
-  display: none; /* Hidden by default */
+  background: rgba(0, 0, 0, 0.8);
+  display: none;
   justify-content: center;
   align-items: center;
   z-index: 10000;
-  color: white;
 }
 
-.rotation-content {
+.rotation-popup {
+  background: white;
+  border-radius: 15px;
+  width: 90%;
+  max-width: 350px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.popup-header {
+  background: #f8f9fa;
+  padding: 20px;
+  border-bottom: 1px solid #e9ecef;
   text-align: center;
-  padding: 2rem;
-  max-width: 300px;
+}
+
+.popup-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 1.2rem;
+}
+
+.popup-content {
+  padding: 25px 20px;
+  text-align: center;
 }
 
 .phone-icon {
-  font-size: 4rem;
-  margin-bottom: 1rem;
+  font-size: 3rem;
+  margin-bottom: 15px;
   animation: phoneRotate 2s ease-in-out infinite;
 }
 
-.rotation-arrow {
-  font-size: 3rem;
-  margin-bottom: 1rem;
-  animation: arrowSpin 2s linear infinite;
-}
-
-.rotation-content p {
-  font-size: 1.2rem;
+.popup-content p {
+  margin: 0 0 20px 0;
+  color: #555;
   line-height: 1.5;
-  margin: 0;
+  font-size: 1rem;
 }
 
-/* Animation for phone icon */
+.checkbox-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.checkbox-container input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.checkbox-container label {
+  font-size: 0.9rem;
+  color: #666;
+  cursor: pointer;
+}
+
+.popup-actions {
+  padding: 15px 20px 20px;
+  text-align: center;
+}
+
+.ok-button {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 12px 30px;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.ok-button:hover {
+  background: #0056b3;
+}
+
+/* Popup will be controlled by JavaScript, not CSS media queries */
+.rotation-popup-overlay.show {
+  display: flex;
+}
+/* Phone rotation animation */
 @keyframes phoneRotate {
   0% { transform: rotate(0deg); }
   25% { transform: rotate(-15deg); }
   75% { transform: rotate(15deg); }
   100% { transform: rotate(0deg); }
-}
-
-/* Animation for rotation arrow */
-@keyframes arrowSpin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-/* Show overlay only on actual mobile devices in portrait mode */
-@media only screen 
-  and (max-width: 768px) 
-  and (orientation: portrait) 
-  and (hover: none) 
-  and (pointer: coarse) {
-  .rotation-overlay {
-    display: flex;
-  }
-}}
-
-/* Hide overlay in landscape mode */
-@media (orientation: landscape) {
-  .rotation-overlay {
-    display: none !important;
-  }
 }

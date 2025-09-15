@@ -1,4 +1,4 @@
-﻿:root{
+:root{
   --brand-primary:#00e887;
   --brand-accent:#46a0ff;
   --brand-secondary:#0b1220;
@@ -739,28 +739,31 @@ body.blitzzz-league .sidebar [style] {
   color: #FFC20E !important;
 }
 
-/* Centered popup modal */
+/* True centered popup overlay */
 .popup-backdrop {
   position: fixed;
   top: 0;
   left: 0;
+  right: 0;
+  bottom: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.8);
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 10000;
+  z-index: 99999;
 }
 
 .popup-modal {
+  position: relative;
   background: white;
   border-radius: 15px;
   padding: 30px;
-  width: 90%;
-  max-width: 320px;
+  width: 280px;
   text-align: center;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  margin: 20px;
 }
 
 .popup-icon {

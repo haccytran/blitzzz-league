@@ -24,9 +24,11 @@ const [animationPhase, setAnimationPhase] = useState('initial');
   const isSmallScreen = window.innerWidth <= 768;
   const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
   
+  // Set the selected league first (this is needed for both mobile and desktop)
+  setSelectedLeague(leagueId);
+  
   // Only show popup if it's actually a mobile device in portrait mode
   if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-    setSelectedLeague(leagueId);
     setAnimationPhase('selecting');
     setShowRotationPopup(true);
     return;
@@ -34,6 +36,7 @@ const [animationPhase, setAnimationPhase] = useState('initial');
 
   // Reset popup state for non-mobile
   setShowRotationPopup(false);
+  setAnimationPhase('selecting');
 
   // Normal animation flow for desktop/landscape/users who disabled prompt
   const clickedLogo = event.currentTarget;
@@ -55,7 +58,7 @@ const [animationPhase, setAnimationPhase] = useState('initial');
   const rawMoveX = screenCenterX - logoCenterX;
   const rawMoveY = screenCenterY - logoCenterY;
   
-  let finalScale = 1.33;
+  let finalScale = 1.00;
   if (window.innerWidth <= 768) {
     if (window.innerHeight > window.innerWidth) {
       finalScale = 1.0;
@@ -75,16 +78,13 @@ const [animationPhase, setAnimationPhase] = useState('initial');
   clickedLogo.setAttribute('style', `
     animation: none !important;
     transition: transform 2s ease-out, opacity 1.7s ease-out 1.7s !important;
-    transform: translate(${adjustedMoveX}px, ${adjustedMoveY}px) scale(1.00) !important;
+    transform: translate(${adjustedMoveX}px, ${adjustedMoveY}px) scale(${finalScale}) !important;
     z-index: 1000 !important;
     cursor: default !important;
     pointer-events: none !important;
     transform-origin: center center !important;
     opacity: 0 !important;
   `);
-
-  setSelectedLeague(leagueId);
-  setAnimationPhase('selecting');
 
   setTimeout(() => {
     if (leagueConfigs && leagueConfigs[leagueId]) {
@@ -110,7 +110,6 @@ const [animationPhase, setAnimationPhase] = useState('initial');
   <>
     <div className="landing-container">
       <div className="landing-content">
-        <p className="landing-subtitle">SELECT LEAGUE</p>
         
         <div className="logo-selection-container">
           <div 

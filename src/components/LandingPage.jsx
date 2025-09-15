@@ -18,24 +18,10 @@ const [showRotationPopup, setShowRotationPopup] = useState(false);
  const handleLogoClick = (leagueId, event) => {
   if (animationPhase === 'selecting') return;
 
-  // Check for mobile portrait FIRST
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  const isPortrait = window.innerHeight > window.innerWidth;
-  const isSmallScreen = window.innerWidth <= 768;
-  const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
-  
-  // Show rotation prompt for mobile portrait users
-  if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-    setSelectedLeague(leagueId);
-    setAnimationPhase('selecting');
-    setShowRotationPopup(true);
-    return;
-  }
-
   setSelectedLeague(leagueId);
   setAnimationPhase('selecting');
 
-  // Normal animation flow
+  // Normal animation flow for ALL devices first
   const clickedLogo = event.currentTarget;
   const allLogos = document.querySelectorAll('.logo-card');
   
@@ -83,11 +69,24 @@ const [showRotationPopup, setShowRotationPopup] = useState(false);
     opacity: 0 !important;
   `);
 
+  // Check if we should show popup AFTER animation starts (1 second delay)
   setTimeout(() => {
-    if (leagueConfigs && leagueConfigs[leagueId]) {
-      onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const isPortrait = window.innerHeight > window.innerWidth;
+    const isSmallScreen = window.innerWidth <= 768;
+    const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
+    
+    if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
+      setShowRotationPopup(true);
+    } else {
+      // Auto-continue if no popup needed
+      setTimeout(() => {
+        if (leagueConfigs && leagueConfigs[leagueId]) {
+          onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
+        }
+      }, 1000);
     }
-  }, 2000);
+  }, 1000);
 };
 
   if (!leagueConfigs) {

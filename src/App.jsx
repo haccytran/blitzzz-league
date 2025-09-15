@@ -2002,13 +2002,15 @@ function SettingsView({ isAdmin, espn, setEspn, importEspnTeams, data, saveLeagu
     <Section title="League Settings" actions={actions}>
       {isAdmin && editing ? (
         <RichEditor
-          html={data.leagueSettingsHtml || ""}
-          readOnly={false}
-          setHtml={(h) => {
-            saveLeagueSettings(h);
-            setEditing(false);
-          }}
-        />
+  html={data.leagueSettingsHtml || ""}
+  readOnly={false}
+  setHtml={(h) => {
+    saveLeagueSettings(h);
+    setEditing(false);
+  }}
+  btnPri={btnPri}
+  btnSec={btnSec}
+/>
       ) : (
         <div className="card" style={{ padding: 16 }}>
           <div
@@ -3190,7 +3192,7 @@ function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
     </div>
   );
 }
-function RichEditor({ html, setHtml, readOnly }) {
+function RichEditor({ html, setHtml, readOnly, btnPri, btnSec }) {
   const [local, setLocal] = React.useState(html || "");
   const ref = React.useRef(null);
   const lastTyped = React.useRef(null);

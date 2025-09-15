@@ -1,4 +1,4 @@
-:root{
+﻿:root{
   --brand-primary:#00e887;
   --brand-accent:#46a0ff;
   --brand-secondary:#0b1220;
@@ -824,4 +824,77 @@ body.blitzzz-league .sidebar [style] {
   25% { transform: rotate(-10deg); }
   75% { transform: rotate(10deg); }
   100% { transform: rotate(0deg); }
+}
+
+/* Simple rotation popup */
+.simple-popup-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 99999;
+}
+
+.simple-popup {
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  width: 300px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.popup-emojis {
+  font-size: 40px;
+  margin-bottom: 15px;
+}
+
+.simple-popup h3 {
+  margin: 0 0 15px 0;
+  color: #333;
+  font-size: 18px;
+}
+
+.simple-popup p {
+  margin: 0 0 20px 0;
+  color: #666;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.popup-checkbox-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.popup-checkbox-row input {
+  width: 16px;
+  height: 16px;
+}
+
+.popup-checkbox-row label {
+  font-size: 13px;
+  color: #555;
+}
+
+.popup-continue-btn {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 30px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.popup-continue-btn:hover {
+  background: #0056b3;
 }

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 export function LandingPage({ onLeagueSelect }) {
   const [selectedLeague, setSelectedLeague] = useState(null);
 const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', 'selecting', 'selected'
+const [showRotationPopup, setShowRotationPopup] = useState(false);
 
   // Load league configs
   const [leagueConfigs, setLeagueConfigs] = useState(null);
@@ -23,20 +24,12 @@ const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', '
   const isSmallScreen = window.innerWidth <= 768;
   const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
   
-  // Show simple browser alert for mobile portrait users
+  // Show rotation prompt for mobile portrait users
   if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-    const userChoice = confirm("For the best experience, please rotate your device to landscape mode.\n\nClick OK to continue anyway, or Cancel to stay here.");
-    
-    if (userChoice) {
-      // User clicked OK - ask about not showing again
-      const dontShowAgain = confirm("Don't show this message again?");
-      if (dontShowAgain) {
-        localStorage.setItem('hideRotationPrompt', 'true');
-      }
-    } else {
-      // User clicked Cancel - don't proceed
-      return;
-    }
+    setSelectedLeague(leagueId);
+    setAnimationPhase('selecting');
+    setShowRotationPopup(true);
+    return;
   }
 
   setSelectedLeague(leagueId);
@@ -148,7 +141,40 @@ const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', '
         </div>
       </div>
     </div>
-    
+    {showRotationPopup && (
+  <div className="simple-popup-backdrop">
+    <div className="simple-popup">
+      <div className="popup-emojis">📱 ↻</div>
+      <h3>Rotate Your Device</h3>
+      <p>For the best experience, please rotate your device to landscape mode.</p>
+      <div className="popup-checkbox-row">
+        <input 
+          type="checkbox" 
+          id="dontShowAgain" 
+          onChange={(e) => {
+            if (e.target.checked) {
+              localStorage.setItem('hideRotationPrompt', 'true');
+            } else {
+              localStorage.removeItem('hideRotationPrompt');
+            }
+          }}
+        />
+        <label htmlFor="dontShowAgain">Do not show this message again</label>
+      </div>
+      <button 
+        className="popup-continue-btn"
+        onClick={() => {
+          setShowRotationPopup(false);
+          if (leagueConfigs && leagueConfigs[selectedLeague]) {
+            onLeagueSelect({ id: selectedLeague, ...leagueConfigs[selectedLeague] });
+          }
+        }}
+      >
+        Continue
+      </button>
+    </div>
+  </div>
+)}
       </>
 );
 }

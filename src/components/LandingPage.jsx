@@ -25,21 +25,17 @@ const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', '
   const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
   
   // Show simple browser alert with emojis for mobile portrait users
-  if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-    const message = "📱 ↻ For the best experience, please rotate your device to landscape mode.\n\nClick OK to continue anyway.";
-    const userChoice = confirm(message);
-    
-    if (userChoice) {
-      // Ask about not showing again
-      const dontShowAgain = confirm("📱 Don't show this rotation message again?");
-      if (dontShowAgain) {
-        localStorage.setItem('hideRotationPrompt', 'true');
-      }
-    } else {
-      // User clicked Cancel - don't proceed
-      return;
-    }
+  // Show simple browser alert with emojis for mobile portrait users
+if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
+  // First prompt - just OK button, no cancel option
+  alert("📱↻ Rotate your device to landscape mode, foo! 📱↻\n\nClick OK to continue.");
+  
+  // Second prompt - Yes/No for don't show again
+  const dontShowAgain = confirm("📱↻ Don't show this rotation message again? You not gonna forget right, foo?!\n\nClick OK for Yes, Cancel for No.");
+  if (dontShowAgain) {
+    localStorage.setItem('hideRotationPrompt', 'true');
   }
+}
 
   setSelectedLeague(leagueId);
   setAnimationPhase('selecting');

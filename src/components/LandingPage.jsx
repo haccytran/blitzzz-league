@@ -60,7 +60,7 @@ if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
   const rawMoveX = screenCenterX - logoCenterX;
   const rawMoveY = screenCenterY - logoCenterY;
   
-  let finalScale = 1.33;
+  let finalScale = 1.10;
   if (window.innerWidth <= 768) {
     if (window.innerHeight > window.innerWidth) {
       finalScale = 1.0;

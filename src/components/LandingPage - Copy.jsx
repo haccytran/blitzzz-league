@@ -14,47 +14,24 @@ export function LandingPage({ onLeagueSelect }) {
     });
   }, []);
 
-  const handleLogoClick = (leagueId, event) => {
-  if (animationPhase === 'selecting') return;
+  const handleLogoClick = (leagueId) => {
+    if (animationPhase === 'selecting') return; // Prevent clicks during animation
 
-  console.log('Logo clicked:', leagueId);
-  console.log('Event target:', event.currentTarget);
-  
-  const clickedLogo = event.currentTarget;
-  const rect = clickedLogo.getBoundingClientRect();
-  
-  console.log('Logo position:', rect);
-  console.log('Window center:', window.innerWidth / 2, window.innerHeight / 2);
-  
-  const centerX = window.innerWidth / 2;
-  const centerY = window.innerHeight / 2;
-  const moveX = centerX - (rect.left + rect.width / 2);
-  const moveY = centerY - (rect.top + rect.height / 2);
-  
-  console.log('Move distance:', moveX, moveY);
-  
-  // Clear any existing CSS classes that might interfere
-  clickedLogo.className = 'logo-card';
-  
-  // Apply the transform
-  clickedLogo.style.transition = 'transform 3s ease-out';
-  clickedLogo.style.transform = `scale(1.33) translate(${moveX}px, ${moveY}px)`;
-  clickedLogo.style.zIndex = '1000';
-  
-  console.log('Applied transform:', clickedLogo.style.transform);
+    setSelectedLeague(leagueId);
+    setAnimationPhase('selecting');
 
-  setSelectedLeague(leagueId);
-  setAnimationPhase('selecting');
-
-  setTimeout(() => {
-    setAnimationPhase('selected');
+    // After 3 seconds, complete the selection
     setTimeout(() => {
-      if (leagueConfigs && leagueConfigs[leagueId]) {
-        onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
-      }
-    }, 0);
-  }, 3000);
-};
+      setAnimationPhase('selected');
+      
+      // After animation completes, navigate to the league
+setTimeout(() => {
+  if (leagueConfigs && leagueConfigs[leagueId]) {
+    onLeagueSelect({ id: leagueId, ...leagueConfigs[leagueId] });
+  }
+}, 0); // Immediate transition to splash screen
+    }, 3000);
+  };
 
   if (!leagueConfigs) {
     return (
@@ -83,13 +60,12 @@ export function LandingPage({ onLeagueSelect }) {
               animationPhase === 'selecting' && selectedLeague !== 'blitzzz' ? 'logo-fade-out' :
               ''
             }`}
-            onClick={(e) => handleLogoClick('blitzzz', e)}
+            onClick={() => handleLogoClick('blitzzz')}
             style={{ 
               cursor: animationPhase === 'selecting' ? 'default' : 'pointer',
               pointerEvents: animationPhase === 'selecting' ? 'none' : 'auto'
             }}
           >
-
             <img 
               src={blitzzz.logo} 
               alt={`${blitzzz.name} Logo`} 
@@ -105,13 +81,12 @@ export function LandingPage({ onLeagueSelect }) {
               animationPhase === 'selecting' && selectedLeague !== 'sculpin' ? 'logo-fade-out' :
               ''
             }`}
-            onClick={(e) => handleLogoClick('sculpin', e)}
+            onClick={() => handleLogoClick('sculpin')}
             style={{ 
               cursor: animationPhase === 'selecting' ? 'default' : 'pointer',
               pointerEvents: animationPhase === 'selecting' ? 'none' : 'auto'
             }}
           >
-
             <img 
               src={sculpin.logo} 
               alt={`${sculpin.name} Logo`} 

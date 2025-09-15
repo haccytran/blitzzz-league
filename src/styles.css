@@ -60,7 +60,7 @@ body{ background:var(--bg); color:var(--ink); }
   display:flex; 
   align-items:center; 
   justify-content:center;
-  background:#0f172a; 
+  background:#FFFFFF; 
   z-index:9999; 
   animation:blitzFade 3s ease forwards; /* Extended to 3 seconds total */
 }

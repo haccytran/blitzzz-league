@@ -2382,6 +2382,25 @@ if (!validPasswords.includes(adminHeader)) {
   }
 });
 
+app.get("/api/auto-refresh/status", (req, res) => {
+  res.json({ 
+    status: "running", 
+    interval: autoRefreshInterval ? "active" : "inactive",
+    timestamp: new Date().toISOString(),
+    nextRun: "Every 10 minutes"
+  });
+});
+
+app.post("/api/auto-refresh/force", requireAdmin, async (req, res) => {
+  console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Manual refresh triggered`);
+  try {
+    await runAutoRefresh();
+    res.json({ success: true, message: "Refresh completed" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // =========================
 // Auto-refresh system - Multi-League Version
 // =========================
@@ -2394,32 +2413,35 @@ const LEAGUES_TO_REFRESH = [
 ];
 
 async function runAutoRefreshForLeague(leagueConfig) {
-  console.log(`[AUTO-REFRESH] Starting refresh for league: ${leagueConfig.id}`);
+  console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Starting refresh for league: ${leagueConfig.id}`);
   
   try {
-    // Get current season from settings
     const displaySetting = await readJson("current_display_season.json", { season: "2025" });
     const seasonId = displaySetting.season;
     
     if (!leagueConfig.espnId || !seasonId) {
-      console.log(`[AUTO-REFRESH] Missing ESPN ID or season for ${leagueConfig.id}, skipping`);
+      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Missing ESPN ID or season for ${leagueConfig.id}, skipping`);
       return;
     }
 
-    console.log(`[AUTO-REFRESH] Refreshing data for league ${leagueConfig.id} (ESPN: ${leagueConfig.espnId}), season ${seasonId}`);
+    console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Refreshing data for league ${leagueConfig.id}`);
 
-    // 1. Update official snapshot for this league
-    console.log(`[AUTO-REFRESH] Updating official snapshot for ${leagueConfig.id}...`);
-    const report = await buildOfficialReport({ 
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Refresh timeout')), 300000) // 5 minute timeout
+    );
+
+    const refreshPromise = buildOfficialReport({ 
       leagueId: leagueConfig.espnId, 
       seasonId, 
       req: { headers: {} }
     });
+
+    const report = await Promise.race([refreshPromise, timeoutPromise]);
     
     if (report) {
       const snapshot = { seasonId, leagueId: leagueConfig.espnId, ...report };
       
-      // Save to database with league-specific key
       if (DATABASE_URL) {
         const client = await pool.connect();
         await client.query(`
@@ -2431,26 +2453,13 @@ async function runAutoRefreshForLeague(leagueConfig) {
         client.release();
       }
       
-      // Save to file system with league-specific filename
       await writeJson(`report_${leagueConfig.id}_${seasonId}.json`, snapshot);
-      console.log(`[AUTO-REFRESH] Snapshot updated successfully for ${leagueConfig.id}`);
+      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Successfully updated ${leagueConfig.id}`);
     }
 
-    // 2. Update rosters for this league
-    console.log(`[AUTO-REFRESH] Updating rosters for ${leagueConfig.id}...`);
-    
-    const [teamJson, rosJson, setJson] = await Promise.all([
-      espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mTeam", req: { headers: {} } }),
-      espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mRoster", req: { headers: {} } }),
-      espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mSettings", req: { headers: {} } }),
-    ]);
-    
-    // ... rest of roster processing logic stays the same ...
-    
-    console.log(`[AUTO-REFRESH] Refresh completed successfully for ${leagueConfig.id}`);
-    
   } catch (error) {
-    console.error(`[AUTO-REFRESH] Failed for league ${leagueConfig.id}:`, error.message);
+    console.error(`[AUTO-REFRESH] ${new Date().toISOString()} - Failed for league ${leagueConfig.id}:`, error.message);
+    // Continue to next league instead of stopping entirely
   }
 }
 
@@ -2471,15 +2480,42 @@ async function runAutoRefresh() {
 
 // Start auto-refresh cycle (every 10 minutes)
 function startAutoRefresh() {
-  if (autoRefreshInterval) return;
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+  }
   
-  console.log('[AUTO-REFRESH] Starting 10-minute refresh cycle for multi-league system');
-  autoRefreshInterval = setInterval(runAutoRefresh, 10 * 60 * 1000);
+  console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Starting 10-minute refresh cycle`);
   
-  // Run once immediately after 30 seconds
-  setTimeout(runAutoRefresh, 30000);
+  const runCycle = async () => {
+    try {
+      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Beginning refresh cycle`);
+      
+      for (const leagueConfig of LEAGUES_TO_REFRESH) {
+        await runAutoRefreshForLeague(leagueConfig);
+        // Wait between leagues to avoid overwhelming ESPN
+        if (LEAGUES_TO_REFRESH.indexOf(leagueConfig) < LEAGUES_TO_REFRESH.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 30000));
+        }
+      }
+      
+      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Cycle completed successfully`);
+    } catch (error) {
+      console.error(`[AUTO-REFRESH] ${new Date().toISOString()} - Cycle failed:`, error.message);
+    }
+  };
+  
+  // Run immediately after 30 seconds
+  setTimeout(runCycle, 30000);
+  
+  // Set up interval
+  autoRefreshInterval = setInterval(runCycle, 10 * 60 * 1000);
+  
+  // Add process handlers to restart interval if needed
+  process.on('uncaughtException', (error) => {
+    console.error(`[AUTO-REFRESH] ${new Date().toISOString()} - Uncaught exception, restarting:`, error.message);
+    startAutoRefresh();
+  });
 }
-
 // =========================
 // Static hosting
 // =========================

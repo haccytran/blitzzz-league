@@ -2600,7 +2600,7 @@ const now = new Date();
 
 // Fantasy Week 1 ended Monday September 9, 2025 at 11:59 PM PT
 // So results should show after that date
-const week1EndDate = new Date('2025-09-09T23:59:00-07:00'); // September 9, 2025 11:59 PM PT
+const week1EndDate = new Date('2025-09-02T23:59:00-07:00'); // September 2, 2025 11:59 PM PT
 
 // Check weeks 1 through 18 sequentially
 for (let week = 1; week <= 18; week++) {

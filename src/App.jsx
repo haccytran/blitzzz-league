@@ -288,7 +288,7 @@ async function apiCallLeague(endpoint, options = {}) {
 }
   const VALID_TABS = [
   "announcements","activity","weekly","highestscorer","waivers","dues",
-   "transactions","drafts","rosters","settings","trading","polls" 
+   "transactions","drafts","rosters","powerrankings","settings","trading","polls" 
 ];
 
   const initialTabFromHash = () => {
@@ -875,6 +875,7 @@ async function loadOfficialReport(silent=false){
   btnSec={btnSec}
 />,
   rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
+  powerrankings: <PowerRankingsView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}} btnPri={btnPri} btnSec={btnSec}/>,
   trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}} btnPri={btnPri} btnSec={btnSec}/>,
   polls: <PollsView {...{isAdmin, members:data.members, espn, config}} btnPri={btnPri} btnSec={btnSec}/>
@@ -922,6 +923,7 @@ async function loadOfficialReport(silent=false){
             <NavBtn id="transactions" label="📜 Transactions" active={active} onClick={setActive}/>
             <NavBtn id="drafts" label="📋 Draft Recap" active={active} onClick={setActive}/>
             <NavBtn id="rosters" label="📋 Rosters" active={active} onClick={setActive}/>
+            <NavBtn id="powerrankings" label="🏋️ Power Rankings" active={active} onClick={setActive}/>
             <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={setActive}/>
             <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={setActive}/>
             <NavBtn id="polls" label="🗳️ Polls" active={active} onClick={setActive}/>
@@ -2757,6 +2759,274 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
         ) : !loading && !error && (
           <div style={{ color: "#64748b", marginTop: 8 }}>
             No completed weeks yet. Winners will appear after each week is finished.
+          </div>
+        )}
+
+        {lastUpdated && (
+          <div style={{ marginTop: 12, fontSize: 12, color: "#64748b" }}>
+            Last updated: {lastUpdated}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/* =========================
+   Power Rankings
+   ========================= */
+
+function PowerRankingsView({ espn, config, seasonYear, btnPri, btnSec }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [rankings, setRankings] = useState([]);
+  const [lastUpdated, setLastUpdated] = useState("");
+
+  const loadPowerRankings = async () => {
+    if (!espn.leagueId || !espn.seasonId) {
+      setError("Set League ID and Season in League Settings first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+  // Fetch both matchup data AND team data to get proper team names
+  const [matchupResponse, teamResponse] = await Promise.all([
+    fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    }),
+    fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    })
+  ]);
+
+  if (!matchupResponse.ok || !teamResponse.ok) {
+    throw new Error(`ESPN API error: ${matchupResponse.status} / ${teamResponse.status}`);
+  }
+
+  const [data, teamData] = await Promise.all([
+    matchupResponse.json(),
+    teamResponse.json()
+  ]);
+
+      // Get team names from the dedicated team data
+const teamNames = {};
+if (teamData.teams) {
+  teamData.teams.forEach(team => {
+    let name = "";
+    if (team.location && team.nickname) {
+      name = `${team.location} ${team.nickname}`;
+    } else if (team.name) {
+      name = team.name;
+    } else if (team.abbrev) {
+      name = team.abbrev;
+    } else {
+      name = `Team ${team.id}`;
+    }
+    teamNames[team.id] = name;
+  });
+}
+
+      // Initialize team stats
+      const teamStats = {};
+      Object.keys(teamNames).forEach(teamId => {
+        teamStats[teamId] = {
+          name: teamNames[teamId],
+          totalPoints: 0,
+          wins: 0,
+          losses: 0,
+          ties: 0,
+          games: 0,
+          medianWins: 0
+        };
+      });
+
+      // Group matchups by period and calculate stats
+      const byPeriod = {};
+      if (data.schedule) {
+        data.schedule.forEach(matchup => {
+          const period = matchup.matchupPeriodId;
+          if (period && period > 0) {
+            if (!byPeriod[period]) byPeriod[period] = [];
+            byPeriod[period].push(matchup);
+          }
+        });
+      }
+
+      // Process each completed week
+      Object.keys(byPeriod).forEach(period => {
+        const matchups = byPeriod[period];
+        const weekScores = [];
+        
+        // Collect all scores for median calculation
+        matchups.forEach(matchup => {
+          const homeScore = matchup.home?.totalPoints || 0;
+          const awayScore = matchup.away?.totalPoints || 0;
+          
+          if (homeScore > 0) weekScores.push(homeScore);
+          if (awayScore > 0) weekScores.push(awayScore);
+        });
+        
+        // Skip weeks with no scores
+        if (weekScores.length === 0) return;
+        
+        // Calculate median score for the week
+        weekScores.sort((a, b) => a - b);
+        const medianScore = weekScores.length % 2 === 0 
+          ? (weekScores[weekScores.length / 2 - 1] + weekScores[weekScores.length / 2]) / 2
+          : weekScores[Math.floor(weekScores.length / 2)];
+
+        // Update team stats
+        matchups.forEach(matchup => {
+          const homeId = matchup.home?.teamId;
+          const awayId = matchup.away?.teamId;
+          const homeScore = matchup.home?.totalPoints || 0;
+          const awayScore = matchup.away?.totalPoints || 0;
+          
+          if (homeId && homeScore > 0) {
+            teamStats[homeId].totalPoints += homeScore;
+            teamStats[homeId].games++;
+            
+            // Win/loss/tie
+            if (homeScore > awayScore) {
+              teamStats[homeId].wins++;
+            } else if (homeScore < awayScore) {
+              teamStats[homeId].losses++;
+            } else {
+              teamStats[homeId].ties++;
+            }
+            
+            // Median comparison
+            if (homeScore > medianScore) {
+              teamStats[homeId].medianWins++;
+            }
+          }
+          
+          if (awayId && awayScore > 0) {
+            teamStats[awayId].totalPoints += awayScore;
+            teamStats[awayId].games++;
+            
+            // Win/loss/tie
+            if (awayScore > homeScore) {
+              teamStats[awayId].wins++;
+            } else if (awayScore < homeScore) {
+              teamStats[awayId].losses++;
+            } else {
+              teamStats[awayId].ties++;
+            }
+            
+            // Median comparison
+            if (awayScore > medianScore) {
+              teamStats[awayId].medianWins++;
+            }
+          }
+        });
+      });
+
+      // Calculate power rankings
+      const powerRankings = Object.values(teamStats)
+        .filter(team => team.games > 0)
+        .map(team => {
+          const winningPct = team.games > 0 ? team.wins / team.games : 0;
+          const medianWinningPct = team.games > 0 ? team.medianWins / team.games : 0;
+          
+          const powerScore = (team.totalPoints * 2) + 
+                           (team.totalPoints * winningPct) + 
+                           (team.totalPoints * medianWinningPct);
+          
+          return {
+            name: team.name,
+            powerScore: Math.round(powerScore * 100) / 100,
+            totalPoints: Math.round(team.totalPoints * 100) / 100,
+            wins: team.wins,
+            losses: team.losses,
+            ties: team.ties,
+            winningPct: Math.round(winningPct * 1000) / 10,
+            medianWins: team.medianWins,
+            medianWinningPct: Math.round(medianWinningPct * 1000) / 10
+          };
+        })
+        .sort((a, b) => b.powerScore - a.powerScore);
+
+      setRankings(powerRankings);
+      setLastUpdated(new Date().toLocaleString());
+      setError("");
+
+    } catch (err) {
+      console.error('Failed to load power rankings:', err);
+      setError("Failed to load power rankings: " + err.message);
+    }
+    
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    if (espn.seasonId && espn.leagueId) {
+      loadPowerRankings();
+    }
+  }, [espn.seasonId, espn.leagueId]);
+
+  return (
+    <Section title="Power Rankings" actions={
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn" style={btnSec} onClick={loadPowerRankings} disabled={loading}>
+          {loading ? "Loading..." : "Refresh"}
+        </button>
+      </div>
+    }>
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+            Formula: (Points Scored × 2) + (Points Scored × Winning %) + (Points Scored × Winning % if played vs median)
+          </div>
+        </div>
+
+        {error && <div style={{ color: "#dc2626" }}>{error}</div>}
+        
+        {rankings.length > 0 ? (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+                  <th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
+                  <th style={{ padding: "12px 8px", textAlign: "left" }}>Team Name</th>
+                  <th style={{ padding: "12px 8px", textAlign: "right" }}>Power Score</th>
+                  <th style={{ padding: "12px 8px", textAlign: "center" }}>Wins</th>
+                  <th style={{ padding: "12px 8px", textAlign: "center" }}>Losses</th>
+                  <th style={{ padding: "12px 8px", textAlign: "center" }}>Ties</th>
+                  <th style={{ padding: "12px 8px", textAlign: "right" }}>Total Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rankings.map((team, index) => (
+                  <tr key={team.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{index + 1}</td>
+                    <td style={{ padding: "12px 8px" }}>{team.name}</td>
+                    <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold", color: "#16a34a" }}>
+                      {team.powerScore}
+                    </td>
+                    <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.wins}</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.losses}</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.ties}</td>
+                    <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPoints}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : !loading && !error && (
+          <div style={{ color: "#64748b", marginTop: 8 }}>
+            No data available yet.
           </div>
         )}
 

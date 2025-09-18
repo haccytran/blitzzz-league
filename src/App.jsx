@@ -840,7 +840,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
   announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
-  ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} btnPri={btnPri} btnSec={btnSec} /> }),
+  ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
   activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
   transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} btnPri={btnPri} btnSec={btnSec} />,
@@ -1159,42 +1159,69 @@ async function loadReport() {
   );
 }
 
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear, btnPri, btnSec }) {
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear, espn, btnPri, btnSec }) {
   const [editingId, setEditingId] = useState(null);
+  const [weeklyWinners, setWeeklyWinners] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [manualWinners, setManualWinners] = useState({});
+  
   const currentYear = new Date().getFullYear();
   const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
 
-  console.log("=== WeeklyView Debug ===");
-  console.log("seasonYear:", seasonYear);
-  console.log("currentYear:", currentYear);
-  console.log("nowWeek calculated:", nowWeek);
-  console.log("Today's date:", new Date());
+  // Load weekly challenge winners
+  const loadWeeklyChallengeWinners = async () => {
+    if (!espn.leagueId || !espn.seasonId) return;
+    
+    setLoading(true);
+    try {
+      const winners = {};
+      const now = new Date();
+      const week1EndDate = new Date('2025-09-08T23:59:00-07:00'); // Adjust this to your league's Week 1 end
+      
+      // Process weeks 1-13
+      for (let week = 1; week <= 13; week++) {
+        const weekEnd = new Date(week1EndDate);
+        weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7));
+        
+        // Only process completed weeks
+        if (now <= weekEnd) continue;
+        
+        try {
+          const winner = await determineWeeklyWinner(week, espn.leagueId, espn.seasonId);
+          if (winner) {
+            winners[week] = winner;
+          }
+        } catch (error) {
+          console.error(`Failed to determine Week ${week} winner:`, error);
+        }
+      }
+      
+      setWeeklyWinners(winners);
+    } catch (error) {
+      console.error('Failed to load weekly winners:', error);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    if (espn.leagueId && espn.seasonId) {
+      loadWeeklyChallengeWinners();
+    }
+  }, [espn.leagueId, espn.seasonId]);
 
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
-
-  // Keep existing sorting logic...
-  list.sort((a, b) => {
-    const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
-    
-    const aIsPast = wa > 0 && wa < cur;
-    const bIsPast = wb > 0 && wb < cur;
-    const aIsCurrent = wa === cur;
-    const bIsCurrent = wb === cur;
-    const aIsFuture = wa > cur;
-    const bIsFuture = wb > cur;
-    
-    if (aIsPast && !bIsPast) return 1;
-    if (bIsPast && !aIsPast) return -1;
-    if (aIsPast && bIsPast) return wb - wa;
-    if (aIsCurrent && !bIsCurrent) return -1;
-    if (bIsCurrent && !aIsCurrent) return 1;
-    if (aIsFuture && bIsFuture) return wa - wb;
-    
-    return 0;
-  });
+  
+  // Keep chronological order, don't move completed weeks
+  list.sort((a, b) => (a.week || 0) - (b.week || 0));
 
   return (
-    <Section title="Weekly Challenges">
+    <Section title="Weekly Challenges" actions={
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn" style={btnSec} onClick={loadWeeklyChallengeWinners} disabled={loading}>
+          {loading ? "Loading..." : "Refresh Winners"}
+        </button>
+      </div>
+    }>
       {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} btnPri={btnPri} btnSec={btnSec} />}
       <div className="grid" style={{ gap: 12, marginTop: 12 }}>
         {list.length === 0 && (
@@ -1203,22 +1230,24 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
           </div>
         )}
         {list.map(item => {
-          const isPast = (item.week || 0) > 0 && (item.week || 0) < nowWeek;
+          const weekNumber = item.week || 0;
+          const winner = weeklyWinners[weekNumber];
+          const requiresManual = [6, 12].includes(weekNumber);
           const isEditing = editingId === item.id;
           
           return (
             <div key={item.id} className="card" style={{ padding: 16 }}>
               {isEditing ? (
                 <WeeklyEditForm 
-  item={item} 
-  onSave={(updatedEntry) => {
-    editWeekly(item.id, updatedEntry);
-    setEditingId(null);
-  }}
-  onCancel={() => setEditingId(null)}
-  btnPri={btnPri}
-  btnSec={btnSec}
-/>
+                  item={item} 
+                  onSave={(updatedEntry) => {
+                    editWeekly(item.id, updatedEntry);
+                    setEditingId(null);
+                  }}
+                  onCancel={() => setEditingId(null)}
+                  btnPri={btnPri}
+                  btnSec={btnSec}
+                />
               ) : (
                 <>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1227,7 +1256,6 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                         {item.weekLabel || "Week"}
                         {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
                       </h3>
-
                     </div>
                     {isAdmin && (
                       <div style={{ display: "flex", gap: 8 }}>
@@ -1248,16 +1276,64 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                       </div>
                     )}
                   </div>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      whiteSpace: "pre-wrap",
-                      textDecoration: isPast ? "line-through" : "none",
-                      color: isPast ? "#64748b" : "#0b1220"
-                    }}
-                  >
+                  
+                  <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
                     {item.text}
                   </div>
+
+                  {/* Winner Display */}
+                  {winner && (
+                    <div style={{ 
+                      marginTop: 12, 
+                      padding: 12, 
+                      background: "#f0f9ff", 
+                      borderRadius: 6,
+                      border: "1px solid #0ea5e9"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: "18px" }}>🏆</span>
+                        <span style={{ 
+                          fontWeight: "bold", 
+                          color: "#0066cc",
+                          textShadow: "0 0 8px #ffff00, 0 0 12px #ffff00",
+                          fontSize: "16px"
+                        }}>
+                          {winner.teamName}
+                        </span>
+                      </div>
+                      {winner.details && (
+                        <div style={{ marginTop: 4, fontSize: "14px", color: "#334155" }}>
+                          {winner.details}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Manual Winner Selection for Weeks 6 & 12 */}
+                  {requiresManual && isAdmin && !winner && (
+                    <ManualWinnerSelector
+                      weekNumber={weekNumber}
+                      espn={espn}
+                      onWinnerSelect={(winnerData) => {
+                        setWeeklyWinners(prev => ({ ...prev, [weekNumber]: winnerData }));
+                      }}
+                      btnPri={btnPri}
+                      btnSec={btnSec}
+                    />
+                  )}
+
+                  {requiresManual && !winner && !isAdmin && (
+                    <div style={{ 
+                      marginTop: 12, 
+                      padding: 12, 
+                      background: "#fef3c7", 
+                      borderRadius: 6
+                    }}>
+                      <div style={{ fontSize: "14px", color: "#92400e" }}>
+                        Winner requires manual selection by commissioner.
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -1266,6 +1342,683 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
       </div>
     </Section>
   );
+}
+
+function ManualWinnerSelector({ weekNumber, espn, onWinnerSelect, btnPri, btnSec }) {
+  const [teams, setTeams] = useState([]);
+  const [selectedTeam, setSelectedTeam] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const loadTeams = async () => {
+      try {
+        const response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const teamList = (data.teams || []).map(team => ({
+            id: team.id,
+            name: (team.location && team.nickname) 
+              ? `${team.location} ${team.nickname}` 
+              : `Team ${team.id}`
+          }));
+          setTeams(teamList);
+        }
+      } catch (error) {
+        console.error('Failed to load teams:', error);
+      }
+    };
+
+    if (espn.leagueId && espn.seasonId) {
+      loadTeams();
+    }
+  }, [espn.leagueId, espn.seasonId]);
+
+  const handleSaveWinner = async () => {
+    if (!selectedTeam) return;
+    
+    setLoading(true);
+    const teamName = teams.find(t => t.id.toString() === selectedTeam)?.name || selectedTeam;
+    
+    const winnerData = {
+      teamName: teamName,
+      details: `Manually selected winner for Week ${weekNumber}`,
+      manual: true
+    };
+
+    // Save to server (you'll need to implement this endpoint)
+    try {
+      // await apiCallLeague('/weekly-winners', {
+      //   method: 'POST',
+      //   body: JSON.stringify({ week: weekNumber, winner: winnerData })
+      // });
+      
+      onWinnerSelect(winnerData);
+    } catch (error) {
+      console.error('Failed to save winner:', error);
+    }
+    
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ 
+      marginTop: 12, 
+      padding: 12, 
+      background: "#f8fafc", 
+      borderRadius: 6,
+      border: "1px solid #e2e8f0"
+    }}>
+      <div style={{ marginBottom: 8, fontWeight: "600" }}>Select Winner:</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <select 
+          className="input" 
+          value={selectedTeam} 
+          onChange={(e) => setSelectedTeam(e.target.value)}
+          style={{ flex: 1 }}
+        >
+          <option value="">Choose team...</option>
+          {teams.map(team => (
+            <option key={team.id} value={team.id}>{team.name}</option>
+          ))}
+        </select>
+        <button 
+          className="btn" 
+          style={btnPri} 
+          onClick={handleSaveWinner}
+          disabled={!selectedTeam || loading}
+        >
+          {loading ? "Saving..." : "Save Winner"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Add this function to your App.jsx file
+async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
+  try {
+    // Get team names first
+    const teamResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const teamData = await teamResponse.json();
+    const teamNames = {};
+    (teamData.teams || []).forEach(team => {
+      teamNames[team.id] = (team.location && team.nickname) 
+        ? `${team.location} ${team.nickname}` 
+        : `Team ${team.id}`;
+    });
+
+    // Get matchup data for team-level challenges
+    const matchupResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const matchupData = await matchupResponse.json();
+
+    // Get detailed player data for player-level challenges
+    const boxscoreResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mBoxscore&scoringPeriodId=${weekNumber}`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const boxscoreData = await boxscoreResponse.json();
+
+    // Determine winner based on week number
+    switch (weekNumber) {
+      case 1: // Hot Start - Highest overall team score (starters)
+        return determineHighestScoringTeam(matchupData, teamNames, weekNumber);
+        
+      case 2: // Photo Finish - Closest margin of victory
+        return determineClosestMargin(matchupData, teamNames, weekNumber);
+        
+      case 3: // Biggest Blow out - Largest margin of victory
+        return determineLargestMargin(matchupData, teamNames, weekNumber);
+        
+      case 4: // Dirty 30 - Player closest to 30 points
+        return determineDirty30(boxscoreData, teamNames, weekNumber);
+        
+      case 5: // Highest Scoring WR/RB
+        return determineHighestWRRB(boxscoreData, teamNames, weekNumber);
+        
+      case 7: // Hero to Zero - Biggest point drop from Week 6 to Week 7
+        return determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId);
+        
+      case 8: // Highest Scoring TE
+        return determineHighestTE(boxscoreData, teamNames, weekNumber);
+        
+      case 9: // MVP - Highest scoring individual player
+        return determineMVP(boxscoreData, teamNames, weekNumber);
+        
+      case 10: // Best Loser - Highest scoring losing team
+        return determineBestLoser(matchupData, teamNames, weekNumber);
+        
+      case 11: // Bench Warmer - Highest scoring bench player
+        return determineBenchWarmer(boxscoreData, teamNames, weekNumber);
+        
+      case 13: // Highest Scoring D/ST
+        return determineHighestDST(boxscoreData, teamNames, weekNumber);
+        
+      case 6: // Over-Achiever - Manual selection required
+      case 12: // Bulls-Eye - Manual selection required
+        return null;
+        
+      default:
+        return null;
+    }
+  } catch (error) {
+    console.error(`Error determining Week ${weekNumber} winner:`, error);
+    return null;
+  }
+}
+
+// Helper function to get player position name
+function getPositionName(positionId) {
+  const positions = {
+    0: "QB", 1: "TQB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 
+    6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench"
+  };
+  return positions[positionId] || "Unknown";
+}
+
+// Helper function to get lineup slot name
+function getLineupSlotName(slotId) {
+  const slots = {
+    0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "D/ST", 17: "K",
+    20: "Bench", 21: "IR", 23: "FLEX"
+  };
+  return slots[slotId] || "Unknown";
+}
+
+// Week 1: Highest overall team score (starters)
+function determineHighestScoringTeam(matchupData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        
+        if (homeScore > highestScore) {
+          highestScore = homeScore;
+          winningTeam = matchup.home.teamId;
+        }
+        if (awayScore > highestScore) {
+          highestScore = awayScore;
+          winningTeam = matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 2: Closest margin of victory
+function determineClosestMargin(matchupData, teamNames, weekNumber) {
+  let closestMargin = Infinity;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        const margin = Math.abs(homeScore - awayScore);
+        
+        if (margin < closestMargin && margin > 0) {
+          closestMargin = margin;
+          winningTeam = homeScore > awayScore ? matchup.home.teamId : matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Won by ${closestMargin.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 3: Largest margin of victory
+function determineLargestMargin(matchupData, teamNames, weekNumber) {
+  let largestMargin = 0;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        const margin = Math.abs(homeScore - awayScore);
+        
+        if (margin > largestMargin) {
+          largestMargin = margin;
+          winningTeam = homeScore > awayScore ? matchup.home.teamId : matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Won by ${largestMargin.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 4: Player closest to 30 points
+function determineDirty30(boxscoreData, teamNames, weekNumber) {
+  let closestTo30 = Infinity;
+  let winningTeam = null;
+  let playerName = "";
+  let playerScore = 0;
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              
+              if (stats && Array.isArray(stats)) {
+                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                if (weekStats?.appliedTotal) {
+                  const score = weekStats.appliedTotal;
+                  const diff = Math.abs(score - 30);
+                  
+                  if (diff < closestTo30) {
+                    closestTo30 = diff;
+                    winningTeam = team.teamId;
+                    playerName = player.fullName || "Unknown Player";
+                    playerScore = score;
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} scored ${playerScore.toFixed(1)} points (${closestTo30.toFixed(1)} from 30)`
+    };
+  }
+  return null;
+}
+
+// Week 5: Highest Scoring WR/RB
+function determineHighestWRRB(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  let position = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              const playerPos = player?.defaultPositionId;
+              
+              // Check if WR (4) or RB (2)
+              if (playerPos === 2 || playerPos === 4) {
+                if (stats && Array.isArray(stats)) {
+                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                  if (weekStats?.appliedTotal) {
+                    const score = weekStats.appliedTotal;
+                    
+                    if (score > highestScore) {
+                      highestScore = score;
+                      winningTeam = team.teamId;
+                      playerName = player.fullName || "Unknown Player";
+                      position = getPositionName(playerPos);
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 7: Hero to Zero - Biggest point drop from Week 6 to Week 7
+async function determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId) {
+  try {
+    // Get Week 6 scores
+    const week6Response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const week6Data = await week6Response.json();
+    
+    // Build Week 6 scores by team
+    const week6Scores = {};
+    if (week6Data.schedule) {
+      week6Data.schedule.forEach(matchup => {
+        if (matchup.matchupPeriodId === 6) {
+          const homeScore = matchup.home?.totalPoints || 0;
+          const awayScore = matchup.away?.totalPoints || 0;
+          
+          if (matchup.home?.teamId) week6Scores[matchup.home.teamId] = homeScore;
+          if (matchup.away?.teamId) week6Scores[matchup.away.teamId] = awayScore;
+        }
+      });
+    }
+    
+    // Build Week 7 scores and find biggest drop
+    let biggestDrop = 0;
+    let winningTeam = null;
+    let week6Score = 0;
+    let week7Score = 0;
+    
+    if (matchupData.schedule) {
+      matchupData.schedule.forEach(matchup => {
+        if (matchup.matchupPeriodId === 7) {
+          [matchup.home, matchup.away].forEach(team => {
+            const teamId = team.teamId;
+            const week7TeamScore = team.totalPoints || 0;
+            const week6TeamScore = week6Scores[teamId] || 0;
+            
+            // Only count if they scored LESS in Week 7
+            if (week7TeamScore < week6TeamScore) {
+              const drop = week6TeamScore - week7TeamScore;
+              
+              if (drop > biggestDrop) {
+                biggestDrop = drop;
+                winningTeam = teamId;
+                week6Score = week6TeamScore;
+                week7Score = week7TeamScore;
+              }
+            }
+          });
+        }
+      });
+    }
+    
+    if (winningTeam) {
+      return {
+        teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+        details: `Dropped ${biggestDrop.toFixed(1)} points (${week6Score.toFixed(1)} to ${week7Score.toFixed(1)})`
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error in Hero to Zero calculation:', error);
+    return null;
+  }
+}
+
+// Week 8: Highest Scoring TE
+function determineHighestTE(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              const playerPos = player?.defaultPositionId;
+              
+              // Check if TE (6)
+              if (playerPos === 6) {
+                if (stats && Array.isArray(stats)) {
+                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                  if (weekStats?.appliedTotal) {
+                    const score = weekStats.appliedTotal;
+                    
+                    if (score > highestScore) {
+                      highestScore = score;
+                      winningTeam = team.teamId;
+                      playerName = player.fullName || "Unknown Player";
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (TE) scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 9: MVP - Highest scoring individual player
+function determineMVP(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  let position = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              
+              if (stats && Array.isArray(stats)) {
+                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                if (weekStats?.appliedTotal) {
+                  const score = weekStats.appliedTotal;
+                  
+                  if (score > highestScore) {
+                    highestScore = score;
+                    winningTeam = team.teamId;
+                    playerName = player.fullName || "Unknown Player";
+                    position = getPositionName(player.defaultPositionId);
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 10: Best Loser - Highest scoring losing team
+function determineBestLoser(matchupData, teamNames, weekNumber) {
+  let highestLosingScore = 0;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        
+        // Determine loser and check if they have highest losing score
+        if (homeScore < awayScore && homeScore > highestLosingScore) {
+          highestLosingScore = homeScore;
+          winningTeam = matchup.home.teamId;
+        } else if (awayScore < homeScore && awayScore > highestLosingScore) {
+          highestLosingScore = awayScore;
+          winningTeam = matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Scored ${highestLosingScore.toFixed(1)} points in a loss`
+    };
+  }
+  return null;
+}
+
+// Week 11: Bench Warmer - Highest scoring bench player
+function determineBenchWarmer(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  let position = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId === 20) { // Bench only
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              
+              if (stats && Array.isArray(stats)) {
+                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                if (weekStats?.appliedTotal) {
+                  const score = weekStats.appliedTotal;
+                  
+                  if (score > highestScore) {
+                    highestScore = score;
+                    winningTeam = team.teamId;
+                    playerName = player.fullName || "Unknown Player";
+                    position = getPositionName(player.defaultPositionId);
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points on bench`
+    };
+  }
+  return null;
+}
+
+// Week 13: Highest Scoring D/ST
+function determineHighestDST(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let defenseTeam = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              const playerPos = player?.defaultPositionId;
+              
+              // Check if D/ST (16)
+              if (playerPos === 16) {
+                if (stats && Array.isArray(stats)) {
+                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                  if (weekStats?.appliedTotal) {
+                    const score = weekStats.appliedTotal;
+                    
+                    if (score > highestScore) {
+                      highestScore = score;
+                      winningTeam = team.teamId;
+                      defenseTeam = player.fullName || "Unknown Defense";
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${defenseTeam} scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
 }
 
 function WeeklyEditForm({ item, onSave, onCancel, btnPri, btnSec }) {

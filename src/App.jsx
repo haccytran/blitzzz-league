@@ -207,17 +207,12 @@ export default function App() {
   // Handle league selection from landing page
   const handleLeagueSelect = (league) => {
   console.log('League selected from landing page:', league);
-  console.log('League ID:', league.id);
   setSelectedLeague(league);
   
-  // For development, add URL parameter
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    const url = new URL(window.location);
-    url.searchParams.set('league', league.id);
-    console.log('Setting URL parameter to:', league.id);
-    console.log('New URL:', url.toString());
-    window.history.pushState({}, '', url);
-  }
+  // Update URL parameter for both development and production
+  const url = new URL(window.location);
+  url.searchParams.set('league', league.id);
+  window.history.pushState({}, '', url);
 };
 
   // Handle going back to league selection
@@ -377,11 +372,9 @@ async function loadServerData() {
 
 const switchLeague = () => {
   // Clear URL parameter when switching leagues
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    const url = new URL(window.location);
-    url.searchParams.delete('league');
-    window.history.pushState({}, '', url);
-  }
+  const url = new URL(window.location);
+  url.searchParams.delete('league');
+  window.history.pushState({}, '', url);
   onBackToSelection();
 };
 

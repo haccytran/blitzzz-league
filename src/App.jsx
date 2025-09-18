@@ -1441,10 +1441,10 @@ function ManualWinnerSelector({ weekNumber, espn, onWinnerSelect, btnPri, btnSec
   );
 }
 
-// Add this function to your App.jsx file
+// DETERMINE WEEKLY WINNER
 async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
   try {
-    // Get team names first
+    // Get team names with better error handling and data structure
     const teamResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
       mode: 'cors',
       headers: {
@@ -1453,13 +1453,32 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
       }
     });
     
+    if (!teamResponse.ok) {
+      throw new Error(`Team data fetch failed: ${teamResponse.status}`);
+    }
+    
     const teamData = await teamResponse.json();
+    console.log('Team data for weekly challenges:', teamData); // Debug log
+    
     const teamNames = {};
-    (teamData.teams || []).forEach(team => {
-      teamNames[team.id] = (team.location && team.nickname) 
-        ? `${team.location} ${team.nickname}` 
-        : `Team ${team.id}`;
-    });
+    if (teamData.teams) {
+      teamData.teams.forEach(team => {
+        let name = "";
+        if (team.location && team.nickname) {
+          name = `${team.location} ${team.nickname}`;
+        } else if (team.name) {
+          name = team.name;
+        } else if (team.abbrev) {
+          name = team.abbrev;
+        } else {
+          name = `Team ${team.id}`;
+        }
+        teamNames[team.id] = name;
+        console.log(`Weekly challenge team mapping: ${team.id} -> ${name}`); // Debug log
+      });
+    }
+
+    console.log('Final team names mapping:', teamNames); // Debug log
 
     // Get matchup data for team-level challenges
     const matchupResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {

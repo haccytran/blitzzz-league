@@ -2582,29 +2582,52 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
     setError("");
 
     try {
-      // Use the working ESPN endpoint directly
-      const response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup`, {
-        mode: 'cors',
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
+      // Fetch both matchup data AND team data to get proper team names
+      const [matchupResponse, teamResponse] = await Promise.all([
+        fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup`, {
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        }),
+        fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        })
+      ]);
 
-      if (!response.ok) {
-        throw new Error(`ESPN API returned ${response.status}`);
+      if (!matchupResponse.ok || !teamResponse.ok) {
+        throw new Error(`ESPN API error: ${matchupResponse.status} / ${teamResponse.status}`);
       }
 
-      const data = await response.json();
+      const [matchupData, teamData] = await Promise.all([
+        matchupResponse.json(),
+        teamResponse.json()
+      ]);
 
-      // Get team names
+      console.log("Team data:", teamData); // Debug log to see team structure
+
+      // Build team names mapping with better fallback logic
       const teamNames = {};
-      if (data.teams) {
-        data.teams.forEach(team => {
-          const name = (team.location && team.nickname) 
-            ? `${team.location} ${team.nickname}` 
-            : (team.name || `Team ${team.id}`);
+      if (teamData.teams) {
+        teamData.teams.forEach(team => {
+          // Try multiple ways to get team name
+          let name = "";
+          if (team.location && team.nickname) {
+            name = `${team.location} ${team.nickname}`;
+          } else if (team.name) {
+            name = team.name;
+          } else if (team.abbrev) {
+            name = team.abbrev;
+          } else {
+            name = `Team ${team.id}`;
+          }
           teamNames[team.id] = name;
+          console.log(`Team ${team.id}: ${name}`); // Debug log
         });
       }
 
@@ -2614,8 +2637,8 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
 
       // Group schedule by matchup period
       const byPeriod = {};
-      if (data.schedule) {
-        data.schedule.forEach(matchup => {
+      if (matchupData.schedule) {
+        matchupData.schedule.forEach(matchup => {
           const period = matchup.matchupPeriodId;
           if (period && period > 0) {
             if (!byPeriod[period]) byPeriod[period] = [];
@@ -2639,21 +2662,28 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
         const matchups = byPeriod[period];
         let highestScore = 0;
         let winningTeam = "";
+        let winningTeamId = null;
 
         // Find highest scorer for this week
         matchups.forEach(matchup => {
           const homeScore = matchup.home?.totalPoints || 0;
           const awayScore = matchup.away?.totalPoints || 0;
+          const homeTeamId = matchup.home?.teamId;
+          const awayTeamId = matchup.away?.teamId;
 
           if (homeScore > highestScore) {
             highestScore = homeScore;
-            winningTeam = teamNames[matchup.home.teamId] || `Team ${matchup.home.teamId}`;
+            winningTeamId = homeTeamId;
+            winningTeam = teamNames[homeTeamId] || `Team ${homeTeamId}`;
           }
           if (awayScore > highestScore) {
             highestScore = awayScore;
-            winningTeam = teamNames[matchup.away.teamId] || `Team ${matchup.away.teamId}`;
+            winningTeamId = awayTeamId;
+            winningTeam = teamNames[awayTeamId] || `Team ${awayTeamId}`;
           }
         });
+
+        console.log(`Week ${weekNum}: Team ${winningTeamId} (${winningTeam}) - ${highestScore} points`); // Debug log
 
         if (winningTeam && highestScore > 0) {
           winners.push({
@@ -2739,6 +2769,7 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
     </Section>
   );
 }
+
 /* =========================
    Form Components
    ========================= */

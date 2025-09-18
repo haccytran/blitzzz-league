@@ -206,16 +206,19 @@ export default function App() {
 
   // Handle league selection from landing page
   const handleLeagueSelect = (league) => {
-    console.log('League selected from landing page:', league);
-    setSelectedLeague(league);
-    
-    // For development, add URL parameter
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      const url = new URL(window.location);
-      url.searchParams.set('league', league.id);
-      window.history.pushState({}, '', url);
-    }
-  };
+  console.log('League selected from landing page:', league);
+  console.log('League ID:', league.id);
+  setSelectedLeague(league);
+  
+  // For development, add URL parameter
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    const url = new URL(window.location);
+    url.searchParams.set('league', league.id);
+    console.log('Setting URL parameter to:', league.id);
+    console.log('New URL:', url.toString());
+    window.history.pushState({}, '', url);
+  }
+};
 
   // Handle going back to league selection
   const handleBackToSelection = () => {
@@ -373,8 +376,14 @@ async function loadServerData() {
   const logout = ()=>{ setIsAdmin(false); localStorage.removeItem(adminKey); };
 
 const switchLeague = () => {
-     onBackToSelection(); // Remove the confirm dialog - go directly back
-   };
+  // Clear URL parameter when switching leagues
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    const url = new URL(window.location);
+    url.searchParams.delete('league');
+    window.history.pushState({}, '', url);
+  }
+  onBackToSelection();
+};
 
 // ESPN config (replace the old useState)
 

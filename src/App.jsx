@@ -126,12 +126,14 @@ function fmtShort(d){ return toPT(d).toLocaleDateString(undefined,{month:"short"
    ========================= */
 function teamName(t){ return (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`); }
 
-async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, auth = false }) {
+async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, matchupPeriodId, auth = false }) {
+  if (!leagueId || !seasonId || !view) throw new Error("Missing leagueId/seasonId/view");
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
+  const mp = matchupPeriodId ? `&matchupPeriodId=${matchupPeriodId}` : "";
   const au = auth ? `&auth=1` : "";
-  const url = API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&view=${view}${sp}${au}`);
+  const url = API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&view=${view}${sp}${mp}${au}`);
   
-  console.log(`[ESPN API] Fetching: ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}`);
+  console.log(`[ESPN API] Fetching: ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}${matchupPeriodId ? ` (MP ${matchupPeriodId})` : ""}`);
   const startTime = Date.now();
   
   try {
@@ -156,7 +158,7 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, auth =
         snippet: text.slice(0, 300).replace(/\s+/g, " "),
         contentType: r.headers.get("content-type")
       });
-      throw new Error(`ESPN returned non-JSON for ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}. Snippet: ${text.slice(0,160).replace(/\s+/g," ")}`);
+      throw new Error(`ESPN returned non-JSON for ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}${matchupPeriodId ? ` (MP ${matchupPeriodId})` : ""}. Snippet: ${text.slice(0,160).replace(/\s+/g," ")}`);
     }
   } catch (networkError) {
     const elapsed = Date.now() - startTime;
@@ -164,7 +166,6 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, auth =
     throw networkError;
   }
 }
-
 /* =========================
    Local storage hook for non-server data
    ========================= */
@@ -2581,95 +2582,91 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
     setError("");
 
     try {
-      // Get team names first
-      const teamJson = await fetchEspnJson({ 
-        leagueId: espn.leagueId, 
-        seasonId: espn.seasonId, 
-        view: "mTeam" 
+      // Use the working ESPN endpoint directly
+      const response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup`, {
+        mode: 'cors',
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
       });
-      const teamNames = Object.fromEntries(
-        (teamJson?.teams || []).map(t => [t.id, teamName(t)])
-      );
 
-      console.log("Team names:", teamNames);
+      if (!response.ok) {
+        throw new Error(`ESPN API returned ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Get team names
+      const teamNames = {};
+      if (data.teams) {
+        data.teams.forEach(team => {
+          const name = (team.location && team.nickname) 
+            ? `${team.location} ${team.nickname}` 
+            : (team.name || `Team ${team.id}`);
+          teamNames[team.id] = name;
+        });
+      }
 
       const winners = [];
+      const now = new Date();
+      const week1EndDate = new Date('2025-09-08T23:59:00-07:00');
 
-      // Calculate which weeks should show winners based on current date
-const now = new Date();
-
-// Fantasy Week 1 ended Monday September 9, 2025 at 11:59 PM PT
-// So results should show after that date
-const week1EndDate = new Date('2025-09-02T23:59:00-07:00'); // September 2, 2025 11:59 PM PT
-
-// Check weeks 1 through 18 sequentially
-for (let week = 1; week <= 18; week++) {
-
-  // Calculate when this week's results should be shown
-const weekEnd = new Date(week1EndDate);
-weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7)); // Add 7 days per week
-  
-  console.log(`Week ${week}: Results should show after ${weekEnd.toLocaleString()}, current time: ${now.toLocaleString()}`);
-  
-  // If current time is before this week's deadline, stop checking
-  if (now < weekEnd) {
-    console.log(`Week ${week} deadline not reached yet, stopping here`);
-    break;
-  }
-  
-  try {
-    console.log(`Checking week ${week}...`);
-    
-    const scoreJson = await fetchEspnJson({ 
-      leagueId: espn.leagueId, 
-      seasonId: espn.seasonId, 
-      view: "mScoreboard",
-      scoringPeriodId: week
-    });
-
-    let highestScore = 0;
-    let winningTeam = "";
-
-    // Check all matchups for this week
-    (scoreJson?.schedule || []).forEach((matchup, index) => {
-      const homeScore = matchup.home?.totalPoints || 0;
-      const awayScore = matchup.away?.totalPoints || 0;
-      
-      // Update highest score if needed
-      if (homeScore > highestScore) {
-        highestScore = homeScore;
-        winningTeam = teamNames[matchup.home.teamId] || `Team ${matchup.home.teamId}`;
+      // Group schedule by matchup period
+      const byPeriod = {};
+      if (data.schedule) {
+        data.schedule.forEach(matchup => {
+          const period = matchup.matchupPeriodId;
+          if (period && period > 0) {
+            if (!byPeriod[period]) byPeriod[period] = [];
+            byPeriod[period].push(matchup);
+          }
+        });
       }
-      if (awayScore > highestScore) {
-        highestScore = awayScore;
-        winningTeam = teamNames[matchup.away.teamId] || `Team ${matchup.away.teamId}`;
-      }
-    });
 
-    // Add the winner if we found scores
-    if (winningTeam && highestScore > 0) {
-      winners.push({
-        week,
-        team: winningTeam,
-        score: highestScore.toFixed(1)
+      // Process each period (week)
+      Object.keys(byPeriod).sort((a, b) => Number(a) - Number(b)).forEach(period => {
+        const weekNum = Number(period);
+        
+        // Check if this week should show results
+        const weekEnd = new Date(week1EndDate);
+        weekEnd.setDate(week1EndDate.getDate() + ((weekNum - 1) * 7));
+        
+        if (now <= weekEnd) {
+          return; // Skip if deadline hasn't passed
+        }
+
+        const matchups = byPeriod[period];
+        let highestScore = 0;
+        let winningTeam = "";
+
+        // Find highest scorer for this week
+        matchups.forEach(matchup => {
+          const homeScore = matchup.home?.totalPoints || 0;
+          const awayScore = matchup.away?.totalPoints || 0;
+
+          if (homeScore > highestScore) {
+            highestScore = homeScore;
+            winningTeam = teamNames[matchup.home.teamId] || `Team ${matchup.home.teamId}`;
+          }
+          if (awayScore > highestScore) {
+            highestScore = awayScore;
+            winningTeam = teamNames[matchup.away.teamId] || `Team ${matchup.away.teamId}`;
+          }
+        });
+
+        if (winningTeam && highestScore > 0) {
+          winners.push({
+            week: weekNum,
+            team: winningTeam,
+            score: highestScore.toFixed(1)
+          });
+        }
       });
-      console.log(`Added Week ${week} winner: ${winningTeam} with ${highestScore.toFixed(1)} points`);
-    }
 
-  } catch (weekError) {
-    console.error(`Failed to load week ${week}:`, weekError);
-  }
-}
-
-      console.log(`Total winners found: ${winners.length}`);
       setWeeklyWinners(winners);
       setLastUpdated(new Date().toLocaleString());
-      
-      if (winners.length === 0) {
-        setError("No completed weeks yet. Winners will appear after each week is finished.");
-      } else {
-        setError(""); // Clear any previous errors
-      }
+      setError("");
 
     } catch (err) {
       console.error('Failed to load highest scorers:', err);
@@ -2701,7 +2698,6 @@ weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7)); // Add 7 days per we
           </div>
         </div>
 
-        {!espn.seasonId && <div style={{ color: "#64748b" }}>Set your ESPN season in League Settings.</div>}
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         
         {weeklyWinners.length > 0 ? (

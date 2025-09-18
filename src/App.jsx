@@ -3509,8 +3509,13 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
                     Week {winner.week}
                   </span>
                   <span style={{ marginLeft: 12, fontSize: 16 }}>
-                    🏆 <strong>{winner.team}</strong>
-                  </span>
+  🏆 <strong style={{ 
+    color: "#8B4513",
+    textShadow: "0 0 8px #FFD700, 0 0 12px #FFD700, 0 0 16px #FFD700"
+  }}>
+    {winner.team}
+  </strong>
+</span>
                 </div>
                 <span style={{ color: "#16a34a", fontWeight: "bold" }}>
                   {winner.score} pts

@@ -1322,19 +1322,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                     />
                   )}
 
-                  {requiresManual && !winner && !isAdmin && (
-                    <div style={{ 
-                      marginTop: 12, 
-                      padding: 12, 
-                      background: "#fef3c7", 
-                      borderRadius: 6
-                    }}>
-                      <div style={{ fontSize: "14px", color: "#92400e" }}>
-                        Winner requires manual selection by commissioner.
-                      </div>
-                    </div>
-                  )}
-                </>
+                                  </>
               )}
             </div>
           );

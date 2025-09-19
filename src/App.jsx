@@ -2279,6 +2279,30 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
           ))}
         </tbody>
       </table>
+{/* Mobile-friendly card layout */}
+<div className="mobile-list">
+  {report.totalsRows.map(row => (
+    <div key={row.name} className="card" style={{ padding: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <input
+            type="checkbox"
+            checked={!!currentPayments[row.name]}
+            onChange={(e) => updatePayment(row.name, e.target.checked)}
+            disabled={!isAdmin}
+            style={{ marginRight: 8 }}
+          />
+          <span style={{ textDecoration: currentPayments[row.name] ? "line-through" : "none" }}>
+            {row.name}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: "#64748b" }}>
+          {row.adds} adds • ${row.owes}
+        </div>
+      </div>
+    </div>
+  ))}
+</div>
     </div>
   );
 }

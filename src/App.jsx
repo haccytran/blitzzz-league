@@ -927,28 +927,7 @@ async function loadOfficialReport(silent=false){
         
         <aside
           className={`sidebar ${sidebarOpen ? 'open' : ''}`}
-          style={{
-            padding: 20,
-            background: "linear-gradient(180deg, #0b2e4a 0%, #081a34 100%)",
-            color: "#e2e8f0",
-            // Mobile styles
-            position: sidebarOpen ? 'fixed' : 'relative',
-            top: sidebarOpen ? 0 : 'auto',
-            left: sidebarOpen ? 0 : 'auto',
-            right: sidebarOpen ? 'auto' : 'auto',
-            bottom: sidebarOpen ? 0 : 'auto',
-            zIndex: 1000,
-            transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
-            transition: 'transform 0.3s ease-in-out',
-            width: sidebarOpen ? '280px' : 'auto',
-            // Desktop styles
-            '@media (min-width: 768px)': {
-              position: 'relative',
-              transform: 'none',
-              width: 'auto'
-            }
-          }}
-        >
+     >
           {/* Close button for mobile */}
           <button 
             className="sidebar-close" 
@@ -1019,7 +998,7 @@ async function loadOfficialReport(silent=false){
     <SyncOverlay open={syncing} pct={syncPct} msg={syncMsg} />
   </>
 );
-
+}
 
 function posIdToName(id) {
   const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };

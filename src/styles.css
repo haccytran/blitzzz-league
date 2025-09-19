@@ -669,3 +669,21 @@ body.blitzzz-league .sidebar .brand-title {
     transform: scale(0.65);
   }
 }
+
+/* Hide the table on phones, show the card list */
+@media (max-width: 767px) {
+  .dues-payment-tracker table {
+    display: none;
+  }
+  
+  .dues-payment-tracker .mobile-list {
+    display: block;
+  }
+}
+
+/* Hide the card list on computers, show the table */
+@media (min-width: 768px) {
+  .dues-payment-tracker .mobile-list {
+    display: none;
+  }
+}

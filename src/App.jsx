@@ -212,6 +212,16 @@ export default function App() {
   // Update URL parameter for both development and production
   const url = new URL(window.location);
   url.searchParams.set('league', league.id);
+  
+  // Set different default pages for each league
+  if (league.id === 'sculpin') {
+    url.hash = '#highestscorer';
+  } else if (league.id === 'blitzzz') {
+    url.hash = '#weekly';
+  } else {
+    url.hash = '#announcements'; // fallback for any other leagues
+  }
+  
   window.history.pushState({}, '', url);
 };
 
@@ -275,6 +285,7 @@ const switchLeague = () => {
   // Clear URL parameter when switching leagues
   const url = new URL(window.location);
   url.searchParams.delete('league');
+  url.hash = '#announcements'; // Reset to default view
   window.history.pushState({}, '', url);
   onBackToSelection();
 };
@@ -2231,7 +2242,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
     .reduce((sum, row) => sum + row.owes, 0);
 
   return (
-    <div className="card" style={{ padding: 12, marginTop: 12 }}>
+<div className="card dues-payment-tracker" style={{ padding: 12, marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <h3 style={{ marginTop: 0 }}>{seasonId} Waiver Dues Checklist{"\u2705"}</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

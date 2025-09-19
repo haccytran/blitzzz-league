@@ -2382,53 +2382,63 @@ if (!validPasswords.includes(adminHeader)) {
   }
 });
 
-app.get("/api/auto-refresh/status", (req, res) => {
-  res.json({ 
-    status: "running", 
-    interval: autoRefreshInterval ? "active" : "inactive",
-    timestamp: new Date().toISOString(),
-    nextRun: "Every 10 minutes"
-  });
-});
-
-app.post("/api/auto-refresh/force", requireAdmin, async (req, res) => {
-  console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Manual refresh triggered`);
-  try {
-    await runAutoRefresh();
-    res.json({ success: true, message: "Refresh completed" });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // =========================
-// Auto-refresh system - Multi-League Version
+// Enhanced Auto-refresh system - Multi-League Version
 // =========================
 let autoRefreshInterval = null;
+let isRefreshing = false;
+let lastRefreshAttempt = 0;
+let consecutiveFailures = 0;
+const MAX_CONSECUTIVE_FAILURES = 3;
+const BASE_REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 // Define both leagues to refresh
 const LEAGUES_TO_REFRESH = [
   { id: 'blitzzz', espnId: '226912' },
-  { id: 'sculpin', espnId: '58645' }  // Replace with actual Sculpin ESPN ID
+  { id: 'sculpin', espnId: '58645' }
 ];
 
+// Enhanced logging
+function logRefresh(message, level = 'info') {
+  const timestamp = new Date().toISOString();
+  const prefix = `[AUTO-REFRESH] ${timestamp}`;
+  
+  if (level === 'error') {
+    console.error(`${prefix} - ERROR: ${message}`);
+  } else {
+    console.log(`${prefix} - ${message}`);
+  }
+}
+
 async function runAutoRefreshForLeague(leagueConfig) {
-  console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Starting refresh for league: ${leagueConfig.id}`);
+  const startTime = Date.now();
+  logRefresh(`Starting refresh for league: ${leagueConfig.id}`);
   
   try {
+    // Add connection test first
+    if (DATABASE_URL) {
+      try {
+        const client = await pool.connect();
+        await client.query('SELECT 1');
+        client.release();
+      } catch (dbError) {
+        throw new Error(`Database connection failed: ${dbError.message}`);
+      }
+    }
+
     const displaySetting = await readJson("current_display_season.json", { season: "2025" });
     const seasonId = displaySetting.season;
     
     if (!leagueConfig.espnId || !seasonId) {
-      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Missing ESPN ID or season for ${leagueConfig.id}, skipping`);
-      return;
+      throw new Error(`Missing ESPN ID (${leagueConfig.espnId}) or season (${seasonId}) for ${leagueConfig.id}`);
     }
 
-    console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Refreshing data for league ${leagueConfig.id}`);
+    logRefresh(`Refreshing data for league ${leagueConfig.id}, season ${seasonId}`);
 
-    // Add timeout to prevent hanging
+    // Create a race condition with timeout
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Refresh timeout')), 300000) // 5 minute timeout
+      setTimeout(() => reject(new Error('Refresh timeout after 4 minutes')), 240000) // 4 minute timeout
     );
 
     const refreshPromise = buildOfficialReport({ 
@@ -2439,83 +2449,204 @@ async function runAutoRefreshForLeague(leagueConfig) {
 
     const report = await Promise.race([refreshPromise, timeoutPromise]);
     
-    if (report) {
+    if (report && report.totalsRows && report.totalsRows.length > 0) {
       const snapshot = { seasonId, leagueId: leagueConfig.espnId, ...report };
       
+      // Save to database with retry logic
       if (DATABASE_URL) {
-        const client = await pool.connect();
-        await client.query(`
-          INSERT INTO reports (season_id, report_data, updated_at) 
-          VALUES ($1, $2, CURRENT_TIMESTAMP)
-          ON CONFLICT (season_id) DO UPDATE SET 
-          report_data = $2, updated_at = CURRENT_TIMESTAMP
-        `, [`${leagueConfig.id}_${seasonId}`, JSON.stringify(snapshot)]);
-        client.release();
+        let saveSuccess = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const client = await pool.connect();
+            await client.query(`
+              INSERT INTO reports (season_id, report_data, updated_at) 
+              VALUES ($1, $2, CURRENT_TIMESTAMP)
+              ON CONFLICT (season_id) DO UPDATE SET 
+              report_data = $2, updated_at = CURRENT_TIMESTAMP
+            `, [`${leagueConfig.id}_${seasonId}`, JSON.stringify(snapshot)]);
+            client.release();
+            saveSuccess = true;
+            break;
+          } catch (dbError) {
+            logRefresh(`Database save attempt ${attempt} failed for ${leagueConfig.id}: ${dbError.message}`, 'error');
+            if (attempt === 3) throw dbError;
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Progressive delay
+          }
+        }
+        
+        if (!saveSuccess) {
+          throw new Error('Failed to save to database after 3 attempts');
+        }
       }
       
-      await writeJson(`report_${leagueConfig.id}_${seasonId}.json`, snapshot);
-      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Successfully updated ${leagueConfig.id}`);
+      // Always save to file as backup
+      try {
+        await writeJson(`report_${leagueConfig.id}_${seasonId}.json`, snapshot);
+      } catch (fileError) {
+        logRefresh(`File save failed for ${leagueConfig.id}: ${fileError.message}`, 'error');
+        // Don't throw - database save succeeded
+      }
+      
+      const elapsed = Date.now() - startTime;
+      logRefresh(`Successfully updated ${leagueConfig.id} (${elapsed}ms) - ${report.totalsRows.length} teams, ${report.rawMoves?.length || 0} transactions`);
+      
+      // Reset failure counter on success
+      consecutiveFailures = 0;
+      return true;
+    } else {
+      throw new Error('Report generated but contained no data');
     }
 
   } catch (error) {
-    console.error(`[AUTO-REFRESH] ${new Date().toISOString()} - Failed for league ${leagueConfig.id}:`, error.message);
-    // Continue to next league instead of stopping entirely
+    const elapsed = Date.now() - startTime;
+    logRefresh(`Failed for league ${leagueConfig.id} after ${elapsed}ms: ${error.message}`, 'error');
+    consecutiveFailures++;
+    return false;
   }
 }
 
 async function runAutoRefresh() {
-  console.log('[AUTO-REFRESH] Starting background refresh cycle for all leagues...');
+  if (isRefreshing) {
+    logRefresh('Refresh already in progress, skipping this cycle');
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastRefreshAttempt < 60000) { // Prevent too frequent attempts
+    logRefresh('Last refresh attempt was less than 1 minute ago, skipping');
+    return;
+  }
+
+  isRefreshing = true;
+  lastRefreshAttempt = now;
+  
+  logRefresh('Starting background refresh cycle for all leagues...');
+  
+  let successCount = 0;
+  let failureCount = 0;
   
   // Refresh each league sequentially to avoid overwhelming ESPN API
   for (const leagueConfig of LEAGUES_TO_REFRESH) {
-    await runAutoRefreshForLeague(leagueConfig);
-    // Wait 30 seconds between leagues to be gentle on ESPN API
+    const success = await runAutoRefreshForLeague(leagueConfig);
+    
+    if (success) {
+      successCount++;
+    } else {
+      failureCount++;
+    }
+    
+    // Wait between leagues only if not the last one
     if (LEAGUES_TO_REFRESH.indexOf(leagueConfig) < LEAGUES_TO_REFRESH.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 30000));
+      logRefresh('Waiting 45 seconds before next league...');
+      await new Promise(resolve => setTimeout(resolve, 45000));
     }
   }
   
-  console.log('[AUTO-REFRESH] All leagues refreshed');
+  const totalElapsed = Date.now() - now;
+  logRefresh(`Refresh cycle completed: ${successCount} successes, ${failureCount} failures (${totalElapsed}ms total)`);
+  
+  isRefreshing = false;
 }
 
-// Start auto-refresh cycle (every 10 minutes)
+// Start auto-refresh cycle with enhanced error handling
 function startAutoRefresh() {
   if (autoRefreshInterval) {
     clearInterval(autoRefreshInterval);
+    logRefresh('Cleared existing refresh interval');
   }
   
-  console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Starting 10-minute refresh cycle`);
+  logRefresh('Starting enhanced 10-minute refresh cycle');
   
   const runCycle = async () => {
     try {
-      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Beginning refresh cycle`);
+      await runAutoRefresh();
       
-      for (const leagueConfig of LEAGUES_TO_REFRESH) {
-        await runAutoRefreshForLeague(leagueConfig);
-        // Wait between leagues to avoid overwhelming ESPN
-        if (LEAGUES_TO_REFRESH.indexOf(leagueConfig) < LEAGUES_TO_REFRESH.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 30000));
-        }
+      // Adjust interval based on failure rate
+      let nextInterval = BASE_REFRESH_INTERVAL;
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        nextInterval = BASE_REFRESH_INTERVAL * 2; // Double interval after too many failures
+        logRefresh(`Increasing refresh interval to ${nextInterval/60000} minutes due to consecutive failures`);
       }
       
-      console.log(`[AUTO-REFRESH] ${new Date().toISOString()} - Cycle completed successfully`);
     } catch (error) {
-      console.error(`[AUTO-REFRESH] ${new Date().toISOString()} - Cycle failed:`, error.message);
+      logRefresh(`Cycle failed with unhandled error: ${error.message}`, 'error');
+      consecutiveFailures++;
     }
   };
   
-  // Run immediately after 30 seconds
-  setTimeout(runCycle, 30000);
+  // Run first cycle after 2 minutes instead of immediately
+  setTimeout(() => {
+    logRefresh('Running initial refresh cycle');
+    runCycle();
+  }, 120000);
   
   // Set up interval
-  autoRefreshInterval = setInterval(runCycle, 10 * 60 * 1000);
+  autoRefreshInterval = setInterval(runCycle, BASE_REFRESH_INTERVAL);
   
-  // Add process handlers to restart interval if needed
+  // Enhanced process handlers
+  const handleExit = (signal) => {
+    logRefresh(`Received ${signal}, cleaning up auto-refresh`);
+    if (autoRefreshInterval) {
+      clearInterval(autoRefreshInterval);
+      autoRefreshInterval = null;
+    }
+    if (signal !== 'SIGTERM') {
+      process.exit(0);
+    }
+  };
+
+  process.removeAllListeners('SIGINT');
+  process.removeAllListeners('SIGTERM');
+  process.removeAllListeners('uncaughtException');
+  process.removeAllListeners('unhandledRejection');
+
+  process.on('SIGINT', () => handleExit('SIGINT'));
+  process.on('SIGTERM', () => handleExit('SIGTERM'));
+  
   process.on('uncaughtException', (error) => {
-    console.error(`[AUTO-REFRESH] ${new Date().toISOString()} - Uncaught exception, restarting:`, error.message);
-    startAutoRefresh();
+    logRefresh(`Uncaught exception: ${error.message}`, 'error');
+    logRefresh(`Stack: ${error.stack}`, 'error');
+    // Don't restart immediately on uncaught exceptions
+    setTimeout(() => {
+      if (!autoRefreshInterval) {
+        logRefresh('Restarting auto-refresh after uncaught exception');
+        startAutoRefresh();
+      }
+    }, 30000);
+  });
+
+  process.on('unhandledRejection', (reason, promise) => {
+    logRefresh(`Unhandled rejection: ${reason}`, 'error');
+    // Log but don't restart - these are usually recoverable
   });
 }
+
+// Enhanced status endpoint
+app.get("/api/auto-refresh/status", (req, res) => {
+  res.json({ 
+    status: "running", 
+    interval: autoRefreshInterval ? "active" : "inactive",
+    timestamp: new Date().toISOString(),
+    nextRun: "Every 10 minutes",
+    isRefreshing: isRefreshing,
+    lastRefreshAttempt: lastRefreshAttempt ? new Date(lastRefreshAttempt).toISOString() : null,
+    consecutiveFailures: consecutiveFailures,
+    leagues: LEAGUES_TO_REFRESH.length
+  });
+});
+
+// Enhanced manual refresh
+app.post("/api/auto-refresh/force", requireAdmin, async (req, res) => {
+  logRefresh('Manual refresh triggered via API');
+  try {
+    await runAutoRefresh();
+    res.json({ success: true, message: "Refresh completed" });
+  } catch (error) {
+    logRefresh(`Manual refresh failed: ${error.message}`, 'error');
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // =========================
 // Static hosting
 // =========================

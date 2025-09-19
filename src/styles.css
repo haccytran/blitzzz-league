@@ -687,3 +687,17 @@ body.blitzzz-league .sidebar .brand-title {
     display: none;
   }
 }
+
+@media (max-width: 767px) {
+  .dues-payment-tracker table {
+    min-width: auto !important;
+    width: 100%;
+    font-size: 11px;
+  }
+  
+  .dues-payment-tracker th,
+  .dues-payment-tracker td {
+    padding: 4px 4px;
+    font-size: 11px;
+  }
+}

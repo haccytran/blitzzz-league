@@ -701,3 +701,18 @@ body.blitzzz-league .sidebar .brand-title {
     font-size: 11px;
   }
 }
+
+@media (max-width: 767px) {
+  .dues-week table {
+    min-width: auto !important;
+    width: 100%;
+    font-size: 11px;
+  }
+  
+  .dues-week th,
+  .dues-week td {
+    padding: 4px 4px;
+    font-size: 11px;
+    white-space: normal;
+  }
+}

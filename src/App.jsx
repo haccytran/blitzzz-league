@@ -234,30 +234,80 @@ export default function App() {
   return <LeagueHub selectedLeague={selectedLeague} onBackToSelection={handleBackToSelection} />;
 }
 
+function MobileHeader({ config, onMenuToggle }) {
+  return (
+    <div className="mobile-header">
+      <div className="mobile-logo">
+        <img src={config.logo} alt={`${config.name} Logo`} />
+        <div className="mobile-league-name">{config.name}</div>
+      </div>
+      <button className="hamburger-btn" onClick={onMenuToggle}>
+        ☰
+      </button>
+    </div>
+  );
+}
 
-   function LeagueHub({ selectedLeague, onBackToSelection }){
-  useEffect(()=>{ document.title = "Blitzzz Fantasy Football League"; }, []);
-   const currentYear = new Date().getFullYear();
-const config = useLeagueConfig(selectedLeague);
+   function LeagueHub({ selectedLeague, onBackToSelection }) {
+  useEffect(() => { document.title = "Blitzzz Fantasy Football League"; }, []);
+  const currentYear = new Date().getFullYear();
+  const config = useLeagueConfig(selectedLeague);
+  
+  // Add mobile menu state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+  const closeSidebar = () => setSidebarOpen(false);
 
-console.log('=== LEAGUE DEBUGGING ===');
-console.log('selectedLeague object:', selectedLeague);
-console.log('config returned:', config);
-console.log('config.id:', config.id);
-console.log('URL params:', window.location.search);
+  const btnPri = config?.id === 'sculpin' 
+    ? { background:"#FFC425", color:"#2F241D" }
+    : config?.id === 'blitzzz'
+    ? { background:"#0080C6", color:"#FFFFFF" }
+    : { background:"#0ea5e9", color:"#fff" };
 
-const btnPri = config?.id === 'sculpin' 
-  ? { background:"#FFC425", color:"#2F241D" }
-  : config?.id === 'blitzzz'
-  ? { background:"#0080C6", color:"#FFFFFF" }
-  : { background:"#0ea5e9", color:"#fff" };
+  const btnSec = config?.id === 'sculpin'
+    ? { background:"#fff8e1", color:"#2F241D", border:"1px solid #FFC425" }
+    : config?.id === 'blitzzz'
+    ? { background:"#bce1fc", color:"#0080C6", border:"1px solid #0080C6" }
+    : { background:"#e5e7eb", color:"#0b1220" };
 
-const btnSec = config?.id === 'sculpin'
-  ? { background:"#fff8e1", color:"#2F241D", border:"1px solid #FFC425" }
-  : config?.id === 'blitzzz'
-  ? { background:"#bce1fc", color:"#0080C6", border:"1px solid #0080C6" }
-  : { background:"#e5e7eb", color:"#0b1220" };
 
+const switchLeague = () => {
+  // Clear URL parameter when switching leagues
+  const url = new URL(window.location);
+  url.searchParams.delete('league');
+  window.history.pushState({}, '', url);
+  onBackToSelection();
+};
+
+const VALID_TABS = [
+  "announcements","activity","weekly","highestscorer","waivers","dues",
+   "transactions","drafts","rosters","powerrankings","settings","trading","polls" 
+];
+
+  const initialTabFromHash = () => {
+    const h = (window.location.hash || "").replace("#","").trim();
+    return VALID_TABS.includes(h) ? h : "activity";
+  };
+
+  const [active, setActive] = useState(initialTabFromHash);
+
+  useEffect(() => {
+    const onHash = () => {
+      const h = (window.location.hash || "").replace("#","").trim();
+      setActive(VALID_TABS.includes(h) ? h : "activity");
+    };
+    window.addEventListener("hashchange", onHash);
+    onHash();
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
+    const want = `#${active}`;
+    if (window.location.hash !== want) window.location.hash = want;
+  }, [active]);
+
+  // Update your return statement:
+  
 /* =========================
    Server API helpers
    ========================= */
@@ -284,32 +334,7 @@ async function apiCallLeague(endpoint, options = {}) {
   }
   return response.json();
 }
-  const VALID_TABS = [
-  "announcements","activity","weekly","highestscorer","waivers","dues",
-   "transactions","drafts","rosters","powerrankings","settings","trading","polls" 
-];
-
-  const initialTabFromHash = () => {
-    const h = (window.location.hash || "").replace("#","").trim();
-    return VALID_TABS.includes(h) ? h : "activity";
-  };
-
-  const [active, setActive] = useState(initialTabFromHash);
-
-  useEffect(() => {
-    const onHash = () => {
-      const h = (window.location.hash || "").replace("#","").trim();
-      setActive(VALID_TABS.includes(h) ? h : "activity");
-    };
-    window.addEventListener("hashchange", onHash);
-    onHash();
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-
-  useEffect(() => {
-    const want = `#${active}`;
-    if (window.location.hash !== want) window.location.hash = want;
-  }, [active]);
+  
 
   // Server-side data state
   const [data, setData] = useState({
@@ -370,13 +395,6 @@ async function loadServerData() {
    };
   const logout = ()=>{ setIsAdmin(false); localStorage.removeItem(adminKey); };
 
-const switchLeague = () => {
-  // Clear URL parameter when switching leagues
-  const url = new URL(window.location);
-  url.searchParams.delete('league');
-  window.history.pushState({}, '', url);
-  onBackToSelection();
-};
 
 // ESPN config (replace the old useState)
 
@@ -881,6 +899,7 @@ async function loadOfficialReport(silent=false){
   settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}} btnPri={btnPri} btnSec={btnSec}/>,
   trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}} btnPri={btnPri} btnSec={btnSec}/>,
   polls: <PollsView {...{isAdmin, members:data.members, espn, config}} btnPri={btnPri} btnSec={btnSec}/>
+
 };
 
   return (
@@ -888,6 +907,7 @@ async function loadOfficialReport(silent=false){
     <IntroSplash selectedLeague={selectedLeague}/>
       <div className="container">
         <div className="card app-shell" style={{overflow:"auto"}}>
+        <MobileHeader config={config} onMenuToggle={toggleSidebar} />
           <aside
             className="sidebar"
             style={{
@@ -944,6 +964,7 @@ async function loadOfficialReport(silent=false){
     </>
   );
 }
+
 
 function posIdToName(id) {
   const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };

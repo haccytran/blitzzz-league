@@ -905,65 +905,120 @@ async function loadOfficialReport(silent=false){
   return (
   <>
     <IntroSplash selectedLeague={selectedLeague}/>
-      <div className="container">
-        <div className="card app-shell" style={{overflow:"auto"}}>
+    <div className="container">
+      <div className="card app-shell" style={{overflow:"auto"}}>
         <MobileHeader config={config} onMenuToggle={toggleSidebar} />
-          <aside
-            className="sidebar"
+        
+        {/* Sidebar overlay for mobile */}
+        <div 
+          className={`sidebar-overlay ${sidebarOpen ? 'open' : ''}`} 
+          onClick={closeSidebar}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 999,
+            display: sidebarOpen ? 'block' : 'none'
+          }}
+        />
+        
+        <aside
+          className={`sidebar ${sidebarOpen ? 'open' : ''}`}
+          style={{
+            padding: 20,
+            background: "linear-gradient(180deg, #0b2e4a 0%, #081a34 100%)",
+            color: "#e2e8f0",
+            // Mobile styles
+            position: sidebarOpen ? 'fixed' : 'relative',
+            top: sidebarOpen ? 0 : 'auto',
+            left: sidebarOpen ? 0 : 'auto',
+            right: sidebarOpen ? 'auto' : 'auto',
+            bottom: sidebarOpen ? 0 : 'auto',
+            zIndex: 1000,
+            transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+            transition: 'transform 0.3s ease-in-out',
+            width: sidebarOpen ? '280px' : 'auto',
+            // Desktop styles
+            '@media (min-width: 768px)': {
+              position: 'relative',
+              transform: 'none',
+              width: 'auto'
+            }
+          }}
+        >
+          {/* Close button for mobile */}
+          <button 
+            className="sidebar-close" 
+            onClick={closeSidebar}
             style={{
-              padding: 20,
-              background: "linear-gradient(180deg, #0b2e4a 0%, #081a34 100%)",
-              color: "#e2e8f0"
+              position: 'absolute',
+              top: 10,
+              right: 10,
+              background: 'transparent',
+              border: 'none',
+              color: '#e2e8f0',
+              fontSize: 24,
+              cursor: 'pointer',
+              display: sidebarOpen ? 'block' : 'none'
             }}
           >
-            <div className="brand">
-     <img src={config.logo} alt={`${config.name} Logo`} style={{width: 128, height: 128}} />
-     <div className="brand-title">{config.name} <span>Fantasy Football League</span></div>
-     
-     <button 
-       className="btn" 
-       onClick={switchLeague}
-       style={{
-         marginTop: 8,
-         fontSize: 12,
-         padding: "4px 12px",
-         background: "rgba(255, 255, 255, 0.1)",
-         color: "#e2e8f0",
-         border: "1px solid rgba(255, 255, 255, 0.2)",
-         borderRadius: 6
-       }}
-     >
-       ← Switch League
-     </button>
-   </div>
-            <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={setActive}/>
-{config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={setActive}/>}
-{config.id === 'sculpin' && <NavBtn id="highestscorer" label="🏆 Highest Scorer" active={active} onClick={setActive}/>}
-<NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={setActive}/> 
-            <NavBtn id="waivers" label="💵 Waivers" active={active} onClick={setActive}/>
-            <NavBtn id="dues" label="🧾 Dues" active={active} onClick={setActive}/>
-            <NavBtn id="transactions" label="📜 Transactions" active={active} onClick={setActive}/>
-            <NavBtn id="drafts" label="📋 Draft Recap" active={active} onClick={setActive}/>
-            <NavBtn id="rosters" label="📋 Rosters" active={active} onClick={setActive}/>
-            <NavBtn id="powerrankings" label="🏋️ Power Rankings" active={active} onClick={setActive}/>
-            <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={setActive}/>
-            <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={setActive}/>
-            <NavBtn id="polls" label="🗳️ Polls" active={active} onClick={setActive}/>
-            <div style={{marginTop:12}}>
-              {isAdmin
-                 ? <button className="btn btn-commish" onClick={logout}>Commissioner Log out</button>
-                 : <button className="btn btn-commish" onClick={login}>Commissioner Login</button>}
-            </div>
-          </aside>
-          <main style={{padding:24}}>
-            {views[active]}
-          </main>
-        </div>
+            ×
+          </button>
+          
+          <div className="brand">
+            <img src={config.logo} alt={`${config.name} Logo`} style={{width: 128, height: 128}} />
+            <div className="brand-title">{config.name} <span>Fantasy Football League</span></div>
+            
+            <button 
+              className="btn" 
+              onClick={switchLeague}
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                padding: "4px 12px",
+                background: "rgba(255, 255, 255, 0.1)",
+                color: "#e2e8f0",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+                borderRadius: 6
+              }}
+            >
+              ← Switch League
+            </button>
+          </div>
+          
+          {/* Navigation with mobile close functionality */}
+          <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          {config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
+          {config.id === 'sculpin' && <NavBtn id="highestscorer" label="🏆 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
+          <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> 
+          <NavBtn id="waivers" label="💵 Waivers" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="dues" label="🧾 Dues" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="transactions" label="📜 Transactions" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="drafts" label="📋 Draft Recap" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="rosters" label="📋 Rosters" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="powerrankings" label="🏋️ Power Rankings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="polls" label="🗳️ Polls" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          
+          <div style={{marginTop:12}}>
+            {isAdmin
+               ? <button className="btn btn-commish" onClick={logout}>Commissioner Log out</button>
+               : <button className="btn btn-commish" onClick={login}>Commissioner Login</button>}
+          </div>
+        </aside>
+        
+        <main style={{padding:24}}>
+          {views[active]}
+        </main>
       </div>
-      <SyncOverlay open={syncing} pct={syncPct} msg={syncMsg} />
-    </>
-  );
-}
+    </div>
+    <SyncOverlay open={syncing} pct={syncPct} msg={syncMsg} />
+  </>
+);
 
 
 function posIdToName(id) {

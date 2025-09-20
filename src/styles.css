@@ -52,8 +52,10 @@ body{
   padding: 12px 16px;
   background: #0f172a;
   color: #e2e8f0;
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 1000;
 }
 
@@ -759,8 +761,3 @@ body.blitzzz-league .sidebar .brand-title {
 }
 
 
-@media (max-width: 1023px) {
-  main {
-    padding-top: 24px;
-  }
-}

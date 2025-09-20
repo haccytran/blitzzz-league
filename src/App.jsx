@@ -1323,9 +1323,9 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div>
                       <h3 style={{ margin: 0 }}>
-                        {item.weekLabel || "Week"}
-                        {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
-                      </h3>
+  {item.weekLabel || "Week"}
+  {item.title ? <span className="weekly-challenge-title" style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
+</h3>
                     </div>
                     {isAdmin && (
                       <div style={{ display: "flex", gap: 8 }}>

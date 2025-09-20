@@ -2771,27 +2771,113 @@ byWeek.forEach((transactions, week) => {
                 </div>
 
                 {/* Mobile cards */}
-                <div className="transactions-mobile">
-                  {rows.map((r, i) => (
-                    <div key={i} className="card" style={{ padding: 8, marginBottom: 6 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                        <div style={{ fontWeight: "bold", fontSize: 14 }}>{r.team}</div>
-                        <div style={{ fontSize: 12, color: "#64748b" }}>{r.date}</div>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-                          {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
-                        </div>
-                        <div style={{ fontSize: 12, color: "#64748b" }}>{r.method || "—"}</div>
-                      </div>
-                    </div>
-                  ))}
-                  {rows.length === 0 && (
-                    <div className="card" style={{ padding: 12, color: "#64748b" }}>
-                      No transactions in this week.
-                    </div>
-                  )}
+<div className="transactions-mobile">
+  {(() => {
+    const combinedRows = [];
+    let pairCounter = 0;
+    
+    // Create working copy to avoid mutating original
+    const workingRows = [...rows];
+    
+    for (let i = 0; i < workingRows.length; i++) {
+      const row = workingRows[i];
+      
+      if (row.action === "ADD") {
+        // Look for matching DROP from same team on same date
+        const matchingDropIndex = workingRows.findIndex((r, idx) => 
+          idx > i && 
+          r.action === "DROP" && 
+          r.team === row.team && 
+          r.date === row.date
+        );
+        
+        if (matchingDropIndex !== -1) {
+          // Found a pair - combine them
+          const dropRow = workingRows[matchingDropIndex];
+          combinedRows.push({
+            ...row,
+            isPair: true,
+            dropPlayer: dropRow.player || (dropRow.playerId ? `#${dropRow.playerId}` : "—"),
+            pairNumber: pairCounter
+          });
+          
+          // Remove the drop from working rows
+          workingRows.splice(matchingDropIndex, 1);
+          pairCounter++;
+        } else {
+          // Solo add
+          combinedRows.push({
+            ...row,
+            isPair: false,
+            pairNumber: pairCounter
+          });
+          pairCounter++;
+        }
+      } else {
+        // Solo drop or other action
+        combinedRows.push({
+          ...row,
+          isPair: false,
+          pairNumber: pairCounter
+        });
+        pairCounter++;
+      }
+    }
+    
+    return combinedRows.map((r, i) => {
+      const isShaded = r.pairNumber % 2 === 0;
+      const backgroundColor = isShaded ? "#fffbeb" : "transparent";
+      
+      return (
+        <div key={i} className="card" style={{ padding: 8, marginBottom: 6, backgroundColor }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <div style={{ fontWeight: "bold", fontSize: 14 }}>{r.team}</div>
+            <div style={{ fontSize: 12, color: "#64748b" }}>
+              {(() => {
+                const date = new Date(r.date);
+                const timeString = date.toLocaleTimeString('en-US', { 
+                  hour12: true, 
+                  hour: 'numeric', 
+                  minute: '2-digit', 
+                  second: '2-digit' 
+                });
+                const dateString = date.toLocaleDateString('en-US', {
+                  month: 'numeric',
+                  day: 'numeric',
+                  year: '2-digit'
+                });
+                const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
+                return `${dateString} ${formattedTime}`;
+              })()}
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontWeight: 600 }}>
+              {r.isPair ? (
+                <div>
+                  <div style={{ color: "#16a34a" }}>+{r.player || (r.playerId ? `#${r.playerId}` : "—")}</div>
+                  <div style={{ color: "#dc2626" }}>-{r.dropPlayer}</div>
                 </div>
+              ) : (
+                <span style={{ color: r.action === "ADD" ? "#16a34a" : "#dc2626" }}>
+                  {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: r.method === "Waivers" ? "#f97316" : r.method === "Free Agent" ? "#22c55e" : "#64748b" }}>
+              {r.method || "—"}
+            </div>
+          </div>
+        </div>
+      );
+    });
+  })()}
+  {rows.length === 0 && (
+    <div className="card" style={{ padding: 12, color: "#64748b" }}>
+      No transactions in this week.
+    </div>
+  )}
+</div>
               </div>
             )}
           </div>

@@ -62,10 +62,10 @@ body{
 /* Add padding to main content so it doesn't hide behind fixed header */
 @media (max-width: 1023px) {
   main {
-    padding-top: 70px;
+    padding-top: 80px;
   }
-}
-.mobile-logo {
+
+}.mobile-logo {
   display: flex;
   align-items: center;
   gap: 8px;

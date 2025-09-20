@@ -815,18 +815,20 @@ body.sculpin-league .weekly-adds-team {
   color: #433329 !important;
 }
 
-@media (max-width: 767px) {
-  .activity-desktop {
-    display: none !important;
-  }
-  
-  .activity-mobile {
-    display: block !important;
-  }
+/* Blitzzz League Activity Colors */
+body.blitzzz-league .activity-team-name {
+  color: #0073cf !important;
 }
 
-@media (min-width: 768px) {
-  .activity-mobile {
-    display: none !important;
-  }
+body.blitzzz-league .activity-player-name {
+  color: #ffb612 !important;
+}
+
+/* Sculpin League Activity Colors */
+body.sculpin-league .activity-team-name {
+  color: #FFC425 !important;
+}
+
+body.sculpin-league .activity-player-name {
+  color: #433329 !important;
 }

@@ -62,7 +62,7 @@ body{
 /* Add padding to main content so it doesn't hide behind fixed header */
 @media (max-width: 1023px) {
   main {
-    padding-top: 40px;
+    padding-top: 55px;
   }
 
 }.mobile-logo {

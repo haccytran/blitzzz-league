@@ -62,7 +62,7 @@ body{
 /* Add padding to main content so it doesn't hide behind fixed header */
 @media (max-width: 1023px) {
   main {
-    padding-top: 70px;
+    padding-top: 40px;
   }
 
 }.mobile-logo {
@@ -763,7 +763,7 @@ body.blitzzz-league .sidebar .brand-title {
 /* Force padding on mobile for fixed header */
 @media (max-width: 1023px) {
   .app-shell main {
-    padding-top: 70px !important;
+    padding-top: 40px !important;
   }
   
   /* Also add padding to the container */

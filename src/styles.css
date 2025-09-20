@@ -759,3 +759,15 @@ body.blitzzz-league .sidebar .brand-title {
     display: none;
   }
 }
+
+/* Force padding on mobile for fixed header */
+@media (max-width: 1023px) {
+  .app-shell main {
+    padding-top: 80px !important;
+  }
+  
+  /* Also add padding to the container */
+  .container {
+    padding-top: 20px;
+  }
+}

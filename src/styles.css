@@ -418,6 +418,23 @@ body.sculpin-league button[style*="#0ea5e9"] {
   color: #2F241D !important;
 }
 
+body.sculpin-league .brand-title span {
+  color: #FFC425 !important;
+}
+
+body.sculpin-league .navlink {
+  color: #FFC425 !important;
+}
+
+body.sculpin-league .btn-commish {
+  background: #FFC425 !important;
+  color: #2F241D !important;
+}
+
+body.sculpin-league .btn-commish:hover {
+  background: #FFD700 !important;
+  color: #2F241D !important;
+}
 /* Blitzzz League */
 body.blitzzz-league {
   --primary: #0080C6;
@@ -765,4 +782,30 @@ body.blitzzz-league .sidebar .brand-title {
 body.blitzzz-league .weekly-challenge-title {
   font-weight: bold;
   color: #002244;
+}
+
+@media (max-width: 767px) {
+  .week-navigation button {
+    font-size: 12px;
+    padding: 6px 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 80px;
+  }
+  
+  .week-navigation {
+    gap: 4px;
+  }
+}
+
+/* League-specific team name colors in waivers */
+body.blitzzz-league .weekly-adds-team {
+  font-weight: bold;
+  color: #0080C6 !important;
+}
+
+body.sculpin-league .weekly-adds-team {
+  font-weight: bold;
+  color: #433329 !important;
 }

@@ -249,11 +249,15 @@ function MobileHeader({ config, onMenuToggle }) {
     <div className="mobile-header">
       <div className="mobile-logo">
         <img src={config.logo} alt={`${config.name} Logo`} />
-        <div className="mobile-league-name">{config.name}</div>
+        <div className="mobile-league-name">
+  {config.id === 'blitzzz' ? 'Blitzzz Fantasy Football' : 
+   config.id === 'sculpin' ? 'Sculpin That Ass Fantasy Football' : 
+   `${config.name} Fantasy Football`}
+</div>
       </div>
       <button className="hamburger-btn" onClick={onMenuToggle}>
-        ☰
-      </button>
+  ☰ MENU
+</button>
     </div>
   );
 }
@@ -2526,10 +2530,10 @@ function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
           <option value="DROP">DROP</option>
         </select>
         <select className="input" value={method} onChange={e => setMethod(e.target.value)}>
-  <option value="">All methods</option>
-  <option value="Waivers">Waivers</option>
-  <option value="Free Agent">Free Agents</option>
-</select>   
+          <option value="">All methods</option>
+          <option value="Waivers">Waivers</option>
+          <option value="Free Agent">Free Agents</option>
+        </select>   
         <input className="input" placeholder="Search player/team…" value={q} onChange={e => setQ(e.target.value)} />
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set(weeksSorted))}>Expand all</button>
         <button className="btn" style={btnSec} onClick={() => setOpenWeeks(new Set())}>Collapse all</button>
@@ -2556,31 +2560,57 @@ function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
             </div>
             {open && (
               <div style={{ marginTop: 8, overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Date (PT)</th>
-                      <th style={th}>Team</th>
-                      <th style={th}>Player</th>
-                      <th style={th}>Method</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r, i) => (
-                      <tr key={i}>
-                        <td style={td}>{r.date}</td>
-                        <td style={td}>{r.team}</td>
-                        <td style={{ ...td, color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-                          {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
-                        </td>
-                        <td style={td}>{r.method || "—"}</td>
+                {/* Desktop table */}
+                <div className="transactions-table">
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>Date (PT)</th>
+                        <th style={th}>Team</th>
+                        <th style={th}>Player</th>
+                        <th style={th}>Method</th>
                       </tr>
-                    ))}
-                    {rows.length === 0 && (
-                      <tr><td style={td} colSpan={4}>&nbsp;No transactions in this week.</td></tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i}>
+                          <td style={td}>{r.date}</td>
+                          <td style={td}>{r.team}</td>
+                          <td style={{ ...td, color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                            {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
+                          </td>
+                          <td style={td}>{r.method || "—"}</td>
+                        </tr>
+                      ))}
+                      {rows.length === 0 && (
+                        <tr><td style={td} colSpan={4}>&nbsp;No transactions in this week.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile cards */}
+                <div className="transactions-mobile">
+                  {rows.map((r, i) => (
+                    <div key={i} className="card" style={{ padding: 8, marginBottom: 6 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <div style={{ fontWeight: "bold", fontSize: 14 }}>{r.team}</div>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>{r.date}</div>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                          {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>{r.method || "—"}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {rows.length === 0 && (
+                    <div className="card" style={{ padding: 12, color: "#64748b" }}>
+                      No transactions in this week.
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -3851,36 +3881,54 @@ if (teamData.teams) {
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         
         {rankings.length > 0 ? (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                  <th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
-                  <th style={{ padding: "12px 8px", textAlign: "left" }}>Team Name</th>
-                  <th style={{ padding: "12px 8px", textAlign: "right" }}>Power Score</th>
-                  <th style={{ padding: "12px 8px", textAlign: "center" }}>Wins</th>
-                  <th style={{ padding: "12px 8px", textAlign: "center" }}>Losses</th>
-                  <th style={{ padding: "12px 8px", textAlign: "center" }}>Ties</th>
-                  <th style={{ padding: "12px 8px", textAlign: "right" }}>Total Points</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rankings.map((team, index) => (
-                  <tr key={team.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{index + 1}</td>
-                    <td style={{ padding: "12px 8px" }}>{team.name}</td>
-                    <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold", color: "#16a34a" }}>
-                      {team.powerScore}
-                    </td>
-                    <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.wins}</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.losses}</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.ties}</td>
-                    <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPoints}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+  <>
+    {/* Desktop table */}
+    <div className="power-rankings-table" style={{ overflowX: "auto" }}>
+  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <thead>
+      <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+        <th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
+        <th style={{ padding: "12px 8px", textAlign: "left" }}>Team Name</th>
+        <th style={{ padding: "12px 8px", textAlign: "right" }}>Power Score</th>
+        <th style={{ padding: "12px 8px", textAlign: "center" }}>Wins</th>
+        <th style={{ padding: "12px 8px", textAlign: "center" }}>Losses</th>
+        <th style={{ padding: "12px 8px", textAlign: "center" }}>Ties</th>
+        <th style={{ padding: "12px 8px", textAlign: "right" }}>Total Points</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rankings.map((team, index) => (
+        <tr key={team.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
+          <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{index + 1}</td>
+          <td style={{ padding: "12px 8px" }}>{team.name}</td>
+          <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold", color: "#16a34a" }}>
+            {team.powerScore}
+          </td>
+          <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.wins}</td>
+          <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.losses}</td>
+          <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.ties}</td>
+          <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPoints}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
           </div>
+
+          {/* Mobile cards */}
+          <div className="power-rankings-mobile">
+            {rankings.map((team, index) => (
+              <div key={team.name} className="card" style={{ padding: 12, marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <div style={{ fontWeight: "bold", fontSize: 16 }}>#{index + 1} {team.name}</div>
+                  <div style={{ fontWeight: "bold", color: "#16a34a" }}>{team.powerScore}</div>
+                </div>
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  {team.wins}W-{team.losses}L{team.ties > 0 ? `-${team.ties}T` : ''} • {team.totalPoints} pts
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
         ) : !loading && !error && (
           <div style={{ color: "#64748b", marginTop: 8 }}>
             No data available yet.

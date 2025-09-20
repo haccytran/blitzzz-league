@@ -52,10 +52,8 @@ body{
   padding: 12px 16px;
   background: #0f172a;
   color: #e2e8f0;
-  position: fixed;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
   z-index: 1000;
 }
 
@@ -760,14 +758,9 @@ body.blitzzz-league .sidebar .brand-title {
   }
 }
 
-/* Force padding on mobile for fixed header */
+
 @media (max-width: 1023px) {
-  .app-shell main {
-    padding-top: 40px !important;
-  }
-  
-  /* Also add padding to the container */
-  .container {
-    padding-top: 20px;
+  main {
+    padding-top: 24px;
   }
 }

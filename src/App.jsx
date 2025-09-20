@@ -1005,7 +1005,7 @@ async function loadOfficialReport(silent=false){
           </div>
         </aside>
         
-        <main style={{padding: 24, paddingTop: 70}}>
+        <main style={{padding: 24, paddingTop: 55}}>
           {views[active]}
         </main>
       </div>

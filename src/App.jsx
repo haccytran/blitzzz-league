@@ -3570,31 +3570,58 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
             {waiversThisWeek.length > 0 ? waiversThisWeek
   .sort((a, b) => new Date(b.date) - new Date(a.date))
   .map((move, index) => (
-  <li key={index} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:13, whiteSpace:"nowrap", alignItems:"center"}}>
-  <span style={{overflow:"hidden", textOverflow:"ellipsis", minWidth:0}}>
-    <b>{move.team}</b> added <b>{move.player}</b> 
-    <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
-  </span>
-  <span style={{color:"#64748b", fontSize:"12px", flexShrink:0, marginLeft:"8px"}}>
-    {(() => {
-      // Format the date to have lowercase am/pm and no space
-      const date = new Date(move.date);
-      const timeString = date.toLocaleTimeString('en-US', { 
-        hour12: true, 
-        hour: 'numeric', 
-        minute: '2-digit', 
-        second: '2-digit' 
-      });
-      const dateString = date.toLocaleDateString('en-US', {
-        month: 'numeric',
-        day: 'numeric',
-        year: '2-digit'
-      });
-      // Replace AM/PM with lowercase and remove space
-      const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
-      return `${dateString} ${formattedTime}`;
-    })()}
-  </span>
+  <li key={index} style={{padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:13}}>
+  {/* Desktop layout */}
+  <div className="activity-desktop" style={{display:"flex",justifyContent:"space-between", whiteSpace:"nowrap", alignItems:"center"}}>
+    <span style={{overflow:"hidden", textOverflow:"ellipsis", minWidth:0}}>
+      <b>{move.team}</b> added <b>{move.player}</b> 
+      <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
+    </span>
+    <span style={{color:"#64748b", fontSize:"12px", flexShrink:0, marginLeft:"8px"}}>
+      {(() => {
+        const date = new Date(move.date);
+        const timeString = date.toLocaleTimeString('en-US', { 
+          hour12: true, 
+          hour: 'numeric', 
+          minute: '2-digit', 
+          second: '2-digit' 
+        });
+        const dateString = date.toLocaleDateString('en-US', {
+          month: 'numeric',
+          day: 'numeric',
+          year: '2-digit'
+        });
+        const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
+        return `${dateString} ${formattedTime}`;
+      })()}
+    </span>
+  </div>
+  
+  {/* Mobile layout */}
+  <div className="activity-mobile" style={{display:"none"}}>
+    <div style={{marginBottom:"4px"}}>
+      <b>{move.team}</b> added <b>{move.player}</b> 
+      <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
+    </div>
+    <div style={{textAlign:"right", color:"#64748b", fontSize:"12px"}}>
+      {(() => {
+        const date = new Date(move.date);
+        const timeString = date.toLocaleTimeString('en-US', { 
+          hour12: true, 
+          hour: 'numeric', 
+          minute: '2-digit', 
+          second: '2-digit' 
+        });
+        const dateString = date.toLocaleDateString('en-US', {
+          month: 'numeric',
+          day: 'numeric',
+          year: '2-digit'
+        });
+        const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
+        return `${dateString} ${formattedTime}`;
+      })()}
+    </div>
+  </div>
 </li>
             )) : (
               <p style={{color:"#64748b"}}>No activity this week.</p>
@@ -4697,13 +4724,15 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear, btnPri, btnSe
   const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
   
   return (
-    <div className="week-navigation" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <button type="button" className="btn" style={btnSec} aria-label="Previous week" onClick={() => go(-1)}>◀</button>
+  <div className="week-navigation" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <button type="button" className="btn" style={btnSec} aria-label="Previous week" onClick={() => go(-1)}>◀</button>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       <span style={{ fontSize: 14, color: "#334155", minWidth: 170, textAlign: "center" }}>{label}</span>
-      <button type="button" className="btn" style={btnSec} aria-label="Next week" onClick={() => go(1)}>▶</button>
-      <button type="button" className="btn" style={btnSec} onClick={nowJump}>This Week</button>
+      <button type="button" className="btn week-now-btn" style={btnSec} onClick={nowJump}>This Week</button>
     </div>
-  );
+    <button type="button" className="btn" style={btnSec} aria-label="Next week" onClick={() => go(1)}>▶</button>
+  </div>
+);
 }
 
 // put near other helpers

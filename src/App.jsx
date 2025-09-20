@@ -1149,18 +1149,59 @@ async function loadReport() {
         
         console.log("Recent moves found:", recentMoves.length);
         
-        const formattedActivities = recentMoves
-          .sort((a, b) => new Date(b.date) - new Date(a.date))
-          .map(move => ({
-            date: new Date(move.date).toLocaleDateString(),
-            team: move.team,
-            player: move.player,
-            action: move.action === "ADD" ? "ADDED" : "DROPPED",
-            week: move.week,
-            isDraft: move.week <= 0
-          }));
-        
-        setActivities(formattedActivities);
+        // Group moves by team and date, then pair adds with drops
+const groupedMoves = {};
+recentMoves.forEach(move => {
+  const key = `${move.team}-${move.date}`;
+  if (!groupedMoves[key]) {
+    groupedMoves[key] = { adds: [], drops: [], team: move.team, date: move.date, week: move.week };
+  }
+  if (move.action === "ADD") {
+    groupedMoves[key].adds.push(move);
+  } else {
+    groupedMoves[key].drops.push(move);
+  }
+});
+
+// Create paired activities
+const pairedActivities = [];
+Object.values(groupedMoves).forEach(group => {
+  const maxPairs = Math.max(group.adds.length, group.drops.length);
+  
+  for (let i = 0; i < maxPairs; i++) {
+    const add = group.adds[i];
+    const drop = group.drops[i];
+    
+    if (add) {
+      pairedActivities.push({
+        date: new Date(group.date).toLocaleDateString(),
+        team: group.team,
+        player: add.player,
+        action: "ADDED",
+        week: group.week,
+        isDraft: group.week <= 0,
+        isPair: !!drop
+      });
+    }
+    
+    if (drop) {
+      pairedActivities.push({
+        date: new Date(group.date).toLocaleDateString(),
+        team: group.team,
+        player: drop.player,
+        action: "DROPPED",
+        week: group.week,
+        isDraft: group.week <= 0,
+        isPair: !!add
+      });
+    }
+  }
+});
+
+// Sort by date (newest first)
+pairedActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+setActivities(pairedActivities);
       }
     } else {
       setError("No recent transactions snapshot available. Update the official snapshot first.");
@@ -1192,27 +1233,66 @@ async function loadReport() {
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         
         {activities.length > 0 ? (
-          <div style={{ marginTop: 12 }}>
-            {activities.map((activity, i) => (
-              <div key={i} style={{ 
-  padding: "8px 0", 
-  borderBottom: "1px solid #e2e8f0",
-  display: "flex",
-  justifyContent: "space-between",
-  fontSize: 14,
-  fontStyle: activity.isDraft ? "italic" : "normal",
-  opacity: activity.isDraft ? 0.8 : 1,
-  color: activity.action === "ADDED" ? "#16a34a" : "#dc2626" // Green for adds, red for drops
-}}>
-                <span>
-                  <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
-                  {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
-                </span>
-                <span style={{ color: "#64748b" }}>{activity.date}</span>
-              </div>
-            ))}
+  <div style={{ marginTop: 12 }}>
+    {(() => {
+      const pairedActivities = [];
+      let pairCounter = 0;
+      
+      // Process activities to assign pair numbers
+      for (let i = 0; i < activities.length; i++) {
+        const activity = activities[i];
+        
+        if (activity.action === "ADDED") {
+          // Check if next activity is a DROP from same team on same date
+          const nextActivity = activities[i + 1];
+          if (nextActivity && 
+              nextActivity.action === "DROPPED" && 
+              nextActivity.team === activity.team && 
+              nextActivity.date === activity.date) {
+            // This is a pair
+            pairedActivities.push({ ...activity, pairNumber: pairCounter });
+            pairedActivities.push({ ...nextActivity, pairNumber: pairCounter });
+            pairCounter++;
+            i++; // Skip the next activity since we processed it
+          } else {
+            // Solo add
+            pairedActivities.push({ ...activity, pairNumber: pairCounter });
+            pairCounter++;
+          }
+        } else {
+          // Solo drop (ADD would have been handled above if it was a pair)
+          pairedActivities.push({ ...activity, pairNumber: pairCounter });
+          pairCounter++;
+        }
+      }
+      
+      return pairedActivities.map((activity, index) => {
+        const isShaded = activity.pairNumber % 2 === 0;
+        const backgroundColor = isShaded ? "#fffbeb" : "transparent";
+        
+        return (
+          <div key={index} style={{ 
+            padding: "8px", 
+            borderBottom: "1px solid #e2e8f0",
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 14,
+            fontStyle: activity.isDraft ? "italic" : "normal",
+            opacity: activity.isDraft ? 0.8 : 1,
+            color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
+            backgroundColor: backgroundColor
+          }}>
+            <span>
+              <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
+              {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
+            </span>
+            <span style={{ color: "#64748b" }}>{activity.date}</span>
           </div>
-        ) : !loading && !error && (
+        );
+      });
+    })()}
+  </div>
+) : !loading && !error && (
           <div style={{ color: "#64748b", marginTop: 8 }}>
             No recent activity in the last 7 days.
           </div>
@@ -1324,7 +1404,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                     <div>
                       <h3 style={{ margin: 0 }}>
   {item.weekLabel || "Week"}
-  {item.title ? <span style={{ fontWeight: "bold", color: "#0073cf" }}> — {item.title}</span> : null}
+  {item.title ? <span style={{ fontWeight: "bold", color: "#ffb612" }}> — {item.title}</span> : null}
 </h3>
                     </div>
                     {isAdmin && (
@@ -2267,13 +2347,15 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
           <tr>
             <th style={th}>Paid</th>
             <th style={th}>Team</th>
-            <th style={th}>Adds</th>
-            <th style={th}>Owes</th>
+            <th style={{...th, color: "#dc2626"}}>Adds</th>
+<th style={{...th, color: "#16a34a"}}>Owes</th>
           </tr>
         </thead>
         <tbody>
-          {report.totalsRows.map(row => (
-            <tr key={row.name} style={{ opacity: currentPayments[row.name] ? 0.6 : 1 }}>
+          {report.totalsRows
+  .sort((a, b) => b.owes - a.owes)
+  .map(row => (
+  <tr key={row.name} style={{ opacity: currentPayments[row.name] ? 0.6 : 1 }}>
               <td style={td}>
                 <input
                   type="checkbox"
@@ -2289,7 +2371,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
                 {row.name}
               </td>
               <td style={td}>{row.adds}</td>
-              <td style={td}>${row.owes}</td>
+              <td style={{...td, color: row.owes > 0 ? "#16a34a" : "#000000", fontWeight: row.owes > 0 ? "bold" : "normal"}}>${row.owes}</td>
             </tr>
           ))}
         </tbody>
@@ -2398,7 +2480,9 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
     {/* Rest of your dues view stays the same */}
     <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
       <h3 style={{ marginTop: 0 }}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
-      {report.weekRows.map(w => (
+      {report.weekRows
+  .sort((a, b) => b.week - a.week)
+  .map(w => (
         <div key={w.week} style={{ marginBottom: 12 }}>
           <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} — {w.range}</div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2406,17 +2490,19 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
               <tr>
                 <th style={th}>Team</th>
                 <th style={th}>Adds</th>
-                <th style={th}>Owes</th>
+<th style={th}>Owes</th>
               </tr>
             </thead>
             <tbody>
-              {w.entries.map(e => (
-                <tr key={e.name}>
-                  <td style={{ ...td, whiteSpace: "normal" }}>{e.name}</td>
-                  <td style={td}>{e.count}</td>
-                  <td style={td}>${e.owes}</td>
-                </tr>
-              ))}
+              {w.entries
+  .sort((a, b) => b.count - a.count)
+  .map(e => (
+  <tr key={e.name}>
+    <td style={{ ...td, whiteSpace: "normal" }}>{e.name}</td>
+    <td style={{...td, color: e.count >= 3 ? "#dc2626" : "#000000", fontWeight: e.count >= 3 ? "bold" : "normal"}}>{e.count}</td>
+<td style={{...td, color: e.owes > 0 ? "#16a34a" : "#000000", fontWeight: e.owes > 0 ? "bold" : "normal"}}>${e.owes}</td>
+  </tr>
+))}
             </tbody>
           </table>
         </div>
@@ -2460,9 +2546,7 @@ function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
         (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
       );
 
-      // Include week 0 in the weeks list
-      const weeksSorted = Array.from(new Set(filtered.map(r => r.week)))
-        .sort((a, b) => a - b);
+      
 
       setOpenWeeks(new Set(weeksSorted));
     }
@@ -2492,9 +2576,6 @@ function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
     (!q || (r.player?.toLowerCase().includes(q.toLowerCase()) || r.team.toLowerCase().includes(q.toLowerCase())))
   );
 
-  // Include week 0 in the weeks list
-  const weeksSorted = Array.from(new Set(filtered.map(r => r.week)))
-    .sort((a, b) => a - b);
 
   const rangeByWeek = {};
   for (const r of filtered) {
@@ -2510,10 +2591,25 @@ function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
 
   const byWeek = new Map();
   for (const r of filtered) {
-    const w = r.week;
-    if (!byWeek.has(w)) byWeek.set(w, []);
-    byWeek.get(w).push({ ...r, week: w });
-  }
+  const w = r.week;
+  if (!byWeek.has(w)) byWeek.set(w, []);
+  byWeek.get(w).push({ ...r, week: w });
+}
+
+// Include week 0 in the weeks list
+   const weeksSorted = Array.from(new Set(filtered.map(r => r.week)))
+  .sort((a, b) => {
+    // Put Week 0 and negative weeks at the end
+    if (a <= 0 && b > 0) return 1;
+    if (b <= 0 && a > 0) return -1;
+    // For normal weeks (1, 2, 3, etc.), sort highest first
+    return b - a;
+  });
+
+// Sort transactions within each week by oldest first
+byWeek.forEach((transactions, week) => {
+  transactions.sort((a, b) => new Date(a.date) - new Date(b.date));
+});
 
   const toggleWeek = (w) => setOpenWeeks(s => { const n = new Set(s); n.has(w) ? n.delete(w) : n.add(w); return n; });
 
@@ -2565,23 +2661,80 @@ function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
-                        <th style={th}>Date (PT)</th>
+                        <th style={th}>Timestamp</th>
                         <th style={th}>Team</th>
                         <th style={th}>Player</th>
                         <th style={th}>Method</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r, i) => (
-                        <tr key={i}>
-                          <td style={td}>{r.date}</td>
-                          <td style={td}>{r.team}</td>
-                          <td style={{ ...td, color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-                            {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
-                          </td>
-                          <td style={td}>{r.method || "—"}</td>
-                        </tr>
-                      ))}
+                      {(() => {
+  const pairedRows = [];
+  let pairCounter = 0;
+  
+  // Process rows to assign pair numbers
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    
+    if (row.action === "ADD") {
+      // Check if next row is a DROP from same team on same date
+      const nextRow = rows[i + 1];
+      if (nextRow && 
+          nextRow.action === "DROP" && 
+          nextRow.team === row.team && 
+          nextRow.date === row.date) {
+        // This is a pair
+        pairedRows.push({ ...row, pairNumber: pairCounter });
+        pairedRows.push({ ...nextRow, pairNumber: pairCounter });
+        pairCounter++;
+        i++; // Skip the next row since we processed it
+      } else {
+        // Solo add
+        pairedRows.push({ ...row, pairNumber: pairCounter });
+        pairCounter++;
+      }
+    } else {
+      // Solo drop
+      pairedRows.push({ ...row, pairNumber: pairCounter });
+      pairCounter++;
+    }
+  }
+  
+  return pairedRows.map((r, i) => {
+    const isShaded = r.pairNumber % 2 === 0;
+    const backgroundColor = isShaded ? "#fffbeb" : "transparent";
+    
+    return (
+      <tr key={i} style={{ backgroundColor }}>
+        <td style={{...td, fontSize: "12px"}}>
+  {(() => {
+    // Format the date to have lowercase am/pm and no space
+    const date = new Date(r.date);
+    const timeString = date.toLocaleTimeString('en-US', { 
+      hour12: true, 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      second: '2-digit' 
+    });
+    const dateString = date.toLocaleDateString('en-US', {
+      month: 'numeric',
+      day: 'numeric',
+      year: '2-digit'
+    });
+    // Replace AM/PM with lowercase and remove space
+    const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
+    return `${dateString} ${formattedTime}`;
+  })()}
+</td>
+        <td style={td}>{r.team}</td>
+        <td style={{ ...td, color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+          {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
+        </td>
+        <td style={{...td, color: r.method === "Waivers" ? "#f97316" : r.method === "Free Agent" ? "#22c55e" : "#000000"}}>{r.method || "—"}</td>
+      </tr>
+    );
+  });
+})()}
                       {rows.length === 0 && (
                         <tr><td style={td} colSpan={4}>&nbsp;No transactions in this week.</td></tr>
                       )}
@@ -3381,17 +3534,19 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
     }>
       <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
         <div className="card" style={{padding:16}}>
-          <h3>League Members (from ESPN data)</h3>
+          <h3>Weekly Adds Counter</h3>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
             {espnReport?.totalsRows ? (
-              espnReport.totalsRows.map(row => (
-                <li key={row.name} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-                  <span>{row.name}</span>
-                  <span style={{fontSize:14,color:"#334155"}}>
-                    Adds (this week): {waiverCounts[row.name] || 0} • Owes: ${waiverOwed[row.name] || 0}
-                  </span>
-                </li>
-              ))
+  espnReport.totalsRows
+    .sort((a, b) => (waiverCounts[b.name] || 0) - (waiverCounts[a.name] || 0))
+    .map(row => (
+    <li key={row.name} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
+      <span className="weekly-adds-team" style={{whiteSpace: "nowrap", fontSize: "13px"}}>{row.name}</span>
+      <span style={{fontSize:14,color:"#334155", whiteSpace: "nowrap"}}>
+  <b>Adds:</b> <span style={{color: (waiverCounts[row.name] || 0) >= 3 ? "#dc2626" : "#000000"}}>{waiverCounts[row.name] || 0}</span> • <b>Owes:</b> <span style={{color: (waiverOwed[row.name] || 0) >= 5 ? "#16a34a" : "#000000"}}>${waiverOwed[row.name] || 0}</span>
+</span>
+    </li>
+  ))
             ) : (
               data.members.map(m => (
                 <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
@@ -3412,14 +3567,35 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
 
           <h4>Transactions (selected week)</h4>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {waiversThisWeek.length > 0 ? waiversThisWeek.map((move, index) => (
-              <li key={index} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
-                <span>
-                  <b>{move.team}</b> picked up <b>{move.player}</b> 
-                  <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
-                </span>
-                <span style={{color:"#64748b"}}>{move.date}</span>
-              </li>
+            {waiversThisWeek.length > 0 ? waiversThisWeek
+  .sort((a, b) => new Date(b.date) - new Date(a.date))
+  .map((move, index) => (
+  <li key={index} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:13, whiteSpace:"nowrap", alignItems:"center"}}>
+  <span style={{overflow:"hidden", textOverflow:"ellipsis", minWidth:0}}>
+    <b>{move.team}</b> added <b>{move.player}</b> 
+    <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
+  </span>
+  <span style={{color:"#64748b", fontSize:"12px", flexShrink:0, marginLeft:"8px"}}>
+    {(() => {
+      // Format the date to have lowercase am/pm and no space
+      const date = new Date(move.date);
+      const timeString = date.toLocaleTimeString('en-US', { 
+        hour12: true, 
+        hour: 'numeric', 
+        minute: '2-digit', 
+        second: '2-digit' 
+      });
+      const dateString = date.toLocaleDateString('en-US', {
+        month: 'numeric',
+        day: 'numeric',
+        year: '2-digit'
+      });
+      // Replace AM/PM with lowercase and remove space
+      const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
+      return `${dateString} ${formattedTime}`;
+    })()}
+  </span>
+</li>
             )) : (
               <p style={{color:"#64748b"}}>No activity this week.</p>
             )}
@@ -3874,7 +4050,7 @@ if (teamData.teams) {
       <div className="card" style={{ padding: 16 }}>
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
-            Formula: (Points Scored × 2) + (Points Scored × Winning %) + (Points Scored × Winning % if played vs median)
+            Power Score = (Points Scored × 2) + (Points Scored × Winning %) + (Points Scored × Winning % if played vs median)
           </div>
         </div>
 
@@ -4521,7 +4697,7 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear, btnPri, btnSe
   const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
   
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div className="week-navigation" style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <button type="button" className="btn" style={btnSec} aria-label="Previous week" onClick={() => go(-1)}>◀</button>
       <span style={{ fontSize: 14, color: "#334155", minWidth: 170, textAlign: "center" }}>{label}</span>
       <button type="button" className="btn" style={btnSec} aria-label="Next week" onClick={() => go(1)}>▶</button>

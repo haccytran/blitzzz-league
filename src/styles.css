@@ -797,8 +797,13 @@ body.blitzzz-league .weekly-challenge-title {
   .week-navigation {
     gap: 4px;
   }
+  
+  .week-now-btn {
+    font-size: 10px !important;
+    padding: 4px 6px !important;
+    max-width: 60px !important;
+  }
 }
-
 /* League-specific team name colors in waivers */
 body.blitzzz-league .weekly-adds-team {
   font-weight: bold;
@@ -808,4 +813,20 @@ body.blitzzz-league .weekly-adds-team {
 body.sculpin-league .weekly-adds-team {
   font-weight: bold;
   color: #433329 !important;
+}
+
+@media (max-width: 767px) {
+  .activity-desktop {
+    display: none !important;
+  }
+  
+  .activity-mobile {
+    display: block !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .activity-mobile {
+    display: none !important;
+  }
 }

@@ -761,3 +761,8 @@ body.blitzzz-league .sidebar .brand-title {
 }
 
 
+/* Blitzzz league weekly challenge title styling */
+body.blitzzz-league .weekly-challenge-title {
+  font-weight: bold;
+  color: #002244;
+}

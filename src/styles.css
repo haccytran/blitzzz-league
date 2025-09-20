@@ -52,11 +52,19 @@ body{
   padding: 12px 16px;
   background: #0f172a;
   color: #e2e8f0;
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 1000;
 }
 
+/* Add padding to main content so it doesn't hide behind fixed header */
+@media (max-width: 1023px) {
+  main {
+    padding-top: 70px;
+  }
+}
 .mobile-logo {
   display: flex;
   align-items: center;
@@ -714,5 +722,40 @@ body.blitzzz-league .sidebar .brand-title {
     padding: 4px 4px;
     font-size: 11px;
     white-space: normal;
+  }
+}
+
+@media (max-width: 767px) {
+  .power-rankings-table {
+    display: none;
+  }
+  
+  .power-rankings-mobile {
+    display: block;
+  }
+}
+
+@media (min-width: 768px) {
+  .power-rankings-mobile {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .power-rankings-table,
+  .transactions-table {
+    display: none;
+  }
+  
+  .power-rankings-mobile,
+  .transactions-mobile {
+    display: block;
+  }
+}
+
+@media (min-width: 768px) {
+  .power-rankings-mobile,
+  .transactions-mobile {
+    display: none;
   }
 }

@@ -1235,62 +1235,62 @@ setActivities(pairedActivities);
         {activities.length > 0 ? (
   <div style={{ marginTop: 12 }}>
     {(() => {
-      const pairedActivities = [];
-      let pairCounter = 0;
-      
-      // Process activities to assign pair numbers
-      for (let i = 0; i < activities.length; i++) {
-        const activity = activities[i];
-        
-        if (activity.action === "ADDED") {
-          // Check if next activity is a DROP from same team on same date
-          const nextActivity = activities[i + 1];
-          if (nextActivity && 
-              nextActivity.action === "DROPPED" && 
-              nextActivity.team === activity.team && 
-              nextActivity.date === activity.date) {
-            // This is a pair
-            pairedActivities.push({ ...activity, pairNumber: pairCounter });
-            pairedActivities.push({ ...nextActivity, pairNumber: pairCounter });
-            pairCounter++;
-            i++; // Skip the next activity since we processed it
-          } else {
-            // Solo add
-            pairedActivities.push({ ...activity, pairNumber: pairCounter });
-            pairCounter++;
-          }
-        } else {
-          // Solo drop (ADD would have been handled above if it was a pair)
-          pairedActivities.push({ ...activity, pairNumber: pairCounter });
-          pairCounter++;
-        }
+  const pairedActivities = [];
+  let pairCounter = 0;
+  
+  // Process activities to assign pair numbers
+  for (let i = 0; i < activities.length; i++) {
+    const activity = activities[i];
+    
+    if (activity.action === "ADDED") {
+      // Check if next activity is a DROP from same team on same date
+      const nextActivity = activities[i + 1];
+      if (nextActivity && 
+          nextActivity.action === "DROPPED" && 
+          nextActivity.team === activity.team && 
+          nextActivity.date === activity.date) {
+        // This is a pair
+        pairedActivities.push({ ...activity, pairNumber: pairCounter });
+        pairedActivities.push({ ...nextActivity, pairNumber: pairCounter });
+        pairCounter++;
+        i++; // Skip the next activity since we processed it
+      } else {
+        // Solo add
+        pairedActivities.push({ ...activity, pairNumber: pairCounter });
+        pairCounter++;
       }
-      
-      return pairedActivities.map((activity, index) => {
-        const isShaded = activity.pairNumber % 2 === 0;
-        const backgroundColor = isShaded ? "#fffbeb" : "transparent";
-        
-        return (
-          <div key={index} style={{ 
-            padding: "8px", 
-            borderBottom: "1px solid #e2e8f0",
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 14,
-            fontStyle: activity.isDraft ? "italic" : "normal",
-            opacity: activity.isDraft ? 0.8 : 1,
-            color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
-            backgroundColor: backgroundColor
-          }}>
-            <span>
-              <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
-              {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
-            </span>
-            <span style={{ color: "#64748b" }}>{activity.date}</span>
-          </div>
-        );
-      });
-    })()}
+    } else {
+      // Solo drop (ADD would have been handled above if it was a pair)
+      pairedActivities.push({ ...activity, pairNumber: pairCounter });
+      pairCounter++;
+    }
+  }
+  
+  return pairedActivities.map((activity, index) => {
+    const isShaded = activity.pairNumber % 2 === 0;
+    const backgroundColor = isShaded ? "#fffbeb" : "transparent";
+    
+    return (
+      <div key={index} style={{ 
+        padding: "8px", 
+        borderBottom: "1px solid #e2e8f0",
+        display: "flex",
+        justifyContent: "space-between",
+        fontSize: 14,
+        fontStyle: activity.isDraft ? "italic" : "normal",
+        opacity: activity.isDraft ? 0.8 : 1,
+        color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
+        backgroundColor: backgroundColor
+      }}>
+        <span>
+          <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
+          {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
+        </span>
+        <span style={{ color: "#64748b" }}>{activity.date}</span>
+      </div>
+    );
+  });
+})()}
   </div>
 ) : !loading && !error && (
           <div style={{ color: "#64748b", marginTop: 8 }}>
@@ -2668,77 +2668,105 @@ byWeek.forEach((transactions, week) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {(() => {
-  const pairedRows = [];
+                      
+  {(() => {
+  const combinedRows = [];
   let pairCounter = 0;
   
-  // Process rows to assign pair numbers
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
+  // Create working copy to avoid mutating original
+  const workingRows = [...rows];
+  
+  for (let i = 0; i < workingRows.length; i++) {
+    const row = workingRows[i];
     
     if (row.action === "ADD") {
-      // Check if next row is a DROP from same team on same date
-      const nextRow = rows[i + 1];
-      if (nextRow && 
-          nextRow.action === "DROP" && 
-          nextRow.team === row.team && 
-          nextRow.date === row.date) {
-        // This is a pair
-        pairedRows.push({ ...row, pairNumber: pairCounter });
-        pairedRows.push({ ...nextRow, pairNumber: pairCounter });
+      // Look for matching DROP from same team on same date
+      const matchingDropIndex = workingRows.findIndex((r, idx) => 
+        idx > i && 
+        r.action === "DROP" && 
+        r.team === row.team && 
+        r.date === row.date
+      );
+      
+      if (matchingDropIndex !== -1) {
+        // Found a pair - combine them
+        const dropRow = workingRows[matchingDropIndex];
+        combinedRows.push({
+          ...row,
+          isPair: true,
+          dropPlayer: dropRow.player || (dropRow.playerId ? `#${dropRow.playerId}` : "—"),
+          pairNumber: pairCounter
+        });
+        
+        // Remove the drop from working rows
+        workingRows.splice(matchingDropIndex, 1);
         pairCounter++;
-        i++; // Skip the next row since we processed it
       } else {
         // Solo add
-        pairedRows.push({ ...row, pairNumber: pairCounter });
+        combinedRows.push({
+          ...row,
+          isPair: false,
+          pairNumber: pairCounter
+        });
         pairCounter++;
       }
     } else {
-      // Solo drop
-      pairedRows.push({ ...row, pairNumber: pairCounter });
+      // Solo drop or other action
+      combinedRows.push({
+        ...row,
+        isPair: false,
+        pairNumber: pairCounter
+      });
       pairCounter++;
     }
   }
   
-  return pairedRows.map((r, i) => {
+  return combinedRows.map((r, index) => {
     const isShaded = r.pairNumber % 2 === 0;
     const backgroundColor = isShaded ? "#fffbeb" : "transparent";
     
     return (
-      <tr key={i} style={{ backgroundColor }}>
+      <tr key={index} style={{ backgroundColor }}>
         <td style={{...td, fontSize: "12px"}}>
-  {(() => {
-    // Format the date to have lowercase am/pm and no space
-    const date = new Date(r.date);
-    const timeString = date.toLocaleTimeString('en-US', { 
-      hour12: true, 
-      hour: 'numeric', 
-      minute: '2-digit', 
-      second: '2-digit' 
-    });
-    const dateString = date.toLocaleDateString('en-US', {
-      month: 'numeric',
-      day: 'numeric',
-      year: '2-digit'
-    });
-    // Replace AM/PM with lowercase and remove space
-    const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
-    return `${dateString} ${formattedTime}`;
-  })()}
-</td>
+          {(() => {
+            const date = new Date(r.date);
+            const timeString = date.toLocaleTimeString('en-US', { 
+              hour12: true, 
+              hour: 'numeric', 
+              minute: '2-digit', 
+              second: '2-digit' 
+            });
+            const dateString = date.toLocaleDateString('en-US', {
+              month: 'numeric',
+              day: 'numeric',
+              year: '2-digit'
+            });
+            const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
+            return `${dateString} ${formattedTime}`;
+          })()}
+        </td>
         <td style={td}>{r.team}</td>
-        <td style={{ ...td, color: r.action === "ADD" ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-          {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
+        <td style={{ ...td, fontWeight: 600 }}>
+          {r.isPair ? (
+            <div>
+              <div style={{ color: "#16a34a" }}>+{r.player || (r.playerId ? `#${r.playerId}` : "—")}</div>
+              <div style={{ color: "#dc2626" }}>-{r.dropPlayer}</div>
+            </div>
+          ) : (
+            <span style={{ color: r.action === "ADD" ? "#16a34a" : "#dc2626" }}>
+              {r.action === "ADD" ? "+" : "-"}{r.player || (r.playerId ? `#${r.playerId}` : "—")}
+            </span>
+          )}
         </td>
         <td style={{...td, color: r.method === "Waivers" ? "#f97316" : r.method === "Free Agent" ? "#22c55e" : "#000000"}}>{r.method || "—"}</td>
       </tr>
     );
   });
 })()}
-                      {rows.length === 0 && (
-                        <tr><td style={td} colSpan={4}>&nbsp;No transactions in this week.</td></tr>
-                      )}
-                    </tbody>
+  {rows.length === 0 && (
+    <tr><td style={td} colSpan={4}>&nbsp;No transactions in this week.</td></tr>
+  )}
+</tbody>
                   </table>
                 </div>
 
@@ -3534,7 +3562,12 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
     }>
       <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
         <div className="card" style={{padding:16}}>
-          <h3>Weekly Adds Counter</h3>
+          <div>
+  <h3 style={{margin: 0, marginBottom: 2}}>Weekly Adds Counter</h3>
+  <div style={{fontSize: 14, color: "#64748b"}}><strong>
+    Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'}</strong>
+  </div>
+</div>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
             {espnReport?.totalsRows ? (
   espnReport.totalsRows
@@ -3560,24 +3593,27 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
         </div>
 
         <div className="card" style={{padding:16}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <h3>Activity (Wed→Tue) - ESPN Data</h3>
-            <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec}/>
-          </div>
+          <div style={{marginBottom:8, textAlign:"center"}}>
+  <h3 style={{marginBottom:8}}>
+    Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'} Activity (Wed→Tue)
+  </h3>
+  <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec}/>
+</div>
 
-          <h4>Transactions (selected week)</h4>
+          <h4>Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'} Transactions</h4>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
             {waiversThisWeek.length > 0 ? waiversThisWeek
   .sort((a, b) => new Date(b.date) - new Date(a.date))
   .map((move, index) => (
   <li key={index} style={{padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:13}}>
-  {/* Desktop layout */}
-  <div className="activity-desktop" style={{display:"flex",justifyContent:"space-between", whiteSpace:"nowrap", alignItems:"center"}}>
-    <span style={{overflow:"hidden", textOverflow:"ellipsis", minWidth:0}}>
-      <b>{move.team}</b> added <b>{move.player}</b> 
-      <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
-    </span>
-    <span style={{color:"#64748b", fontSize:"12px", flexShrink:0, marginLeft:"8px"}}>
+  <div style={{marginBottom:"4px"}}>
+  <b className="activity-team-name">{move.team}</b> added <b className="activity-player-name">{move.player}</b>
+</div>
+  <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, color:"#64748b"}}>
+  <span style={{color: move.method === "Waivers" ? "#f97316" : move.method === "Free Agent" ? "#22c55e" : "#64748b"}}>
+    {move.method}
+  </span>
+  <span>
       {(() => {
         const date = new Date(move.date);
         const timeString = date.toLocaleTimeString('en-US', { 
@@ -3595,32 +3631,6 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
         return `${dateString} ${formattedTime}`;
       })()}
     </span>
-  </div>
-  
-  {/* Mobile layout */}
-  <div className="activity-mobile" style={{display:"none"}}>
-    <div style={{marginBottom:"4px"}}>
-      <b>{move.team}</b> added <b>{move.player}</b> 
-      <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
-    </div>
-    <div style={{textAlign:"right", color:"#64748b", fontSize:"12px"}}>
-      {(() => {
-        const date = new Date(move.date);
-        const timeString = date.toLocaleTimeString('en-US', { 
-          hour12: true, 
-          hour: 'numeric', 
-          minute: '2-digit', 
-          second: '2-digit' 
-        });
-        const dateString = date.toLocaleDateString('en-US', {
-          month: 'numeric',
-          day: 'numeric',
-          year: '2-digit'
-        });
-        const formattedTime = timeString.replace(/\s?(AM|PM)/i, (match) => match.toLowerCase().trim());
-        return `${dateString} ${formattedTime}`;
-      })()}
-    </div>
   </div>
 </li>
             )) : (
@@ -4724,7 +4734,7 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear, btnPri, btnSe
   const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
   
   return (
-  <div className="week-navigation" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+  <div className="week-navigation" style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
     <button type="button" className="btn" style={btnSec} aria-label="Previous week" onClick={() => go(-1)}>◀</button>
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
       <span style={{ fontSize: 14, color: "#334155", minWidth: 170, textAlign: "center" }}>{label}</span>

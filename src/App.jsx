@@ -2507,12 +2507,12 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
     
     {/* Rest of your dues view stays the same */}
     <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
-      <h3 style={{ marginTop: 0 }}>By Week (Wed→Tue, cutoff Tue 11:59pm)</h3>
+      <h3 style={{ marginTop: 0 }}>Weekly Adds Log</h3>
       {report.weekRows
   .sort((a, b) => b.week - a.week)
   .map(w => (
         <div key={w.week} style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} — {w.range}</div>
+          <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} - {w.range.split(' (')[0].replace(/—/g, '→')} (Wednesday→Tuesday)</div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>

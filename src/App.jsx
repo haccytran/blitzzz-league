@@ -2426,8 +2426,8 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
           </span>
         </div>
         <div style={{ fontSize: 12, color: "#64748b" }}>
-          {row.adds} adds • ${row.owes}
-        </div>
+  {row.adds} adds • $<span style={{ color: row.owes > 0 ? "#16a34a" : "#64748b", fontWeight: row.owes > 0 ? "bold" : "normal" }}>{row.owes}</span>
+</div>
       </div>
     </div>
   ))}

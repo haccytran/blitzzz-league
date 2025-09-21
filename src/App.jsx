@@ -296,7 +296,7 @@ const switchLeague = () => {
 
 const VALID_TABS = [
   "announcements","activity","weekly","highestscorer","waivers","dues",
-   "transactions","drafts","rosters","powerrankings","settings","trading","polls" 
+  "transactions","drafts","rosters","powerrankings","settings","trading","paydues","polls" 
 ];
 
   const initialTabFromHash = () => {
@@ -658,6 +658,37 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
     }
   };
 
+const updatePayment = async (teamName, isPaid) => {
+  const seasonKey = String(espn.seasonId || seasonYear);
+  const currentPayments = (data.duesPayments && data.duesPayments[seasonKey]) || {};
+  const updates = { ...currentPayments, [teamName]: isPaid };
+  
+  // Optimistically update local state
+  setData(prevData => ({
+    ...prevData,
+    duesPayments: {
+      ...(prevData.duesPayments || {}),
+      [seasonKey]: updates
+    }
+  }));
+
+  // Save to server
+  try {
+    await updateDuesPayments(seasonKey, updates);
+  } catch (error) {
+    console.error('Failed to update payment:', error);
+    // Revert local state on failure
+    setData(prevData => ({
+      ...prevData,
+      duesPayments: {
+        ...(prevData.duesPayments || {}),
+        [seasonKey]: currentPayments
+      }
+    }));
+    alert('Failed to save payment status: ' + error.message);
+  }
+};
+
   const saveLeagueSettings = async (html) => {
     try {
       await apiCallLeague('/settings', {
@@ -913,8 +944,8 @@ async function loadOfficialReport(silent=false){
   powerrankings: <PowerRankingsView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}} btnPri={btnPri} btnSec={btnSec}/>,
   trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}} btnPri={btnPri} btnSec={btnSec}/>,
-  polls: <PollsView {...{isAdmin, members:data.members, espn, config}} btnPri={btnPri} btnSec={btnSec}/>
-
+  polls: <PollsView {...{isAdmin, members:data.members, espn, config}} btnPri={btnPri} btnSec={btnSec}/>,
+paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} isAdmin={isAdmin} btnPri={btnPri} btnSec={btnSec} />,
 };
 
   return (
@@ -996,6 +1027,7 @@ async function loadOfficialReport(silent=false){
           <NavBtn id="powerrankings" label="🏋️ Power Rankings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="paydues" label="💰 Pay Dues" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="polls" label="🗳️ Polls" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           
           <div style={{marginTop:12}}>
@@ -2418,18 +2450,22 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn" style={btnSec} onClick={() => loadOfficialReport(false)}>Refresh Snapshot</button>
         {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-        <button className="btn" style={btnSec} onClick={() => print()}>Print</button>
+        
         {report && (
           <>
+{isAdmin && (
             <button className="btn" style={btnSec} onClick={() => {
               const rows = [["Team", "Adds", "Owes"], ...report.totalsRows.map(r => [r.name, r.adds, `${r.owes}`])];
               downloadCSV("dues_totals.csv", rows);
             }}>Download CSV (totals)</button>
+)}
+{isAdmin && (
             <button className="btn" style={btnSec} onClick={() => {
               const rows = [["Week", "Range", "Team", "Adds", "Owes"]];
               report.weekRows.forEach(w => w.entries.forEach(e => rows.push([w.week, w.range, e.name, e.count, `${e.owes}`])));
               downloadCSV("dues_by_week.csv", rows);
             }}>Download CSV (by week)</button>
+)}
           </>
         )}
       </div>
@@ -2466,20 +2502,12 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
   btnSec={btnSec}
 />
 
-<PaymentSection
-  isAdmin={isAdmin}
-  data={data}
-  setData={setData}
-  updateBuyIns={updateBuyIns}
-/>
-
 </div>
-
 
     
     {/* Rest of your dues view stays the same */}
     <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
-      <h3 style={{ marginTop: 0 }}>By Week (Wed→Tue, cutoff Tue 11:59 PM PT)</h3>
+      <h3 style={{ marginTop: 0 }}>By Week (Wed→Tue, cutoff Tue 11:59pm)</h3>
       {report.weekRows
   .sort((a, b) => b.week - a.week)
   .map(w => (
@@ -2578,16 +2606,16 @@ function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
 
 
   const rangeByWeek = {};
-  for (const r of filtered) {
-    const w = r.week;
-    if (!rangeByWeek[w]) {
-      if (w <= 0) {
-        rangeByWeek[w] = "All pre-season transactions are FREE";
-      } else {
-        rangeByWeek[w] = r.range;
-      }
+for (const r of filtered) {
+  const w = r.week;
+  if (!rangeByWeek[w]) {
+    if (w <= 0) {
+      rangeByWeek[w] = "All pre-season transactions are FREE";
+    } else {
+      rangeByWeek[w] = "(Wed→Tue)"; // Changed from r.range
     }
   }
+}
 
   const byWeek = new Map();
   for (const r of filtered) {
@@ -2649,8 +2677,10 @@ byWeek.forEach((transactions, week) => {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
               onClick={() => toggleWeek(week)}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontWeight: 700 }}>{weekLabel}</span>
-                <span style={{ color: "#64748b" }}>{rangeByWeek[week] || ""}</span>
+                <div>
+  <div style={{ fontWeight: 700 }}>{weekLabel}</div>
+  <div style={{ color: "#64748b", fontSize: 12, marginTop: 2 }}>{rangeByWeek[week] || ""}</div>
+</div>
               </div>
               <span style={{ color: "#64748b" }}>{open ? "Hide ▲" : "Show ▼"}</span>
             </div>
@@ -3590,7 +3620,120 @@ async function editPoll(pollId) {
   );
 }
 
+function PayDuesView({ data, updateBuyIns, setData, isAdmin, btnPri, btnSec }) {
+  const seasonKey = "current";
+  const cur = (data.buyins && data.buyins[seasonKey]) || {
+    paid: {},
+    hidden: false,
+    venmoLink: "",
+    zelleEmail: "",
+    venmoQR: ""
+  };
 
+  const [venmo, setVenmo] = React.useState(cur.venmoLink || "https://venmo.com/u/");
+  const [zelle, setZelle] = React.useState(cur.zelleEmail || "");
+  
+  React.useEffect(() => { 
+    setVenmo(cur.venmoLink || "https://venmo.com/u/"); 
+    setZelle(cur.zelleEmail || ""); 
+  }, [data.buyins]);
+
+  const patch = async (updates) => {
+  const newData = { ...cur, ...updates };
+  setData(d => ({ ...d, buyins: { ...(d.buyins || {}), [seasonKey]: newData } }));
+  try {
+    await updateBuyIns(seasonKey, newData);
+  } catch (error) {
+    console.error('Failed to update buy-ins:', error);
+    setData(d => ({ ...d, buyins: { ...(d.buyins || {}), [seasonKey]: cur } }));
+    alert('Failed to save payment info: ' + error.message);
+  }
+};
+
+  const copyZelle = async () => {
+    const email = (cur.zelleEmail || "").trim();
+    if (!email) return alert("No Zelle email set yet.");
+    try { 
+      await navigator.clipboard.writeText(email); 
+      alert("Zelle username/email copied to clipboard! Paste into your Zelle app to Pay via Zelle!"); 
+    } catch { 
+      alert("Could not copy. Long-press / right-click to copy instead: " + email); 
+    }
+  };
+
+  const onUploadQR = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => patch({ venmoQR: r.result || "" });
+    r.readAsDataURL(f);
+  };
+
+  const saveMeta = async () => {
+    const venmoLink = venmo.trim();
+    const zelleEmail = zelle.trim();
+    await patch({ venmoLink, zelleEmail });
+  };
+
+  return (
+    <Section title="💰 Pay Dues">
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ marginBottom: 16 }}>
+          <strong>Payment Methods</strong>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+            Choose your preferred payment method below
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/" && (
+            <a className="btn" style={{ background: "#3D95CE", color: "#fff", padding: "10px 12px", textAlign: "center", textDecoration: "none", borderRadius: "6px", fontWeight: "600" }} href={cur.venmoLink} target="_blank" rel="noreferrer">
+              Pay with Venmo
+            </a>
+          )}
+          {cur.zelleEmail && (
+            <button type="button" className="btn" style={{ background: "#6D1ED4", color: "#fff", padding: "10px 12px", fontWeight: "600", fontSize: "15px", border: "none", borderRadius: "6px", cursor: "pointer" }} onClick={copyZelle}>
+              Pay with Zelle
+            </button>
+          )}
+        </div>
+
+        {cur.venmoQR && (
+          <div style={{ marginTop: 16, textAlign: "center" }}>
+            <a href={cur.venmoLink || "#"} target="_blank" rel="noreferrer" title="Open Venmo">
+              <img src={cur.venmoQR} alt="Venmo QR" style={{ maxWidth: "200px", height: "auto" }} />
+            </a>
+          </div>
+        )}
+
+        {isAdmin && (
+          <div style={{ marginTop: 16, padding: 12, background: "#f8fafc", borderRadius: 6 }}>
+            <h4 style={{ marginTop: 0 }}>Admin: Setup Payment Methods</h4>
+            <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8 }}>
+              <input 
+                className="input" 
+                placeholder="https://venmo.com/u/YourHandle" 
+                value={venmo} 
+                onChange={e => setVenmo(e.target.value)}
+              />
+              <input 
+                className="input" 
+                placeholder="Zelle email" 
+                value={zelle} 
+                onChange={e => setZelle(e.target.value)}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+              <input type="file" accept="image/*" onChange={onUploadQR} />
+              {cur.venmoQR && <button className="btn" onClick={() => patch({ venmoQR: "" })}>Remove QR</button>}
+              <button className="btn" style={btnPri} onClick={saveMeta}>Save Payment Info</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
 function WaiversView({ 
   espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
   updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember, btnPri, btnSec 
@@ -3648,11 +3791,14 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
     }>
       <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
         <div className="card" style={{padding:16}}>
-          <div>
+          <div style={{textAlign: "center", marginBottom: 16}}>
+      <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec}/>
+    </div>
+<div>
   <h3 style={{margin: 0, marginBottom: 2}}>Weekly Adds Counter</h3>
-  <div style={{fontSize: 14, color: "#64748b"}}><strong>
-    Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'}</strong>
-  </div>
+  <div style={{fontSize: 14, color: "#64748b"}}>
+  Week <span className="week-number-highlight">{selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'}</span>
+</div>
 </div>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
             {espnReport?.totalsRows ? (
@@ -3683,10 +3829,10 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
   <h3 style={{marginBottom:8}}>
     Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'} Activity (Wed→Tue)
   </h3>
-  <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec}/>
+  
 </div>
 
-          <h4>Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'} Transactions</h4>
+          <h4>Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'} Adds</h4>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
             {waiversThisWeek.length > 0 ? waiversThisWeek
   .sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -4691,6 +4837,7 @@ function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
     </div>
   );
 }
+
 function RichEditor({ html, setHtml, readOnly, btnPri, btnSec }) {
   const [local, setLocal] = React.useState(html || "");
   const ref = React.useRef(null);

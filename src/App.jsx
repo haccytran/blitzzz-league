@@ -907,7 +907,7 @@ async function loadOfficialReport(silent=false){
   ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
   activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
-  transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} btnPri={btnPri} btnSec={btnSec} />,
+  transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} espn={espn} btnPri={btnPri} btnSec={btnSec} />,
   drafts: <DraftsView espn={espn} btnPri={btnPri} btnSec={btnSec} />,
   waivers: <WaiversView 
   espnReport={espnReport}
@@ -2542,7 +2542,7 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
   );
 }
 
-function TransactionsView({ report, loadOfficialReport, btnPri, btnSec }) {
+function TransactionsView({ report, loadOfficialReport, espn, btnPri, btnSec }) {
   // MOVE ALL HOOKS TO THE VERY TOP - BEFORE ANY OTHER CODE
   const [team, setTeam] = useState("");
   const [action, setAction] = useState("");
@@ -2612,7 +2612,17 @@ for (const r of filtered) {
     if (w <= 0) {
       rangeByWeek[w] = "All pre-season transactions are FREE";
     } else {
-      rangeByWeek[w] = "(Wed→Tue)"; // Changed from r.range
+      // Calculate the actual date range for this week
+const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
+const week1Thursday = firstWednesdayOfSeptemberPT(seasonYear); // This actually returns first Thursday
+
+// Go back 1 day to get Wednesday (billing start day)
+const week1Wednesday = new Date(week1Thursday.getTime() - 24 * 60 * 60 * 1000);
+const weekWednesday = new Date(week1Wednesday.getTime() + (w - 1) * 7 * 24 * 60 * 60 * 1000);
+const weekTuesday = new Date(weekWednesday.getTime() + 6 * 24 * 60 * 60 * 1000);
+
+const formatDate = (date) => date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+rangeByWeek[w] = `${formatDate(weekWednesday)} → ${formatDate(weekTuesday)} (Wed→Tue)`;
     }
   }
 }

@@ -536,18 +536,18 @@ body.blitzzz-league .sidebar .brand-title {
 @keyframes splashGrowAndFade {
   0% { 
     transform: scale(1.1);
-    opacity: 0.8;
+    opacity: 1;
  }
   20% { 
-    transform: scale(0.75);
+    transform: scale(0.50);
     opacity: 1;
   }
   40% { 
-    transform: scale(1.3);
+    transform: scale(1.4);
     opacity: 1;
   }
   60% { 
-    transform: scale(1.3);
+    transform: scale(1.4);
     opacity: 1;
   }
   80% { 

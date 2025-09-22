@@ -85,7 +85,7 @@ if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
     cursor: default !important;
     pointer-events: none !important;
     transform-origin: center center !important;
-    opacity: 0 !important;
+    opacity: 1 !important;
   `);
 
   setTimeout(() => {

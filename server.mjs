@@ -1527,37 +1527,57 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
   // Step 3: Build roster owner map for scoring periods we need (only for PROCESS adds)
    
     
-  // Step 4: Keep only winners for waivers; keep all EXECUTEs
-  const kept = [];
-  let processWinners = 0;
-  let processLosers = 0;
+  // Step 4: Keep only winners for waivers; keep all EXECUTEs; keep all standalone drops
+const kept = [];
+let processWinners = 0;
+let processLosers = 0;
+
+for (const rec of txPairs) {
+  // Always keep EXECUTE transactions (Free Agents)
+  if (rec.method === "EXECUTE") {
+    kept.push(rec);
+    continue;
+  }
   
-  for (const rec of txPairs) {
-    if (rec.method === "EXECUTE") {
+  // Handle PROCESS transactions (Waivers)
+  if (rec.method === "PROCESS") {
+    // If it's a standalone drop (no add), always keep it
+    if (rec.drop && !rec.add) {
       kept.push(rec);
+      console.log(`[DEBUG] Keeping standalone PROCESS drop: Team ${rec.teamId} drops player ${rec.drop}`);
       continue;
     }
     
-    if (rec.method === "PROCESS" && rec.add) {
-  const winner = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
-  if (winner) {
-    kept.push(rec);
-    processWinners++;
-    console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
-  } else {
-    processLosers++;
-    console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (checked spÂ±1)`);
-  }
-  continue;
-}
-    
-    // Handle PROCESS transactions with only drops or other cases
-    if (rec.method === "PROCESS") {
-      kept.push(rec);
+    // If it has an add, validate it against rosters
+    if (rec.add) {
+      const winner = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
+      if (winner) {
+        kept.push(rec);
+        processWinners++;
+        console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
+      } else {
+        processLosers++;
+        console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (filtered out)`);
+      }
+      continue;
     }
+    
+    // If it's a PROCESS transaction with only a drop or other edge case
+    kept.push(rec);
   }
   
-  console.log(`[DEBUG] Waiver processing: ${processWinners} winners, ${processLosers} losers filtered out`);
+  // Handle DRAFT transactions (keep all)
+  if (rec.method === "DRAFT") {
+    kept.push(rec);
+  }
+}
+
+// Add this after line ~1440 (after txPairs are built)
+const standaloneDrops = txPairs.filter(tx => tx.drop && !tx.add);
+console.log(`[DEBUG] Found ${standaloneDrops.length} standalone drop transactions:`);
+standaloneDrops.forEach(drop => {
+  console.log(`[DEBUG] - Team ${drop.teamId} (${drop.team}) drops player ${drop.drop}, method: ${drop.method}`);
+});
   
   // Step 5: Expand back out to individual ADD/DROP transactions - PRESERVE ALL ORIGINAL DATA
   const finalTransactions = [];

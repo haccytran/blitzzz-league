@@ -2798,7 +2798,34 @@ byWeek.forEach((transactions, week) => {
             </span>
           )}
         </td>
-        <td style={{...td, color: r.method === "Waivers" ? "#f97316" : r.method === "Free Agent" ? "#22c55e" : "#000000"}}>{r.method || "—"}</td>
+        <td style={td}>
+  {r.method === "Free Agent" ? (
+    r.isPaired ? (
+      <span>
+        <span style={{ color: "#22c55e" }}>Free</span>
+        {" "}
+        <span style={{ color: "#dc2626" }}>Agent</span>
+      </span>
+    ) : (
+      <span style={{ color: r.action === "ADD" ? "#22c55e" : "#dc2626" }}>
+        {r.method}
+      </span>
+    )
+  ) : r.method === "Waivers" ? (
+    <span>
+      <span style={{ color: "#f97316" }}>Waivers</span>
+      {r.bidAmount !== null && r.bidAmount !== undefined && (
+        <span style={{ color: r.bidAmount > 0 ? "#22c55e" : "#dc2626" }}>
+          {" ($" + r.bidAmount + ")"}
+        </span>
+      )}
+    </span>
+  ) : (
+    <span style={{ color: "#000000" }}>
+      {r.method || "—"}
+    </span>
+  )}
+</td>
       </tr>
     );
   });
@@ -2904,9 +2931,34 @@ byWeek.forEach((transactions, week) => {
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 12, color: r.method === "Waivers" ? "#f97316" : r.method === "Free Agent" ? "#22c55e" : "#64748b" }}>
-              {r.method || "—"}
-            </div>
+            <div style={{ fontSize: 12 }}>
+  {r.method === "Free Agent" ? (
+    r.isPaired ? (
+      <span>
+        <span style={{ color: "#22c55e" }}>Free</span>
+        {" "}
+        <span style={{ color: "#dc2626" }}>Agent</span>
+      </span>
+    ) : (
+      <span style={{ color: r.action === "ADD" ? "#22c55e" : "#dc2626" }}>
+        {r.method}
+      </span>
+    )
+  ) : r.method === "Waivers" ? (
+    <span>
+      <span style={{ color: "#f97316" }}>Waivers</span>
+      {r.bidAmount !== null && r.bidAmount !== undefined && (
+        <span style={{ color: r.bidAmount > 0 ? "#22c55e" : "#dc2626" }}>
+          {" ($" + r.bidAmount + ")"}
+        </span>
+      )}
+    </span>
+  ) : (
+    <span style={{ color: "#64748b" }}>
+      {r.method || "—"}
+    </span>
+  )}
+</div>
           </div>
         </div>
       );

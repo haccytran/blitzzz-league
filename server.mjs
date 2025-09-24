@@ -1527,72 +1527,67 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
   // Step 3: Build roster owner map for scoring periods we need (only for PROCESS adds)
    
     
-  // Step 4: Keep only winners for waivers; keep all EXECUTEs; keep all standalone drops
-const kept = [];
-let processWinners = 0;
-let processLosers = 0;
-
-for (const rec of txPairs) {
+  // Step 4: Keep only winners for waivers; keep all EXECUTEs
+  const kept = [];
+  let processWinners = 0;
+  let processLosers = 0;
+  
+  for (const rec of txPairs) {
   // Always keep EXECUTE transactions (Free Agents)
   if (rec.method === "EXECUTE") {
     kept.push(rec);
     continue;
   }
   
-  // Handle PROCESS transactions (Waivers)
-  if (rec.method === "PROCESS") {
-    // If it's a standalone drop (no add), always keep it
-    if (rec.drop && !rec.add) {
+  // Always keep standalone drops regardless of method
+  if (rec.drop && !rec.add) {
+    kept.push(rec);
+    console.log(`[DEBUG] Keeping standalone drop: Team ${rec.teamId} drops player ${rec.drop}, method: ${rec.method}`);
+    continue;
+  }
+  
+  // Handle PROCESS transactions with adds
+  if (rec.method === "PROCESS" && rec.add) {
+    const winner = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
+    if (winner) {
       kept.push(rec);
-      console.log(`[DEBUG] Keeping standalone PROCESS drop: Team ${rec.teamId} drops player ${rec.drop}`);
-      continue;
+      processWinners++;
+      console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
+    } else {
+      processLosers++;
+      console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (checked sp±1)`);
     }
-    
-    // If it has an add, validate it against rosters
-    if (rec.add) {
-      const winner = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
-      if (winner) {
-        kept.push(rec);
-        processWinners++;
-        console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
-      } else {
-        processLosers++;
-        console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (filtered out)`);
-      }
-      continue;
-    }
-    
-    // If it's a PROCESS transaction with only a drop or other edge case
+    continue;
+  }
+  
+  // Keep any other PROCESS transactions (edge cases)
+  if (rec.method === "PROCESS") {
     kept.push(rec);
   }
   
-  // Handle DRAFT transactions (keep all)
+  // Keep DRAFT transactions
   if (rec.method === "DRAFT") {
     kept.push(rec);
   }
 }
-
-// Add this after line ~1440 (after txPairs are built)
-const standaloneDrops = txPairs.filter(tx => tx.drop && !tx.add);
-console.log(`[DEBUG] Found ${standaloneDrops.length} standalone drop transactions:`);
-standaloneDrops.forEach(drop => {
-  console.log(`[DEBUG] - Team ${drop.teamId} (${drop.team}) drops player ${drop.drop}, method: ${drop.method}`);
-});
+  
+  console.log(`[DEBUG] Waiver processing: ${processWinners} winners, ${processLosers} losers filtered out`);
   
   // Step 5: Expand back out to individual ADD/DROP transactions - PRESERVE ALL ORIGINAL DATA
   const finalTransactions = [];
   
   for (const r of kept) {
     const baseTransaction = {
-      date: new Date(r.ts),
-      teamIdRaw: r.teamIdRaw, // PRESERVE THIS
-      teamId: r.teamId, // PRESERVE THIS
-      team: r.team, // PRESERVE TEAM NAME
-      method: r.method,
-      eventId: r.txId,
-      src: r.originalTransaction.src || "validated",
-      playerName: null // Will be filled later
-    };
+  date: new Date(r.ts),
+  teamIdRaw: r.teamIdRaw,
+  teamId: r.teamId,
+  team: r.team,
+  method: r.method,
+  eventId: r.txId,
+  src: r.originalTransaction.src || "validated",
+  playerName: null,
+  bidAmount: r.originalTransaction.bidAmount // Add this
+};
     
     if (r.add) {
       finalTransactions.push({
@@ -1800,15 +1795,15 @@ waiverProcessDate: t?.waiverProcessDate || it?.waiverProcessDate
       }
       
       if (/DROP/i.test(String(iTypeStr)) || [2].includes(iTypeNum)) {
-        const fromTeamId = it.fromTeamId ?? t.fromTeamId ?? it.teamId ?? null;
-        if (fromTeamId != null) {
-          out.push({
-            teamId: fromTeamId, date:when, action:"DROP", method:"FA", src, 
-            eventId: it.id ?? eventId ?? null,
-            playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
-          });
-        }
-      }
+  const fromTeamId = it.fromTeamId ?? t.fromTeamId ?? it.teamId ?? null;
+  if (fromTeamId != null) {
+    out.push({
+      teamId: fromTeamId, date:when, action:"DROP", method, src, 
+      eventId: it.id ?? eventId ?? null,
+      playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
+    });
+  }
+}
 
 // Handle DRAFT picks separately (for Recent Activity, but they won't count toward dues)
 if (/DRAFT/i.test(String(iTypeStr)) || String(iTypeStr) === "DRAFT") {
@@ -2121,22 +2116,64 @@ for (const r of [...allAdds, ...drops]) {  // â† Use allAdds instead of bil
   if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
 } 
 
+// Detect if this is a FAAB league by checking if any waiver has a bid amount > 0
+const isFAABLeague = [...allAdds, ...drops].some(r => 
+  r.method === "PROCESS" && r.bidAmount != null && r.bidAmount > 0
+);
+console.log(`[DEBUG] FAAB League detected: ${isFAABLeague}`);
+
+// First, identify paired transactions
+const pairedTransactions = new Set();
+[...allAdds, ...drops].forEach((transaction, index, allTransactions) => {
+  if (transaction.method === "EXECUTE") {
+    // Check if there's a matching transaction (opposite action, same team, same time)
+    const hasMatch = allTransactions.some(other => 
+      other.team === transaction.team &&
+      other.action !== transaction.action &&
+      Math.abs(new Date(other.date).getTime() - new Date(transaction.date).getTime()) < 1000 && // Within 1 second
+      other.method === "EXECUTE"
+    );
+    if (hasMatch) {
+      const key = `${transaction.team}-${new Date(transaction.date).getTime()}`;
+      pairedTransactions.add(key);
+    }
+  }
+});
+
 let rawMoves = [...allAdds, ...drops].map(r => {
     const wb = weekBucket(r.date, seasonId);
+    const transactionKey = `${r.team}-${new Date(r.date).getTime()}`;
+    const isPaired = pairedTransactions.has(transactionKey) && r.method === "EXECUTE";
+    
+    // Format method with bid amount for waivers
+let displayMethod = r.method === "PROCESS" ? "Waivers" : r.method === "EXECUTE" ? "Free Agent" : r.method;
+let bidAmount = null;
+
+// Only include bid amounts if this is a FAAB league
+if (displayMethod === "Waivers" && isFAABLeague) {
+  bidAmount = r.bidAmount != null ? r.bidAmount : 0;
+}
+
+if (displayMethod === "Waivers") {
+  bidAmount = r.bidAmount != null ? r.bidAmount : 0;
+  displayMethod = "Waivers"; // Keep base text, we'll add formatting in frontend
+}
+    
     return {
       date: fmtPT(r.date),
       ts: new Date(r.date).getTime(),
       week: wb.week,
       range: weekRangeLabelDisplay(wb.start),
       team: r.team,
-      player: r.player || (r.playerId ? `#${r.playerId}` : "â€”"),
+      player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
       action: r.action,
-      method: r.method === "PROCESS" ? "Waivers" : r.method === "EXECUTE" ? "Free Agent" : r.method,
+      method: displayMethod,
+      isPaired: isPaired,
       source: r.src,
-      playerId: r.playerId || null
+      playerId: r.playerId || null,
+      bidAmount: r.bidAmount // Keep raw amount too if needed
     };
-  }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
-  
+  }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));  
   const DEDUPE_WINDOW_MS = 5 * 60 * 1000; // Increased to 5 minutes
   const dedupedMoves = [];
   const lastByKey = new Map();

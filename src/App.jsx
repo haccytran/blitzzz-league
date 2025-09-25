@@ -1018,7 +1018,7 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="hoodtrophies" label="🏆 Hood Trophies" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           {config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
-          {config.id === 'sculpin' && <NavBtn id="highestscorer" label="🏆 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
+          {config.id === 'sculpin' && <NavBtn id="highestscorer" label="👑 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> 
           <NavBtn id="waivers" label="💵 Waivers" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="dues" label="🧾 Dues" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
@@ -4209,7 +4209,8 @@ const ht_teamProjection = (teamSideObj, week) => {
   const [error, setError] = useState("");
   const [weeklyTrophies, setWeeklyTrophies] = useState([]);
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
-
+  const [trophyCounts, setTrophyCounts] = useState({});
+  const [seasonStats, setSeasonStats] = useState({});
   const loadTrophies = async () => {
     if (!espn.leagueId || !espn.seasonId) {
       setError("Set League ID and Season in League Settings first.");
@@ -4241,13 +4242,14 @@ const ht_teamProjection = (teamSideObj, week) => {
       const trophiesData = [];
 
 
-// === ADD: trackers for the two new trophies (actual - projected) ===
-let __overT = { team: "", delta: -Infinity, actual: 0, proj: 0 };
-let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
 
 
       // Process each week individually
 for (let weekNum = 1; weekNum <= 14; weekNum++) {
+// Reset trackers for each week
+let __overT = { team: "", delta: -Infinity, actual: 0, proj: 0 };
+let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
+
         const weekResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNum}`, {
           mode: 'cors',
           headers: { 'Accept': 'application/json' }
@@ -4268,21 +4270,7 @@ for (let weekNum = 1; weekNum <= 14; weekNum++) {
         );
         
         if (!allGamesComplete) continue;
-// === ADD: build a lookup of boxscore rows (for reliable projections) ===
-let __boxById = new Map();
-try {
-  const boxResp = await fetchEspnJson({
-    leagueId: espn.leagueId,
-    seasonId: espn.seasonId,
-    view: "mBoxscore",
-    scoringPeriodId: weekNum
-  });
-  const boxSched = Array.isArray(boxResp?.schedule) ? boxResp.schedule : [];
-  for (const row of boxSched) if (row?.id != null) __boxById.set(row.id, row);
-} catch (e) {
-  // non-fatal; we'll fall back to mMatchup objects if mBoxscore isn’t available
-}
-
+ 
         const weekTrophies = {
           week: weekNum,
           matchups: [],
@@ -4343,7 +4331,7 @@ try {
           });
 
 // === ADD: compute projections & deltas for Over/Underachiever ===
-const mb = __boxById.get(matchup.id) || matchup;
+const mb = matchup;
 
 const homeProj = ht_teamProjection(mb.home || matchup.home, weekNum);
 const awayProj = ht_teamProjection(mb.away || matchup.away, weekNum);
@@ -4408,25 +4396,71 @@ if (awayDelta < __underT.delta) {
           });
         });
 
-        // Lucky/Unlucky calculation
-        const sortedByScore = [...teamScores].sort((a, b) => b.score - a.score);
-console.log(`Week ${weekNum} team records:`, teamScores.map(t => ({
-  team: t.team,
-  won: t.won,
+        // Lucky/Unlucky calculation with edge cases
+const sortedByScore = [...teamScores].sort((a, b) => b.score - a.score);
+
+// Find all winners and losers with their records
+const winners = sortedByScore.filter(t => t.won).map(t => ({
+  ...t,
   wouldBeat: sortedByScore.length - 1 - sortedByScore.indexOf(t),
   wouldLose: sortedByScore.indexOf(t)
-})));
-        sortedByScore.forEach((team, index) => {
-          const wouldBeatCount = sortedByScore.length - 1 - index;
-          const wouldLoseCount = index;
-          
-          if (team.won && wouldLoseCount > wouldBeatCount && !luckiestWin) {
-            luckiestWin = { team: team.team, wouldBeat: wouldBeatCount, wouldLose: wouldLoseCount };
-          }
-          if (!team.won && wouldBeatCount > wouldLoseCount && !unluckyLoss) {
-            unluckyLoss = { team: team.team, wouldBeat: wouldBeatCount, wouldLose: wouldLoseCount };
-          }
-        });
+}));
+
+const losers = sortedByScore.filter(t => !t.won).map(t => ({
+  ...t,
+  wouldBeat: sortedByScore.length - 1 - sortedByScore.indexOf(t),
+  wouldLose: sortedByScore.indexOf(t)
+}));
+
+// Lucky logic
+const luckyWinners = winners.filter(w => w.wouldLose > w.wouldBeat);
+if (luckyWinners.length > 0) {
+  // Normal lucky winner exists
+  const luckiest = luckyWinners.sort((a, b) => b.wouldLose - a.wouldLose)[0];
+  luckiestWin = { 
+    team: luckiest.team, 
+    wouldBeat: luckiest.wouldBeat, 
+    wouldLose: luckiest.wouldLose 
+  };
+} else if (winners.length > 0) {
+  // All winners have winning records - find worst winner
+  const worstWinner = winners.sort((a, b) => {
+    if (a.wouldBeat !== b.wouldBeat) return a.wouldBeat - b.wouldBeat;
+    return a.score - b.score; // Tiebreaker: lower score
+  })[0];
+  luckiestWin = { 
+    team: worstWinner.team, 
+    wouldBeat: worstWinner.wouldBeat, 
+    wouldLose: worstWinner.wouldLose,
+    score: worstWinner.score,
+    allWinning: true
+  };
+}
+
+// Unlucky logic
+const unluckyLosers = losers.filter(l => l.wouldBeat > l.wouldLose);
+if (unluckyLosers.length > 0) {
+  // Normal unlucky loser exists
+  const unluckiest = unluckyLosers.sort((a, b) => b.wouldBeat - a.wouldBeat)[0];
+  unluckyLoss = { 
+    team: unluckiest.team, 
+    wouldBeat: unluckiest.wouldBeat, 
+    wouldLose: unluckiest.wouldLose 
+  };
+} else if (losers.length > 0) {
+  // All losers have losing records - find best loser
+  const bestLoser = losers.sort((a, b) => {
+    if (b.wouldBeat !== a.wouldBeat) return b.wouldBeat - a.wouldBeat;
+    return b.score - a.score; // Tiebreaker: higher score
+  })[0];
+  unluckyLoss = { 
+    team: bestLoser.team, 
+    wouldBeat: bestLoser.wouldBeat, 
+    wouldLose: bestLoser.wouldLose,
+    score: bestLoser.score,
+    allLosing: true
+  };
+}
 
         // Build trophies
         if (highScore.team) {
@@ -4462,20 +4496,28 @@ console.log(`Week ${weekNum} team records:`, teamScores.map(t => ({
         }
 
         if (luckiestWin) {
-          weekTrophies.trophies.push({
-            emoji: "🍀",
-            title: "Lucky",
-            value: `${luckiestWin.team} was ${luckiestWin.wouldBeat}-${luckiestWin.wouldLose} against the league, but still got the win`
-          });
-        }
+  const value = luckiestWin.allWinning 
+    ? `All winning teams had a winning record vs the league, but ${luckiestWin.team} had the worst record (${luckiestWin.wouldBeat}-${luckiestWin.wouldLose}) and scored only ${luckiestWin.score.toFixed(2)} points`
+    : `${luckiestWin.team} was ${luckiestWin.wouldBeat}-${luckiestWin.wouldLose} against the league, but still got the win`;
+  
+  weekTrophies.trophies.push({
+    emoji: "🍀",
+    title: "Lucky",
+    value
+  });
+}
 
-        if (unluckyLoss) {
-          weekTrophies.trophies.push({
-            emoji: "😡",
-            title: "Unlucky",
-            value: `${unluckyLoss.team} was ${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose} against the league, but still took an L`
-          });
-        }
+if (unluckyLoss) {
+  const value = unluckyLoss.allLosing
+    ? `All losing teams had a losing record vs the league, but ${unluckyLoss.team} had the best record (${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose}) and scored ${unluckyLoss.score.toFixed(2)} points`
+    : `${unluckyLoss.team} was ${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose} against the league, but still took an L`;
+  
+  weekTrophies.trophies.push({
+    emoji: "😡",
+    title: "Unlucky",
+    value
+  });
+}
 
         if (bestManager.percentage > 0 && bestManager.team) {
           weekTrophies.trophies.push({
@@ -4523,6 +4565,140 @@ if (__underT.team) {
       setWeeklyTrophies(trophiesData);
       setError("");
 
+// Calculate trophy counts and season leaders
+const trophyCounts = {};
+const seasonStats = {
+  totalPoints: {},
+  blowoutMargins: {},
+  closeWinMargins: {},
+  luckyUnluckyRecords: {},
+  managerStats: {},
+  overTotals: {},
+  underTotals: {},
+  overCounts: {},      // <-- ADD
+  underCounts: {}
+};
+
+// Build team list (from the names map you already created earlier in loadTrophies)
+Object.values(teamNames).forEach(team => {
+  trophyCounts[team] = {
+    "👑": 0, "💩": 0, "😱": 0, "😅": 0,
+    "🍀": 0, "😡": 0, "📈": 0, "📉": 0,
+    "🤖": 0, "🤡": 0
+  };
+  seasonStats.totalPoints[team] = 0;
+  seasonStats.blowoutMargins[team] = [];
+  seasonStats.closeWinMargins[team] = [];
+  seasonStats.luckyUnluckyRecords[team] = { wins: 0, losses: 0, vsW: 0, vsL: 0 };
+  seasonStats.managerStats[team] = { benchPoints: 0, percentages: [] };
+  seasonStats.overTotals[team] = 0;
+  seasonStats.underTotals[team] = 0;
+  seasonStats.overCounts[team] = 0;   // <-- ADD
+  seasonStats.underCounts[team] = 0; 
+});
+
+// Walk every week we just computed
+for (const week of trophiesData) {
+  // 1) Count trophies you award in week.trophies (if you already do this elsewhere, keep it)
+  for (const t of (week.trophies || [])) {
+    // bump per-team trophy counts (optional; keeps your existing behavior)
+    const row = String(t.value || t.text || "");
+    const name = Object.values(teamNames).find(n => row.includes(n));
+    if (name && trophyCounts[name] && t.emoji) {
+      if (t.emoji in trophyCounts[name]) trophyCounts[name][t.emoji] += 1;
+    }
+  }
+
+  // 2) Per-matchup: add season totals for points & winning margins (you already had this logic)
+  for (const mu of (week.matchups || [])) {
+    const home = mu.home, away = mu.away;
+    const hs = parseFloat(mu.homeScore || 0);
+    const as = parseFloat(mu.awayScore || 0);
+
+    // season total team points
+    seasonStats.totalPoints[home] += hs;
+    seasonStats.totalPoints[away] += as;
+
+    // winner’s margin into both “blowout” and “close win” lists; we’ll average later
+    const margin = Math.abs(hs - as);
+    if (hs > as) {
+      seasonStats.blowoutMargins[home].push(margin);
+      seasonStats.closeWinMargins[home].push(margin);
+    } else if (as > hs) {
+      seasonStats.blowoutMargins[away].push(margin);
+      seasonStats.closeWinMargins[away].push(margin);
+    }
+  }
+
+  // 3) === ADD HERE: All-play (Lucky/Unlucky) for THIS week ===
+  // Build a plain score list for the week
+  const weekScores = [];
+  for (const mu of (week.matchups || [])) {
+    const hs = parseFloat(mu.homeScore || 0);
+    const as = parseFloat(mu.awayScore || 0);
+    weekScores.push({ team: mu.home, points: hs, won: hs > as });
+    weekScores.push({ team: mu.away, points: as, won: as > hs });
+  }
+  const teamsThisWeek = weekScores.length;
+  for (const t of weekScores) {
+    const wouldBeat = weekScores.reduce((acc, o) => acc + (t.points > o.points ? 1 : 0), 0);
+    const wouldLose = (teamsThisWeek - 1) - wouldBeat;
+    const rec = seasonStats.luckyUnluckyRecords[t.team];
+    rec.vsW += wouldBeat;
+    rec.vsL += wouldLose;
+    if (t.won) rec.wins += 1; else rec.losses += 1;
+  }
+
+  // 4) === ADD HERE: Over/Under totals + Manager stats for THIS week ===
+  // Pull ESPN boxscore for this week to read projections & optimal lineup
+  try {
+    const boxResp = await fetchEspnJson({
+      leagueId: espn.leagueId,
+      seasonId: espn.seasonId,
+      view: "mBoxscore",
+      scoringPeriodId: week.week
+    });
+    const rows = Array.isArray(boxResp?.schedule) ? boxResp.schedule : [];
+    for (const r of rows) {
+      if (r?.matchupPeriodId !== week.week) continue;
+
+      // process both sides
+      for (const side of ["home", "away"]) {
+        const s = r[side];
+        if (!s) continue;
+        const teamName = teamNames[s.teamId] || `Team ${s.teamId}`;
+        const actual = Number(s.totalPoints || 0);
+
+        // Over / Under: sum only the positive side each week
+        const proj = ht_teamProjection(s, week.week);
+        const delta = actual - proj;
+if (delta > 0) { 
+  seasonStats.overTotals[teamName] += delta;
+  seasonStats.overCounts[teamName] += 1;     // <-- ADD
+}
+if (delta < 0) { 
+  seasonStats.underTotals[teamName] += (-delta);
+  seasonStats.underCounts[teamName] += 1;    // <-- ADD
+}
+
+
+        // Manager stats: add bench points and % of optimal
+        const optimal = calculateOptimalScore(s); // your existing helper in this file
+        const bench = Math.max(0, optimal - actual);
+        seasonStats.managerStats[teamName].benchPoints += bench;
+        if (optimal > 0) {
+          seasonStats.managerStats[teamName].percentages.push((actual / optimal) * 100);
+        }
+      }
+    }
+  } catch (_) {
+    // If boxscore isn’t available for this week, skip manager/over/under for this week.
+  }
+}
+
+// At this point seasonStats is fully populated; keep your rendering as-is
+setSeasonStats(seasonStats);
+setTrophyCounts(trophyCounts);
     } catch (err) {
       console.error('Failed to load trophies:', err);
       setError("Failed to load trophy data: " + err.message);
@@ -4635,71 +4811,72 @@ if (__underT.team) {
 
           {expandedWeeks.has(weekData.week) && (
             <div style={{ marginTop: 16 }}>
-              {/* Final Scores */}
+              {/* Final Scores (aligned names/scores, mobile-safe) */}
 <div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 6 }}>
   <h4 style={{ marginTop: 0, marginBottom: 12, textAlign: "center" }}>Final Scores</h4>
-  <div style={{ display: "table", width: "100%", borderSpacing: "0 4px" }}>
-    {weekData.matchups.map((matchup, i) => {
-      const homeWon = parseFloat(matchup.homeScore) > parseFloat(matchup.awayScore);
-      const awayWon = !homeWon;
-      return (
-        <div key={i} style={{ 
-          display: "table-row"
-        }}>
-          <div style={{ 
-            display: "table-cell",
-            padding: "4px 8px",
-            textAlign: "left",
-            fontWeight: awayWon ? "bold" : "normal",
-            color: awayWon ? "#059669" : "#6b7280",
-            fontSize: 14
-          }}>
-            {matchup.awayScore}
-          </div>
-          <div style={{ 
-            display: "table-cell",
-            padding: "4px 8px",
-            textAlign: "right",
-            fontWeight: awayWon ? "bold" : "normal",
-            color: awayWon ? "#059669" : "#6b7280",
-            fontSize: 13
-          }}>
-            {matchup.away}
-          </div>
-          <div style={{ 
-            display: "table-cell",
-            padding: "4px 12px",
-            textAlign: "center",
-            color: "#9ca3af",
-            fontSize: 12
-          }}>
-            vs
-          </div>
-          <div style={{ 
-            display: "table-cell",
-            padding: "4px 8px",
-            textAlign: "left",
-            fontWeight: homeWon ? "bold" : "normal",
-            color: homeWon ? "#059669" : "#6b7280",
-            fontSize: 13
-          }}>
-            {matchup.home}
-          </div>
-          <div style={{ 
-            display: "table-cell",
-            padding: "4px 8px",
-            textAlign: "right",
-            fontWeight: homeWon ? "bold" : "normal",
-            color: homeWon ? "#059669" : "#6b7280",
-            fontSize: 14
-          }}>
-            {matchup.homeScore}
-          </div>
-        </div>
-      );
-    })}
+
+  <style>{`
+    .ht-fs-grid {
+      display: grid;
+      /* [away name] [away score] [vs] [home score] [home name] */
+      grid-template-columns: minmax(0,1fr) auto auto auto minmax(0,1fr);
+      column-gap: 0;     /* no gap; we control spacing with padding so scores sit tight to "vs" */
+      row-gap: 6px;
+      align-items: center;
+      width: 100%;
+    }
+    .ht-fs-team {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ht-fs-team.left  { text-align: right;  padding-right: 1ch; } /* name␠score */
+    .ht-fs-team.right { text-align: left;   padding-left:  1ch; } /* score␠name */
+    .ht-fs-score.away { text-align: left;  }
+    .ht-fs-score.home { text-align: right; }
+    .ht-fs-vs { text-align: center; padding: 0 6px; opacity: 0.6; } /* equal buffer to both scores */
+
+    @media (max-width: 480px) {
+      .ht-fs-team, .ht-fs-score { font-size: 12px; }
+      .ht-fs-vs { padding: 0 4px; }
+    }
+  `}</style>
+
+  <div style={{ display: "grid", rowGap: 6 }}>
+    {weekData.matchups.map((m, i) => {
+  const homeWon = parseFloat(m.homeScore) > parseFloat(m.awayScore);
+  const awayWon = !homeWon;
+
+  // Colors
+  const NAME_WIN  = "#111827"; // black
+  const NAME_LOSE = "#6b7280"; // gray
+  const SCORE_WIN = "#059669"; // green
+  const SCORE_LOSE= "#6b7280"; // gray
+
+  // Names: winner = bold black, loser = normal gray
+  const homeNameStyle = { fontWeight: homeWon ? "bold" : "normal", color: homeWon ? NAME_WIN : NAME_LOSE };
+  const awayNameStyle = { fontWeight: awayWon ? "bold" : "normal", color: awayWon ? NAME_WIN : NAME_LOSE };
+
+  // Scores: winner = green, loser = gray
+  const homeScoreStyle = { fontWeight: homeWon ? "bold" : "normal", color: homeWon ? SCORE_WIN : SCORE_LOSE };
+  const awayScoreStyle = { fontWeight: awayWon ? "bold" : "normal", color: awayWon ? SCORE_WIN : SCORE_LOSE };
+
+  return (
+    <div key={i} className="ht-fs-grid">
+      <div className="ht-fs-team left"  style={awayNameStyle}  title={m.away}>{m.away}</div>
+      <div className="ht-fs-score away" style={awayScoreStyle}>{m.awayScore}</div>
+      <div className="ht-fs-vs">vs</div>
+      <div className="ht-fs-score home" style={homeScoreStyle}>{m.homeScore}</div>
+      <div className="ht-fs-team right" style={homeNameStyle}  title={m.home}>{m.home}</div>
+    </div>
+  );
+})}
+
   </div>
 </div>
+
+
 
               <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8 }}>
                 {weekData.trophies.map((trophy, i) => (
@@ -4724,6 +4901,304 @@ if (__underT.team) {
           )}
         </div>
       ))}
+{/* Trophy Count Table */}
+{Object.keys(trophyCounts).length > 0 && (
+  <div className="card" style={{ padding: 16, marginTop: 16 }}>
+    <h3 style={{ marginBottom: 16 }}>🏆 Trophy Leaderboard</h3>
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", padding: 8, borderBottom: "2px solid #e5e7eb" }}>Team</th>
+            {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
+              <th key={emoji} style={{ textAlign: "center", padding: 8, borderBottom: "2px solid #e5e7eb" }}>
+                {emoji}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(trophyCounts).map(([team, counts]) => (
+            <tr key={team}>
+              <td style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>{team}</td>
+              {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
+                <td key={emoji} style={{ textAlign: "center", padding: 8, borderBottom: "1px solid #e5e7eb" }}>
+                  {counts[emoji] || 0}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+)}
+
+{/* Season Leaders */}
+{Object.keys(seasonStats?.totalPoints ?? {}).length > 0 && (
+  <div className="card" style={{ padding: 16, marginTop: 16 }}>
+    <h3 style={{ marginBottom: 16 }}>📊 Season Leaders</h3>
+
+{(() => {
+  // ---------- helpers ----------
+  const teams = Object.keys(trophyCounts || {});
+  if (!teams.length) return null;
+
+  const totalPts = seasonStats.totalPoints || {};
+  const blow = seasonStats.blowoutMargins || {};
+  const close = seasonStats.closeWinMargins || {};
+  const luck = seasonStats.luckyUnluckyRecords || {};
+  const mgr  = seasonStats.managerStats || {};
+  const overTotals = seasonStats.overTotals || {};
+  const underTotals = seasonStats.underTotals || {};
+
+  const avg = (arr) => (Array.isArray(arr) && arr.length ? arr.reduce((s,x)=>s+x,0)/arr.length : 0);
+
+  // For Over/Under averages “per game when over/under” we prefer explicit counters if you added them
+  // (seasonStats.overCounts / seasonStats.underCounts). If not present, we FALL BACK to the number of
+  // 📈 / 📉 trophies as a proxy count so the section still renders.
+  const overCounts = seasonStats.overCounts || {};
+  const underCounts = seasonStats.underCounts || {};
+
+  const getCount = (team, emoji) => (trophyCounts?.[team]?.[emoji] ?? 0);
+
+  // Pick leader by trophy count, then break ties with a comparator.
+  // `better` should return true if a beats b under the tiebreak rule.
+  const pickLeader = (emoji, better) => {
+    // 1) find max count for this emoji
+    let maxCount = -Infinity;
+    for (const t of teams) maxCount = Math.max(maxCount, getCount(t, emoji));
+    const contenders = teams.filter(t => getCount(t, emoji) === maxCount);
+    if (!contenders.length) return null;
+    if (contenders.length === 1) return contenders[0];
+
+    // 2) tie-break among contenders
+    let best = contenders[0];
+    for (let i = 1; i < contenders.length; i++) {
+      const t = contenders[i];
+      if (better(t, best)) best = t;
+    }
+    return best;
+  };
+
+  // ---------- compute each leader using counts + tie-breakers ----------
+  // 👑 High score: tie-break = MOST total season points
+  const highLeader = pickLeader("👑", (a,b) => (totalPts[a]||0) > (totalPts[b]||0));
+
+  // 💩 Low score: tie-break = LEAST total season points
+  const lowLeader  = pickLeader("💩", (a,b) => (totalPts[a]||0) < (totalPts[b]||0));
+
+  // 😱 Blow out: tie-break = HIGHEST average winning margin (wins only)
+  const blowLeader = pickLeader("😱", (a,b) => avg(blow[a]||[]) > avg(blow[b]||[]));
+
+  // 😅 Close win: tie-break = SMALLEST average winning margin (wins only)
+  const closeLeader = pickLeader("😅", (a,b) => {
+    const avga = avg(close[a]||[]);
+    const avgb = avg(close[b]||[]);
+    // smaller wins; if one has 0 wins and the other >0, treat the one with wins as better
+    if (avga === 0 && avgb > 0) return false;
+    if (avgb === 0 && avga > 0) return true;
+    return avga < avgb;
+  });
+
+  // 🍀 Lucky: tie-break = WORST all-play record (lowest vsW - vsL; if tie, lowest vsW%)
+  const luckyLeader = pickLeader("🍀", (a,b) => {
+    const A = luck[a]||{vsW:0,vsL:0}; const B = luck[b]||{vsW:0,vsL:0};
+    const diffA = (A.vsW - A.vsL), diffB = (B.vsW - B.vsL);
+    if (diffA !== diffB) return diffA < diffB; // more "unlucky" = worse all-play record
+    // tie: lower win%
+    const wa = A.vsW + A.vsL ? A.vsW / (A.vsW + A.vsL) : 0;
+    const wb = B.vsW + B.vsL ? B.vsW / (B.vsW + B.vsL) : 0;
+    return wa < wb;
+  });
+
+  // 😡 Unlucky: tie-break = BEST all-play record (highest vsW - vsL; then highest vsW%)
+  const unluckyLeader = pickLeader("😡", (a,b) => {
+    const A = luck[a]||{vsW:0,vsL:0}; const B = luck[b]||{vsW:0,vsL:0};
+    const diffA = (A.vsW - A.vsL), diffB = (B.vsW - B.vsL);
+    if (diffA !== diffB) return diffA > diffB;
+    const wa = A.vsW + A.vsL ? A.vsW / (A.vsW + A.vsL) : 0;
+    const wb = B.vsW + B.vsL ? B.vsW / (B.vsW + B.vsL) : 0;
+    return wa > wb;
+  });
+
+  // 📈 Overachiever: tie-break = HIGHEST average (overTotals / games with delta>0)
+  const overLeader = pickLeader("📈", (a,b) => {
+    const ca = overCounts[a] ?? getCount(a,"📈");  // fallback to 📈 count if you didn’t store overCounts
+    const cb = overCounts[b] ?? getCount(b,"📈");
+    const avga = ca ? (overTotals[a]||0) / ca : 0;
+    const avgb = cb ? (overTotals[b]||0) / cb : 0;
+    return avga > avgb;
+  });
+
+  // 📉 Underachiever: tie-break = LOWEST average (underTotals / games with delta<0)
+  const underLeader = pickLeader("📉", (a,b) => {
+    const ca = underCounts[a] ?? getCount(a,"📉"); // fallback to 📉 count if you didn’t store underCounts
+    const cb = underCounts[b] ?? getCount(b,"📉");
+    const avga = ca ? (underTotals[a]||0) / ca : 0;
+    const avgb = cb ? (underTotals[b]||0) / cb : 0;
+    return avga < avgb;
+  });
+
+  // 🤖 Best Manager: tie-break = HIGHEST average % of optimal
+  const bestMgrLeader = pickLeader("🤖", (a,b) => {
+    const pa = mgr[a]?.percentages||[], pb = mgr[b]?.percentages||[];
+    const avga = pa.length ? pa.reduce((s,x)=>s+x,0)/pa.length : 0;
+    const avgb = pb.length ? pb.reduce((s,x)=>s+x,0)/pb.length : 0;
+    return avga > avgb;
+  });
+
+  // 🤡 Worst Manager: tie-break = LOWEST average % of optimal
+  const worstMgrLeader = pickLeader("🤡", (a,b) => {
+    const pa = mgr[a]?.percentages||[], pb = mgr[b]?.percentages||[];
+    const avga = pa.length ? pa.reduce((s,x)=>s+x,0)/pa.length : 0;
+    const avgb = pb.length ? pb.reduce((s,x)=>s+x,0)/pb.length : 0;
+    return avga < avgb;
+  });
+
+  // ---------- rows (with your requested wording) ----------
+  const rows = [];
+
+  if (highLeader) rows.push(
+    <div key="hi">👑 The current <strong>Highest Scorer</strong> king is <strong>{highLeader}</strong> with a total of {Number(totalPts[highLeader]||0).toFixed(2)} points</div>
+  );
+
+  if (lowLeader) rows.push(
+    <div key="lo">💩 The current <strong>Lowest Scorer</strong> peasant is <strong>{lowLeader}</strong> with a total of {Number(totalPts[lowLeader]||0).toFixed(2)} points</div>
+  );
+
+  if (blowLeader) rows.push(
+    <div key="bl">😱 The current <strong>Blow Out</strong> leader is <strong>{blowLeader}</strong> who has blown out their opponents by an average of {avg(blow[blowLeader]||[]).toFixed(2)} points</div>
+  );
+
+  if (closeLeader) rows.push(
+    <div key="cw">😅 The current <strong>Close Wins</strong> title holder is <strong>{closeLeader}</strong> who has won by an average of {avg(close[closeLeader]||[]).toFixed(2)} points</div>
+  );
+
+  if (luckyLeader) {
+    const r = luck[luckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
+    rows.push(
+      <div key="lc">🍀 <strong>{luckyLeader}</strong> should buy lotto tickets, they are currently {r.vsW}-{r.vsL} against the league yet won {r.wins} of {r.wins + r.losses} matchups</div>
+    );
+  }
+
+  if (unluckyLeader) {
+    const r = luck[unluckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
+    rows.push(
+      <div key="ul">😡 <strong>{unluckyLeader}</strong> should file a complaint with the schedule maker, they are currently {r.vsW}-{r.vsL} against the league but lost {r.losses} of {r.wins + r.losses} matchups</div>
+    );
+  }
+
+  if (overLeader) {
+    const total = Number(overTotals[overLeader]||0);
+    const count = (overCounts[overLeader] ?? getCount(overLeader,"📈")) || 0;
+    const average = count ? (total / count) : 0;
+    rows.push(
+      <div key="ov">📈 The biggest <strong>Overachiever</strong> is <strong>{overLeader}</strong> scoring a total of {total.toFixed(2)} points over their projection and averaging {average.toFixed(2)} points over their projection each game</div>
+    );
+  }
+
+  if (underLeader) {
+    const total = Number(underTotals[underLeader]||0);
+    const count = (underCounts[underLeader] ?? getCount(underLeader,"📉")) || 0;
+    const average = count ? (total / count) : 0;
+    rows.push(
+      <div key="un">📉 The biggest <strong>Underachiever</strong> is <strong>{underLeader}</strong> scoring a total of {total.toFixed(2)} points under their projection and averaging {average.toFixed(2)} points under their projection each game</div>
+    );
+  }
+
+  if (bestMgrLeader) {
+    const m = mgr[bestMgrLeader]||{benchPoints:0,percentages:[]};
+    const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
+    rows.push(
+      <div key="bm">🤖 The <strong>Best Manager</strong> so far is <strong>{bestMgrLeader}</strong>, they left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+    );
+  }
+
+  if (worstMgrLeader) {
+    const m = mgr[worstMgrLeader]||{benchPoints:0,percentages:[]};
+    const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
+    rows.push(
+      <div key="wm">🤡 The <strong>Worst Manager</strong> so far is <strong>{worstMgrLeader}</strong>, they left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+    );
+  }
+// --- Separator before the last two meta awards ---
+rows.push(<br key="sep-br" />);
+
+// --- Positive/Negative meta awards -----------------------------------------
+const POSITIVE_EMOJIS = ["👑","😱","😅","🍀","🤖","📈"]; // High, Blowout, Close Win, Lucky, Best Mgr, Overachiever
+const NEGATIVE_EMOJIS = ["💩","😡","🤡","📉"];         // Low, Unlucky, Worst Mgr, Underachiever
+const sumByEmojiSet = (team, set) =>
+  set.reduce((s, e) => s + (trophyCounts?.[team]?.[e] || 0), 0);
+
+// Build winners by most trophies; tie-breakers use season total points
+// Positive: tie -> MOST total points
+let posMax = -1, posContenders = [];
+teams.forEach(t => {
+  const v = sumByEmojiSet(t, POSITIVE_EMOJIS);
+  if (v > posMax) { posMax = v; posContenders = [t]; }
+  else if (v === posMax) posContenders.push(t);
+});
+let posLeader = posContenders[0] || null;
+for (let i = 1; i < posContenders.length; i++) {
+  if ((totalPts[posContenders[i]] || 0) > (totalPts[posLeader] || 0)) posLeader = posContenders[i];
+}
+
+// Negative: tie -> LEAST total points
+let negMax = -1, negContenders = [];
+teams.forEach(t => {
+  const v = sumByEmojiSet(t, NEGATIVE_EMOJIS);
+  if (v > negMax) { negMax = v; negContenders = [t]; }
+  else if (v === negMax) negContenders.push(t);
+});
+let negLeader = negContenders[0] || null;
+for (let i = 1; i < negContenders.length; i++) {
+  if ((totalPts[negContenders[i]] || 0) < (totalPts[negLeader] || 0)) negLeader = negContenders[i];
+}
+
+// Render the new awards
+if (posLeader && posMax > 0) {
+  rows.push(
+    <div key="meta-positive">
+      <div style={{ fontSize: "1.1em" }}>
+          <div style={{ textAlign: "center" }}>🧲 The <strong>Trophy Magnet</strong> award goes to <strong>{posLeader}</strong>
+      </div></div>
+
+      <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>
+        <div><div style={{ textAlign: "center" }}><strong>{posMax}</strong> positive trophies</div></div>
+        <div><div style={{ fontSize: "0.75em" }}><div style={{ textAlign: "center" }}>(High Score👑, Blow Out😱, Close Win😅, Lucky🍀, Best Manager🤖, and Overachiever📈)</div></div></div>
+        <div style={{ fontSize: "1.1em", marginTop: 8, lineHeight: 1.4 }}><div style={{ textAlign: "center" }}>That’s a fantasy GM clinic.. skills so good it looks suspiciously like luck!</div></div>
+      </div>
+    </div>
+  );
+}
+
+if (negLeader && negMax > 0) {
+  rows.push(
+    <div key="meta-negative">
+<br />
+      <div style={{ fontSize: "1.1em" }}>
+  <div style={{ textAlign: "center" }}>
+        🥄 The <strong>Wooden Spoon</strong> award goes to <strong>{negLeader}</strong>
+      </div></div>
+
+      <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>
+
+        <div><div style={{ textAlign: "center" }}><strong>{negMax}</strong> negative trophies</div></div>
+        <div><div style={{ fontSize: "0.75em" }}><div style={{ textAlign: "center" }}>(Low Score💩, Unlucky😡, Worst Manager🤡, and Underachiever📉)</div></div></div>
+        <div style={{ fontSize: "1.1em", marginTop: 8, lineHeight: 1.4 }}><div style={{ textAlign: "center" }}>Not the hardware you want… might be time to retire the franchise and focus on pickleball!🏓</div></div>
+      </div>
+    </div>
+  );
+}
+
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{rows}</div>;
+})()}
+
+
+  </div>
+)}
     </Section>
   );
 }
@@ -5622,7 +6097,7 @@ function IntroSplash({ selectedLeague }) {
   const [show, setShow] = useState(true);
   useEffect(() => { 
     const t = setTimeout(() => setShow(false), 3000); // Reduced from 6 seconds to 3 seconds
-    return () => clearTimeout(t); 
+    return () => clearTimeout(t);  
   }, []);
   
   if (!show) return null;

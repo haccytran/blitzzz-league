@@ -4167,6 +4167,44 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
 }
 
 function HoodTrophiesView({ espn, config, seasonYear, btnPri, btnSec }) {
+// === ADD: tiny helpers for projections (safe names to avoid collisions) ===
+const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21; // Bench, IR
+
+// ESPN per-player projections live in player.stats rows where:
+//  - statSourceId === 1 (projected)
+//  - statSplitTypeId === 1 (weekly split)
+//  - scoringPeriodId === <week>
+const ht_projectedForWeek = (playerObj, week) => {
+  const stats = playerObj?.stats;
+  if (!Array.isArray(stats)) return 0;
+  const row = stats.find(
+    s => s?.scoringPeriodId === week && s?.statSourceId === 1 && s?.statSplitTypeId === 1
+  );
+  return Number(row?.appliedTotal ?? 0);
+};
+
+// Prefer team-level projected total if ESPN provides it; otherwise sum starters' projections
+const ht_teamProjection = (teamSideObj, week) => {
+  const teamLevel =
+    teamSideObj?.totalProjectedPointsLive ??
+    teamSideObj?.totalProjectedPoints ??
+    null;
+  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
+
+  const entries =
+    teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
+    teamSideObj?.roster?.entries ||
+    [];
+
+  let sum = 0;
+  for (const e of entries) {
+    if (ht_isBenchSlot(e?.lineupSlotId)) continue; // starters only
+    const player = e?.playerPoolEntry?.player;
+    sum += ht_projectedForWeek(player, week);
+  }
+  return sum;
+};
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [weeklyTrophies, setWeeklyTrophies] = useState([]);
@@ -4202,6 +4240,12 @@ function HoodTrophiesView({ espn, config, seasonYear, btnPri, btnSec }) {
 
       const trophiesData = [];
 
+
+// === ADD: trackers for the two new trophies (actual - projected) ===
+let __overT = { team: "", delta: -Infinity, actual: 0, proj: 0 };
+let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
+
+
       // Process each week individually
 for (let weekNum = 1; weekNum <= 14; weekNum++) {
         const weekResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNum}`, {
@@ -4224,6 +4268,20 @@ for (let weekNum = 1; weekNum <= 14; weekNum++) {
         );
         
         if (!allGamesComplete) continue;
+// === ADD: build a lookup of boxscore rows (for reliable projections) ===
+let __boxById = new Map();
+try {
+  const boxResp = await fetchEspnJson({
+    leagueId: espn.leagueId,
+    seasonId: espn.seasonId,
+    view: "mBoxscore",
+    scoringPeriodId: weekNum
+  });
+  const boxSched = Array.isArray(boxResp?.schedule) ? boxResp.schedule : [];
+  for (const row of boxSched) if (row?.id != null) __boxById.set(row.id, row);
+} catch (e) {
+  // non-fatal; we'll fall back to mMatchup objects if mBoxscore isn’t available
+}
 
         const weekTrophies = {
           week: weekNum,
@@ -4283,6 +4341,30 @@ for (let weekNum = 1; weekNum <= 14; weekNum++) {
             homeScore: homeScore.toFixed(2),
             awayScore: awayScore.toFixed(2)
           });
+
+// === ADD: compute projections & deltas for Over/Underachiever ===
+const mb = __boxById.get(matchup.id) || matchup;
+
+const homeProj = ht_teamProjection(mb.home || matchup.home, weekNum);
+const awayProj = ht_teamProjection(mb.away || matchup.away, weekNum);
+
+const homeDelta = homeScore - homeProj;
+const awayDelta = awayScore - awayProj;
+
+if (homeDelta > __overT.delta) {
+  __overT = { team: homeTeam, delta: homeDelta, actual: homeScore, proj: homeProj };
+}
+if (awayDelta > __overT.delta) {
+  __overT = { team: awayTeam, delta: awayDelta, actual: awayScore, proj: awayProj };
+}
+
+if (homeDelta < __underT.delta) {
+  __underT = { team: homeTeam, delta: homeDelta, actual: homeScore, proj: homeProj };
+}
+if (awayDelta < __underT.delta) {
+  __underT = { team: awayTeam, delta: awayDelta, actual: awayScore, proj: awayProj };
+}
+
 
           // High/Low scores
           [
@@ -4410,6 +4492,24 @@ console.log(`Week ${weekNum} team records:`, teamScores.map(t => ({
             value: `${worstManager.team} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
           });
         }
+
+// === ADD: Overachiever / Underachiever trophy rows ===
+if (__overT.team) {
+  weekTrophies.trophies.push({
+    emoji: "📈",
+    title: "Overachiever",
+    value: `${__overT.team} was ${__overT.delta.toFixed(2)} points over their projection (${__overT.actual.toFixed(2)} vs ${__overT.proj.toFixed(2)})`
+    // If your code uses 'text' instead of 'value', change 'value:' to 'text:' here and below.
+  });
+}
+if (__underT.team) {
+  weekTrophies.trophies.push({
+    emoji: "📉",
+    title: "Underachiever",
+    value: `${__underT.team} was ${Math.abs(__underT.delta).toFixed(2)} points under their projection (${__underT.actual.toFixed(2)} vs ${__underT.proj.toFixed(2)})`
+  });
+}
+
 
         trophiesData.push(weekTrophies);
       }

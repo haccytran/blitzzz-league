@@ -295,10 +295,9 @@ const switchLeague = () => {
 };
 
 const VALID_TABS = [
-  "announcements","activity","weekly","highestscorer","waivers","dues",
+  "announcements","hoodtrophies","activity","weekly","highestscorer","waivers","dues",
   "transactions","drafts","rosters","powerrankings","settings","trading","paydues","polls" 
 ];
-
   const initialTabFromHash = () => {
     const h = (window.location.hash || "").replace("#","").trim();
     return VALID_TABS.includes(h) ? h : "activity";
@@ -904,6 +903,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
   announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
+  hoodtrophies: <HoodTrophiesView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
   activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
@@ -1016,6 +1016,7 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           
           {/* Navigation with mobile close functionality */}
           <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="hoodtrophies" label="🏆 Hood Trophies" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           {config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           {config.id === 'sculpin' && <NavBtn id="highestscorer" label="🏆 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> 
@@ -2932,7 +2933,7 @@ byWeek.forEach((transactions, week) => {
               )}
             </div>
             <div style={{ fontSize: 12 }}>
-  {r.method === "Free Agent" ? (
+   {r.method === "Free Agent" ? (
     r.isPaired ? (
       <span>
         <span style={{ color: "#22c55e" }}>Free</span>
@@ -2954,11 +2955,10 @@ byWeek.forEach((transactions, week) => {
       )}
     </span>
   ) : (
-    <span style={{ color: "#64748b" }}>
+    <span style={{ color: "#000000" }}>
       {r.method || "—"}
     </span>
-  )}
-</div>
+  )}</div>
           </div>
         </div>
       );
@@ -4166,6 +4166,467 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
   );
 }
 
+function HoodTrophiesView({ espn, config, seasonYear, btnPri, btnSec }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [weeklyTrophies, setWeeklyTrophies] = useState([]);
+  const [expandedWeeks, setExpandedWeeks] = useState(new Set());
+
+  const loadTrophies = async () => {
+    if (!espn.leagueId || !espn.seasonId) {
+      setError("Set League ID and Season in League Settings first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      // First get team names
+      const teamsResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (!teamsResponse.ok) throw new Error(`ESPN API error: ${teamsResponse.status}`);
+      const teamsData = await teamsResponse.json();
+      
+      const teamNames = {};
+      if (teamsData.teams) {
+        teamsData.teams.forEach(team => {
+          teamNames[team.id] = team.location && team.nickname 
+            ? `${team.location} ${team.nickname}` 
+            : team.name || `Team ${team.id}`;
+        });
+      }
+
+      const trophiesData = [];
+
+      // Process each week individually
+for (let weekNum = 1; weekNum <= 14; weekNum++) {
+        const weekResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNum}`, {
+          mode: 'cors',
+          headers: { 'Accept': 'application/json' }
+        });
+
+        if (!weekResponse.ok) continue;
+        const weekData = await weekResponse.json();
+
+        if (!weekData.schedule) continue;
+
+        const matchups = weekData.schedule.filter(m => m.matchupPeriodId === weekNum);
+        
+        // Check if week is complete
+        const allGamesComplete = matchups.every(m => 
+          m.home?.totalPoints > 0 && 
+          m.away?.totalPoints > 0 && 
+          m.winner !== 'UNDECIDED'
+        );
+        
+        if (!allGamesComplete) continue;
+
+        const weekTrophies = {
+          week: weekNum,
+          matchups: [],
+          trophies: []
+        };
+
+        // Initialize tracking
+        let highScore = { team: "", score: 0 };
+        let lowScore = { team: "", score: Infinity };
+        let biggestBlowout = { winner: "", loser: "", margin: 0 };
+        let closestWin = { winner: "", loser: "", margin: Infinity };
+        let bestManager = { team: "", percentage: 0 };
+        let worstManager = { team: "", percentage: 100, benchPoints: 0 };
+        let luckiestWin = null;
+        let unluckyLoss = null;
+
+        const teamScores = [];
+        const teamOptimalScores = {};
+
+        // Process each matchup
+        matchups.forEach(matchup => {
+          if (!matchup.home || !matchup.away) return;
+          
+          const homeScore = matchup.home.totalPoints || 0;
+          const awayScore = matchup.away.totalPoints || 0;
+          const homeTeam = teamNames[matchup.home.teamId];
+          const awayTeam = teamNames[matchup.away.teamId];
+
+          // Calculate optimal scores from boxscore
+          const homeOptimal = calculateOptimalScore(matchup.home);
+          const awayOptimal = calculateOptimalScore(matchup.away);
+          
+          teamOptimalScores[matchup.home.teamId] = homeOptimal;
+          teamOptimalScores[matchup.away.teamId] = awayOptimal;
+
+          teamScores.push({ 
+            team: homeTeam,
+            teamId: matchup.home.teamId,
+            score: homeScore,
+            optimal: homeOptimal,
+            won: homeScore > awayScore
+          });
+          
+          teamScores.push({ 
+            team: awayTeam,
+            teamId: matchup.away.teamId,
+            score: awayScore,
+            optimal: awayOptimal,
+            won: awayScore > homeScore
+          });
+
+          // Track matchup results
+          weekTrophies.matchups.push({
+            home: homeTeam,
+            away: awayTeam,
+            homeScore: homeScore.toFixed(2),
+            awayScore: awayScore.toFixed(2)
+          });
+
+          // High/Low scores
+          [
+            { team: homeTeam, score: homeScore },
+            { team: awayTeam, score: awayScore }
+          ].forEach(({ team, score }) => {
+            if (score > highScore.score) highScore = { team, score };
+            if (score < lowScore.score && score > 0) lowScore = { team, score };
+          });
+
+          // Blowout and close win
+          const margin = Math.abs(homeScore - awayScore);
+          if (margin > 0) {
+            const winner = homeScore > awayScore ? homeTeam : awayTeam;
+            const loser = homeScore > awayScore ? awayTeam : homeTeam;
+            
+            if (margin > biggestBlowout.margin) {
+              biggestBlowout = { winner, loser, margin };
+            }
+            if (margin < closestWin.margin) {
+              closestWin = { winner, loser, margin };
+            }
+          }
+
+          // Best/Worst Manager calculations
+          [
+            { team: homeTeam, actual: homeScore, optimal: homeOptimal },
+            { team: awayTeam, actual: awayScore, optimal: awayOptimal }
+          ].forEach(({ team, actual, optimal }) => {
+            if (optimal > 0) {
+              const percentage = (actual / optimal) * 100;
+              const benchPoints = optimal - actual;
+              
+              if (percentage > bestManager.percentage || bestManager.percentage === 0) {
+                bestManager = { team, percentage };
+              }
+              if ((percentage < worstManager.percentage && benchPoints > 0) || worstManager.percentage === 100) {
+                worstManager = { team, percentage, benchPoints };
+              }
+            }
+          });
+        });
+
+        // Lucky/Unlucky calculation
+        const sortedByScore = [...teamScores].sort((a, b) => b.score - a.score);
+console.log(`Week ${weekNum} team records:`, teamScores.map(t => ({
+  team: t.team,
+  won: t.won,
+  wouldBeat: sortedByScore.length - 1 - sortedByScore.indexOf(t),
+  wouldLose: sortedByScore.indexOf(t)
+})));
+        sortedByScore.forEach((team, index) => {
+          const wouldBeatCount = sortedByScore.length - 1 - index;
+          const wouldLoseCount = index;
+          
+          if (team.won && wouldLoseCount > wouldBeatCount && !luckiestWin) {
+            luckiestWin = { team: team.team, wouldBeat: wouldBeatCount, wouldLose: wouldLoseCount };
+          }
+          if (!team.won && wouldBeatCount > wouldLoseCount && !unluckyLoss) {
+            unluckyLoss = { team: team.team, wouldBeat: wouldBeatCount, wouldLose: wouldLoseCount };
+          }
+        });
+
+        // Build trophies
+        if (highScore.team) {
+          weekTrophies.trophies.push({
+            emoji: "👑",
+            title: "High score",
+            value: `${highScore.team} with ${highScore.score.toFixed(2)} points`
+          });
+        }
+
+        if (lowScore.score < Infinity) {
+          weekTrophies.trophies.push({
+            emoji: "💩",
+            title: "Low score",
+            value: `${lowScore.team} with ${lowScore.score.toFixed(2)} points`
+          });
+        }
+
+        if (biggestBlowout.margin > 0) {
+          weekTrophies.trophies.push({
+            emoji: "😱",
+            title: "Blow out",
+            value: `${biggestBlowout.winner} blew out ${biggestBlowout.loser} by ${biggestBlowout.margin.toFixed(2)} points`
+          });
+        }
+
+        if (closestWin.margin < Infinity) {
+          weekTrophies.trophies.push({
+            emoji: "😅",
+            title: "Close win",
+            value: `${closestWin.winner} barely beat ${closestWin.loser} by ${closestWin.margin.toFixed(2)} points`
+          });
+        }
+
+        if (luckiestWin) {
+          weekTrophies.trophies.push({
+            emoji: "🍀",
+            title: "Lucky",
+            value: `${luckiestWin.team} was ${luckiestWin.wouldBeat}-${luckiestWin.wouldLose} against the league, but still got the win`
+          });
+        }
+
+        if (unluckyLoss) {
+          weekTrophies.trophies.push({
+            emoji: "😡",
+            title: "Unlucky",
+            value: `${unluckyLoss.team} was ${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose} against the league, but still took an L`
+          });
+        }
+
+        if (bestManager.percentage > 0 && bestManager.team) {
+          weekTrophies.trophies.push({
+            emoji: "🤖",
+            title: "Best Manager",
+            value: `${bestManager.team} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
+          });
+        }
+
+        if (worstManager.benchPoints > 0 && worstManager.team) {
+          weekTrophies.trophies.push({
+            emoji: "🤡",
+            title: "Worst Manager",
+            value: `${worstManager.team} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
+          });
+        }
+
+        trophiesData.push(weekTrophies);
+      }
+
+      // Sort newest first and auto-expand most recent
+      trophiesData.sort((a, b) => b.week - a.week);
+      if (trophiesData.length > 0) {
+        setExpandedWeeks(new Set([trophiesData[0].week]));
+      }
+
+      setWeeklyTrophies(trophiesData);
+      setError("");
+
+    } catch (err) {
+      console.error('Failed to load trophies:', err);
+      setError("Failed to load trophy data: " + err.message);
+    }
+    
+    setLoading(false);
+  };
+
+  // Calculate optimal lineup helper
+  const calculateOptimalScore = (teamData) => {
+    if (!teamData?.rosterForCurrentScoringPeriod?.entries) return teamData.totalPoints || 0;
+    
+    const entries = teamData.rosterForCurrentScoringPeriod.entries;
+    const playersByPosition = { QB: [], RB: [], WR: [], TE: [], K: [], DEF: [] };
+    
+    entries.forEach(entry => {
+      const pos = entry.playerPoolEntry?.player?.defaultPositionId;
+      const score = entry.playerPoolEntry?.appliedStatTotal || 0;
+      
+      // Map position IDs: 1=QB, 2=RB, 3=WR, 4=TE, 5=K, 16=DEF
+      let position;
+      switch(pos) {
+        case 1: position = 'QB'; break;
+        case 2: position = 'RB'; break;
+        case 3: position = 'WR'; break;
+        case 4: position = 'TE'; break;
+        case 5: position = 'K'; break;
+        case 16: position = 'DEF'; break;
+        default: return;
+      }
+      
+      playersByPosition[position].push(score);
+    });
+    
+    // Sort each position by score descending
+    Object.keys(playersByPosition).forEach(pos => {
+      playersByPosition[pos].sort((a, b) => b - a);
+    });
+    
+    // Build optimal lineup
+    let optimal = 0;
+    
+    // Fixed positions
+    optimal += playersByPosition.QB[0] || 0;  // 1 QB
+    optimal += playersByPosition.K[0] || 0;   // 1 K
+    optimal += playersByPosition.DEF[0] || 0; // 1 DEF
+    optimal += playersByPosition.TE[0] || 0;  // 1 TE
+    
+    // 2 RBs
+    optimal += playersByPosition.RB[0] || 0;
+    optimal += playersByPosition.RB[1] || 0;
+    
+    // 2 WRs
+    optimal += playersByPosition.WR[0] || 0;
+    optimal += playersByPosition.WR[1] || 0;
+    
+    // Flex spots - collect remaining eligible players
+    const flexEligible = [
+      ...(playersByPosition.RB.slice(2) || []),
+      ...(playersByPosition.WR.slice(2) || []),
+      ...(playersByPosition.TE.slice(1) || [])
+    ].sort((a, b) => b - a);
+    
+    // 2 Flex spots (best remaining)
+    optimal += flexEligible[0] || 0;
+    optimal += flexEligible[1] || 0;
+    
+    return optimal;
+  };
+
+  useEffect(() => {
+    if (espn.seasonId && espn.leagueId) {
+      loadTrophies();
+    }
+  }, [espn.seasonId, espn.leagueId]);
+
+  const toggleWeek = (week) => {
+    const newExpanded = new Set(expandedWeeks);
+    if (newExpanded.has(week)) {
+      newExpanded.delete(week);
+    } else {
+      newExpanded.add(week);
+    }
+    setExpandedWeeks(newExpanded);
+  };
+
+  return (
+    <Section title="🏆 Hood Trophies" actions={
+      <button className="btn" style={btnSec} onClick={loadTrophies} disabled={loading}>
+        {loading ? "Loading..." : "Refresh"}
+      </button>
+    }>
+      {error && <div style={{ color: "#dc2626", marginBottom: 16 }}>{error}</div>}
+      
+      {weeklyTrophies.length === 0 && !loading && !error && (
+        <div style={{ color: "#64748b" }}>No completed weeks yet.</div>
+      )}
+
+      {weeklyTrophies.map(weekData => (
+        <div key={weekData.week} className="card" style={{ padding: 16, marginBottom: 16 }}>
+          <div 
+            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+            onClick={() => toggleWeek(weekData.week)}
+          >
+            <h3 style={{ margin: 0 }}>Week {weekData.week} Trophies</h3>
+            <button className="btn" style={btnSec}>
+              {expandedWeeks.has(weekData.week) ? "Hide ▲" : "Show ▼"}
+            </button>
+          </div>
+
+          {expandedWeeks.has(weekData.week) && (
+            <div style={{ marginTop: 16 }}>
+              {/* Final Scores */}
+<div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 6 }}>
+  <h4 style={{ marginTop: 0, marginBottom: 12, textAlign: "center" }}>Final Scores</h4>
+  <div style={{ display: "table", width: "100%", borderSpacing: "0 4px" }}>
+    {weekData.matchups.map((matchup, i) => {
+      const homeWon = parseFloat(matchup.homeScore) > parseFloat(matchup.awayScore);
+      const awayWon = !homeWon;
+      return (
+        <div key={i} style={{ 
+          display: "table-row"
+        }}>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "left",
+            fontWeight: awayWon ? "bold" : "normal",
+            color: awayWon ? "#059669" : "#6b7280",
+            fontSize: 14
+          }}>
+            {matchup.awayScore}
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "right",
+            fontWeight: awayWon ? "bold" : "normal",
+            color: awayWon ? "#059669" : "#6b7280",
+            fontSize: 13
+          }}>
+            {matchup.away}
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 12px",
+            textAlign: "center",
+            color: "#9ca3af",
+            fontSize: 12
+          }}>
+            vs
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "left",
+            fontWeight: homeWon ? "bold" : "normal",
+            color: homeWon ? "#059669" : "#6b7280",
+            fontSize: 13
+          }}>
+            {matchup.home}
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "right",
+            fontWeight: homeWon ? "bold" : "normal",
+            color: homeWon ? "#059669" : "#6b7280",
+            fontSize: 14
+          }}>
+            {matchup.homeScore}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</div>
+
+              <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8 }}>
+                {weekData.trophies.map((trophy, i) => (
+                  <div key={i} style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    gap: 12,
+                    padding: 12,
+                    background: "#fff",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 6
+                  }}>
+                    <span style={{ fontSize: 24 }}>{trophy.emoji}</span>
+                    <div>
+                      <div style={{ fontWeight: 600, marginBottom: 2 }}>{trophy.title}</div>
+                      <div style={{ fontSize: 14, color: "#64748b" }}>{trophy.value}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </Section>
+  );
+}
 /* =========================
    Power Rankings
    ========================= */

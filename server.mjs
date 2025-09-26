@@ -34,6 +34,14 @@ if (DATABASE_URL) {
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
   });
 
+// after: const pool = new Pool({ connectionString: DATABASE_URL, ssl: ... })
+pool.on('connect', (client) => {
+  client.query("SET search_path = public").catch((err) => {
+    console.error("Failed to set search_path to public", err);
+  });
+});
+
+
   // Initialize database tables
  async function initDB() {
   const client = await pool.connect();
@@ -2152,13 +2160,9 @@ let bidAmount = null;
 // Only include bid amounts if this is a FAAB league
 if (displayMethod === "Waivers" && isFAABLeague) {
   bidAmount = r.bidAmount != null ? r.bidAmount : 0;
-}
-
-if (displayMethod === "Waivers") {
-  bidAmount = r.bidAmount != null ? r.bidAmount : 0;
-  displayMethod = "Waivers"; // Keep base text, we'll add formatting in frontend
-}
-    
+} else if (displayMethod === "Waivers" && !isFAABLeague) {
+  bidAmount = undefined; // Use undefined instead of null
+}    
     return {
       date: fmtPT(r.date),
       ts: new Date(r.date).getTime(),

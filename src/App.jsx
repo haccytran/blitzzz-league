@@ -4519,22 +4519,6 @@ if (unluckyLoss) {
   });
 }
 
-        if (bestManager.percentage > 0 && bestManager.team) {
-          weekTrophies.trophies.push({
-            emoji: "🤖",
-            title: "Best Manager",
-            value: `${bestManager.team} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
-          });
-        }
-
-        if (worstManager.benchPoints > 0 && worstManager.team) {
-          weekTrophies.trophies.push({
-            emoji: "🤡",
-            title: "Worst Manager",
-            value: `${worstManager.team} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
-          });
-        }
-
 // === ADD: Overachiever / Underachiever trophy rows ===
 if (__overT.team) {
   weekTrophies.trophies.push({
@@ -4551,6 +4535,25 @@ if (__underT.team) {
     value: `${__underT.team} was ${Math.abs(__underT.delta).toFixed(2)} points under their projection (${__underT.actual.toFixed(2)} vs ${__underT.proj.toFixed(2)})`
   });
 }
+
+
+        if (bestManager.percentage > 0 && bestManager.team) {
+          weekTrophies.trophies.push({
+            emoji: "🤖",
+            title: "Best Manager",
+            value: `${bestManager.team} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
+          });
+        }
+
+        if (worstManager.benchPoints > 0 && worstManager.team) {
+          weekTrophies.trophies.push({
+            emoji: "🤡",
+            title: "Worst Manager",
+            value: `${worstManager.team} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
+          });
+        }
+
+
 
 
         trophiesData.push(weekTrophies);
@@ -5094,7 +5097,7 @@ setTrophyCounts(trophyCounts);
     const count = (overCounts[overLeader] ?? getCount(overLeader,"📈")) || 0;
     const average = count ? (total / count) : 0;
     rows.push(
-      <div key="ov">📈 The biggest <strong>Overachiever</strong> is <strong>{overLeader}</strong> scoring a total of {total.toFixed(2)} points over their projection and averaging {average.toFixed(2)} points over their projection each game</div>
+      <div key="ov">📈 The biggest <strong>Overachiever</strong> is <strong>{overLeader}</strong> scoring a total of {total.toFixed(2)} points over their projections and averaging {average.toFixed(2)} points over their projection each game</div>
     );
   }
 
@@ -5103,7 +5106,7 @@ setTrophyCounts(trophyCounts);
     const count = (underCounts[underLeader] ?? getCount(underLeader,"📉")) || 0;
     const average = count ? (total / count) : 0;
     rows.push(
-      <div key="un">📉 The biggest <strong>Underachiever</strong> is <strong>{underLeader}</strong> scoring a total of {total.toFixed(2)} points under their projection and averaging {average.toFixed(2)} points under their projection each game</div>
+      <div key="un">📉 The biggest <strong>Underachiever</strong> is <strong>{underLeader}</strong> scoring a total of {total.toFixed(2)} points under their projections and averaging {average.toFixed(2)} points under their projection each game</div>
     );
   }
 

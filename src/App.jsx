@@ -1353,38 +1353,51 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
 
   // Load weekly challenge winners
   const loadWeeklyChallengeWinners = async () => {
-    if (!espn.leagueId || !espn.seasonId) return;
+  if (!espn.leagueId || !espn.seasonId) return;
+  
+  setLoading(true);
+  try {
+    const winners = {};
+    const now = new Date();
+    const week1EndDate = new Date('2025-09-08T23:59:00-07:00');
     
-    setLoading(true);
-    try {
-      const winners = {};
-      const now = new Date();
-      const week1EndDate = new Date('2025-09-08T23:59:00-07:00'); // Adjust this to your league's Week 1 end
+    // Process weeks 1-13
+    for (let week = 1; week <= 13; week++) {
+      const weekEnd = new Date(week1EndDate);
+      weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7));
       
-      // Process weeks 1-13
-      for (let week = 1; week <= 13; week++) {
-        const weekEnd = new Date(week1EndDate);
-        weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7));
+      if (now <= weekEnd) continue;
+      
+      try {
+        let winner = null;
         
-        // Only process completed weeks
-        if (now <= weekEnd) continue;
-        
-        try {
-          const winner = await determineWeeklyWinner(week, espn.leagueId, espn.seasonId);
-          if (winner) {
-            winners[week] = winner;
-          }
-        } catch (error) {
-          console.error(`Failed to determine Week ${week} winner:`, error);
+        // Week 6 (Overachiever) - use projection API
+        if (week === 6) {
+          winner = await determineOverachiever(week, espn.leagueId, espn.seasonId);
         }
+        // Week 12 (Bulls-eye) - use projection API  
+        else if (week === 12) {
+          winner = await determineBullseye(week, espn.leagueId, espn.seasonId);
+        }
+        // Other weeks use existing logic
+        else {
+          winner = await determineWeeklyWinner(week, espn.leagueId, espn.seasonId);
+        }
+        
+        if (winner) {
+          winners[week] = winner;
+        }
+      } catch (error) {
+        console.error(`Failed to determine Week ${week} winner:`, error);
       }
-      
-      setWeeklyWinners(winners);
-    } catch (error) {
-      console.error('Failed to load weekly winners:', error);
     }
-    setLoading(false);
-  };
+    
+    setWeeklyWinners(winners);
+  } catch (error) {
+    console.error('Failed to load weekly winners:', error);
+  }
+  setLoading(false);
+};
 
   useEffect(() => {
     if (espn.leagueId && espn.seasonId) {
@@ -1415,7 +1428,6 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
         {list.map(item => {
           const weekNumber = item.week || 0;
           const winner = weeklyWinners[weekNumber];
-          const requiresManual = [6, 12].includes(weekNumber);
           const isEditing = editingId === item.id;
           
           return (
@@ -1492,19 +1504,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                     </div>
                   )}
 
-                  {/* Manual Winner Selection for Weeks 6 & 12 */}
-                  {requiresManual && isAdmin && !winner && (
-                    <ManualWinnerSelector
-                      weekNumber={weekNumber}
-                      espn={espn}
-                      onWinnerSelect={(winnerData) => {
-                        setWeeklyWinners(prev => ({ ...prev, [weekNumber]: winnerData }));
-                      }}
-                      btnPri={btnPri}
-                      btnSec={btnSec}
-                    />
-                  )}
-
+                  
                                   </>
               )}
             </div>
@@ -1512,103 +1512,6 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
         })}
       </div>
     </Section>
-  );
-}
-
-function ManualWinnerSelector({ weekNumber, espn, onWinnerSelect, btnPri, btnSec }) {
-  const [teams, setTeams] = useState([]);
-  const [selectedTeam, setSelectedTeam] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const loadTeams = async () => {
-      try {
-        const response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
-          mode: 'cors',
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          const teamList = (data.teams || []).map(team => ({
-            id: team.id,
-            name: (team.location && team.nickname) 
-              ? `${team.location} ${team.nickname}` 
-              : `Team ${team.id}`
-          }));
-          setTeams(teamList);
-        }
-      } catch (error) {
-        console.error('Failed to load teams:', error);
-      }
-    };
-
-    if (espn.leagueId && espn.seasonId) {
-      loadTeams();
-    }
-  }, [espn.leagueId, espn.seasonId]);
-
-  const handleSaveWinner = async () => {
-    if (!selectedTeam) return;
-    
-    setLoading(true);
-    const teamName = teams.find(t => t.id.toString() === selectedTeam)?.name || selectedTeam;
-    
-    const winnerData = {
-      teamName: teamName,
-      details: `Manually selected winner for Week ${weekNumber}`,
-      manual: true
-    };
-
-    // Save to server (you'll need to implement this endpoint)
-    try {
-      // await apiCallLeague('/weekly-winners', {
-      //   method: 'POST',
-      //   body: JSON.stringify({ week: weekNumber, winner: winnerData })
-      // });
-      
-      onWinnerSelect(winnerData);
-    } catch (error) {
-      console.error('Failed to save winner:', error);
-    }
-    
-    setLoading(false);
-  };
-
-  return (
-    <div style={{ 
-      marginTop: 12, 
-      padding: 12, 
-      background: "#f8fafc", 
-      borderRadius: 6,
-      border: "1px solid #e2e8f0"
-    }}>
-      <div style={{ marginBottom: 8, fontWeight: "600" }}>Select Winner:</div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <select 
-          className="input" 
-          value={selectedTeam} 
-          onChange={(e) => setSelectedTeam(e.target.value)}
-          style={{ flex: 1 }}
-        >
-          <option value="">Choose team...</option>
-          {teams.map(team => (
-            <option key={team.id} value={team.id}>{team.name}</option>
-          ))}
-        </select>
-        <button 
-          className="btn" 
-          style={btnPri} 
-          onClick={handleSaveWinner}
-          disabled={!selectedTeam || loading}
-        >
-          {loading ? "Saving..." : "Save Winner"}
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -1717,6 +1620,144 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
     }
   } catch (error) {
     console.error(`Error determining Week ${weekNumber} winner:`, error);
+    return null;
+  }
+}
+
+
+// Week 6: Overachiever - biggest positive difference from projection
+async function determineOverachiever(weekNumber, leagueId, seasonId) {
+  try {
+    const [teamResponse, boxscoreResponse] = await Promise.all([
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      }),
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      })
+    ]);
+    
+    if (!teamResponse.ok || !boxscoreResponse.ok) {
+      throw new Error(`ESPN API error`);
+    }
+    
+    const [teamData, boxscoreData] = await Promise.all([
+      teamResponse.json(),
+      boxscoreResponse.json()
+    ]);
+    
+    const teamNames = {};
+    if (teamData.teams) {
+      teamData.teams.forEach(team => {
+        teamNames[team.id] = team.location && team.nickname 
+          ? `${team.location} ${team.nickname}` 
+          : team.name || `Team ${team.id}`;
+      });
+    }
+    
+    let biggestOverachieve = { team: "", delta: -Infinity, actual: 0, proj: 0 };
+    
+    if (boxscoreData.schedule) {
+      boxscoreData.schedule.forEach(matchup => {
+        [matchup.home, matchup.away].forEach(team => {
+          if (!team) return;
+          
+          const actual = team.totalPoints || 0;
+          const proj = ht_teamProjection(team, weekNumber);
+          const delta = actual - proj;
+          
+          if (delta > biggestOverachieve.delta) {
+            biggestOverachieve = {
+              team: teamNames[team.teamId] || `Team ${team.teamId}`,
+              delta: delta,
+              actual: actual,
+              proj: proj
+            };
+          }
+        });
+      });
+    }
+    
+    if (biggestOverachieve.team) {
+      return {
+        teamName: biggestOverachieve.team,
+        details: `Outperformed projection by ${biggestOverachieve.delta.toFixed(2)} points (${biggestOverachieve.actual.toFixed(2)} vs ${biggestOverachieve.proj.toFixed(2)})`
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error determining Week ${weekNumber} Overachiever:`, error);
+    return null;
+  }
+}
+
+// Week 12: Bulls-eye - closest to 130 points
+async function determineBullseye(weekNumber, leagueId, seasonId) {
+  try {
+    const [teamResponse, matchupResponse] = await Promise.all([
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      }),
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&scoringPeriodId=${weekNumber}`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      })
+    ]);
+    
+    if (!teamResponse.ok || !matchupResponse.ok) {
+      throw new Error(`ESPN API error`);
+    }
+    
+    const [teamData, matchupData] = await Promise.all([
+      teamResponse.json(),
+      matchupResponse.json()
+    ]);
+    
+    const teamNames = {};
+    if (teamData.teams) {
+      teamData.teams.forEach(team => {
+        teamNames[team.id] = team.location && team.nickname 
+          ? `${team.location} ${team.nickname}` 
+          : team.name || `Team ${team.id}`;
+      });
+    }
+    
+    const TARGET = 130;
+    let closestTo130 = Infinity;
+    let winningTeam = null;
+    let winningScore = 0;
+    
+    if (matchupData.schedule) {
+      matchupData.schedule.forEach(matchup => {
+        [matchup.home, matchup.away].forEach(team => {
+          if (!team) return;
+          
+          const score = team.totalPoints || 0;
+          const diff = Math.abs(score - TARGET);
+          
+          if (diff < closestTo130) {
+            closestTo130 = diff;
+            winningTeam = teamNames[team.teamId] || `Team ${team.teamId}`;
+            winningScore = score;
+          }
+        });
+      });
+    }
+    
+    if (winningTeam) {
+      return {
+        teamName: winningTeam,
+        details: `Scored ${winningScore.toFixed(1)} points (${closestTo130.toFixed(1)} from 130)`
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error determining Week ${weekNumber} Bulls-eye:`, error);
     return null;
   }
 }

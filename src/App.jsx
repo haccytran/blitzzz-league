@@ -212,15 +212,7 @@ export default function App() {
   // Update URL parameter for both development and production
   const url = new URL(window.location);
   url.searchParams.set('league', league.id);
-  
-  // Set different default pages for each league
-  if (league.id === 'sculpin') {
-    url.hash = '#highestscorer';
-  } else if (league.id === 'blitzzz') {
-    url.hash = '#weekly';
-  } else {
-    url.hash = '#announcements'; // fallback for any other leagues
-  }
+  url.hash = '#hoodtrophies'; // Always go to Hood Trophies for all leagues
   
   window.history.pushState({}, '', url);
 };
@@ -4949,35 +4941,63 @@ setTrophyCounts(trophyCounts);
 {Object.keys(trophyCounts).length > 0 && (
   <div className="card" style={{ padding: 16, marginTop: 16 }}>
     <h3 style={{ marginBottom: 16 }}>🏆 Trophy Leaderboard</h3>
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <div style={{ overflowX: 'auto' }}>
+      {/* Desktop Table */}
+      <table className="trophy-table-desktop">
         <thead>
           <tr>
-            <th style={{ textAlign: "left", padding: 8, borderBottom: "2px solid #e5e7eb" }}>Team</th>
+            <th>Team</th>
             {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-              <th key={emoji} style={{ textAlign: "center", padding: 8, borderBottom: "2px solid #e5e7eb" }}>
-                {emoji}
-              </th>
+              <th key={emoji}>{emoji}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {Object.entries(trophyCounts).map(([team, counts]) => (
+          {Object.entries(trophyCounts)
+  .sort(([teamA, countsA], [teamB, countsB]) => {
+    const totalA = Object.values(countsA).reduce((sum, count) => sum + count, 0);
+    const totalB = Object.values(countsB).reduce((sum, count) => sum + count, 0);
+    return totalB - totalA; // Sort descending (most trophies first)
+  })
+  .map(([team, counts]) => (
             <tr key={team}>
-              <td style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>{team}</td>
+              <td>{team}</td>
               {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-                <td key={emoji} style={{ textAlign: "center", padding: 8, borderBottom: "1px solid #e5e7eb" }}>
-                  {counts[emoji] || 0}
-                </td>
+                <td key={emoji}>{counts[emoji] || 0}</td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+      
+      {/* Mobile Grid */}
+<div className="trophy-grid-mobile">
+  {/* Header row - emojis only */}
+  <div className="trophy-header">
+    {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
+      <div key={emoji}>{emoji}</div>
+    ))}
+  </div>
+  
+  {/* Data rows with background team names */}
+  {Object.entries(trophyCounts)
+  .sort(([teamA, countsA], [teamB, countsB]) => {
+    const totalA = Object.values(countsA).reduce((sum, count) => sum + count, 0);
+    const totalB = Object.values(countsB).reduce((sum, count) => sum + count, 0);
+    return totalB - totalA; // Sort descending (most trophies first)
+  })
+  .map(([team, counts]) => (
+    <div key={team} className="trophy-row">
+      <div className="trophy-row-bg">{team}</div>
+      {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
+        <div key={emoji} className="trophy-cell">{counts[emoji] || 0}</div>
+      ))}
+    </div>
+  ))}
+</div>
     </div>
   </div>
 )}
-
 {/* Season Leaders */}
 {Object.keys(seasonStats?.totalPoints ?? {}).length > 0 && (
   <div className="card" style={{ padding: 16, marginTop: 16 }}>

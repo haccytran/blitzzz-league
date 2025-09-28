@@ -18,26 +18,7 @@ const [animationPhase, setAnimationPhase] = useState('initial'); // 'initial', '
  const handleLogoClick = (leagueId, event) => {
   if (animationPhase === 'selecting') return;
 
-  // Check for mobile portrait FIRST with simple browser alert
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  const isPortrait = window.innerHeight > window.innerWidth;
-  const isSmallScreen = window.innerWidth <= 768;
-  const hidePrompt = localStorage.getItem('hideRotationPrompt') === 'true';
-  
-  // Show simple browser alert with emojis for mobile portrait users
-  // Show simple browser alert with emojis for mobile portrait users
-if (isMobile && isPortrait && isSmallScreen && !hidePrompt) {
-  // First prompt - just OK button, no cancel option
-  alert("📱↻ROTATE YOUR PHONE TO LANDSCAPE MODE!!📱↻\n\n📱↻\n\n📱↻\n\nClick OK to continue.");
-  
-  // Second prompt - Yes/No for don't show again
-  const dontShowAgain = confirm("📱↻Don't show this rotation message reminder again?📱↻\n\n📱↻YOU NOT GONNA FORGET RIGHT?!📱↻\n\n📱↻\n\n📱↻\n\nClick OK for Yes, Cancel for No.");
-  if (dontShowAgain) {
-    localStorage.setItem('hideRotationPrompt', 'true');
-  }
-}
-
-  setSelectedLeague(leagueId);
+   setSelectedLeague(leagueId);
   setAnimationPhase('selecting');
 
   // Normal animation flow

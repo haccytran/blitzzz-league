@@ -1130,7 +1130,33 @@ async function savePolls(pollsState) {
   console.log('Polls keys:', Object.keys(pollsState.polls || {}));
   
   if (DATABASE_URL) {
-    // ... existing database code
+    try {
+      const client = await pool.connect();
+      
+      // Delete any duplicate/empty rows first
+      await client.query('DELETE FROM polls_data WHERE id > 1');
+      
+      // Update the first row (which has your existing data)
+      const updateResult = await client.query(
+        'UPDATE polls_data SET polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
+        [JSON.stringify(pollsState.polls || {}), JSON.stringify(pollsState.votes || {}), JSON.stringify(pollsState.teamCodes || {})]
+      );
+      
+      // If no row exists with id=1, insert it
+      if (updateResult.rowCount === 0) {
+        await client.query(
+          'INSERT INTO polls_data (id, polls, votes, team_codes) VALUES (1, $1, $2, $3) ON CONFLICT (id) DO UPDATE SET polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP',
+          [JSON.stringify(pollsState.polls || {}), JSON.stringify(pollsState.votes || {}), JSON.stringify(pollsState.teamCodes || {})]
+        );
+      }
+      
+      client.release();
+      console.log('Saved to database');
+    } catch (err) {
+      console.error('Database polls save error:', err);
+      // Fall back to file system
+      await writeJson("polls.json", pollsState);
+    }
   } else {
     console.log('Saving to file system...');
     await writeJson("polls.json", pollsState);

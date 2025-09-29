@@ -963,6 +963,8 @@ body.sculpin-league .week-number-highlight {
   border-bottom: 2px solid #e5e7eb;
 }
 
+/* Remove or comment out the overly broad rule */
+/*
 .card table th:first-child,
 .card table td:first-child {
   width: 80px;
@@ -973,14 +975,36 @@ body.sculpin-league .week-number-highlight {
   white-space: nowrap;
   padding-left: 4px;
 }
+*/
 
-.card table th:not(:first-child),
-.card table td:not(:first-child) {
-  width: 28px;
-  padding-left: 0;
-  padding-right: 0;
+/* Add specific styling for tables that need it */
+/* Default table styling */
+.card table th,
+.card table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
 }
 
+/* Specific styling for dues payment tracker */
+.dues-payment-tracker table th:first-child,
+.dues-payment-tracker table td:first-child {
+  width: 60px; /* Just for checkbox column */
+}
+
+/* Specific styling for transactions table */
+.transactions-table table th:first-child,
+.transactions-table table td:first-child {
+  width: 120px; /* Let timestamp column size naturally */
+  white-space: nowrap;
+}
+
+/* Specific styling for power rankings */
+.power-rankings-table table th:first-child,
+.power-rankings-table table td:first-child {
+  width: 60px; /* Just for rank number */
+  text-align: center;
+}
 /* Desktop: show table, hide grid */
 .trophy-table-desktop {
   display: table;

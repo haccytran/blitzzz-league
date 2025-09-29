@@ -1291,7 +1291,7 @@ app.post("/api/polls/create", async (req, res) => {
 
 app.post("/api/polls/close", async (req, res) => {
   const adminHeader = req.header("x-admin");
-  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
+  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
   if (!validPasswords.includes(adminHeader)) {
     return res.status(401).send("Unauthorized");
   }
@@ -1307,7 +1307,7 @@ app.post("/api/polls/close", async (req, res) => {
 
 app.post("/api/polls/delete", async (req, res) => {
   const adminHeader = req.header("x-admin");
-  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
+  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
   if (!validPasswords.includes(adminHeader)) {
     return res.status(401).send("Unauthorized");
   }
@@ -1325,7 +1325,7 @@ app.post("/api/polls/delete", async (req, res) => {
 
 app.post("/api/polls/edit", async (req, res) => {
   const adminHeader = req.header("x-admin");
-  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
+  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
   if (!validPasswords.includes(adminHeader)) {
     return res.status(401).send("Unauthorized");
   }

@@ -11,7 +11,7 @@ const ADMIN_ENV = import.meta.env.VITE_ADMIN_PASSWORD || "changeme";
 const DEFAULT_LEAGUE_ID = import.meta.env.VITE_ESPN_LEAGUE_ID || "";
 const DEFAULT_SEASON = import.meta.env.VITE_ESPN_SEASON || new Date().getFullYear();
 const LEAGUE_TZ = "America/Los_Angeles";
-const WEEK_START_DAY = 4; // Thursday
+const WEEK_START_DAY = 3; // Wednesday
 
 // This will be updated per league - keeping as fallback
 const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
@@ -103,7 +103,7 @@ function startOfLeagueWeekPT(date){
 
 function firstWednesdayOfSeptemberPT(year){
   const d = toPT(new Date(year, 8, 1));
-  const offset = (4 - d.getDay() + 7) % 7; // 4 = Thursday
+  const offset = (3 - d.getDay() + 7) % 7; // 3 = Wednesday
   d.setDate(d.getDate() + offset);
   d.setHours(0,0,0,0);
   return d;
@@ -3517,16 +3517,21 @@ async function editPoll(pollId) {
   }
 
   async function deletePoll(pollId) {
-    if (!confirm("Delete this poll? This removes its results and codes.")) return;
-    const r = await fetch(API("/api/polls/delete"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
-      body: JSON.stringify({ pollId })
-    });
-    if (!r.ok) return alert("Delete failed (commissioner only?)");
-    setActivePollId("");
-    loadPolls();
-  }
+  if (!confirm("Delete this poll? This removes its results and codes.")) return;
+  
+  // Make sure we're using the correct password for the current league
+  const adminPassword = config.adminPassword || ADMIN_ENV;
+  
+  const r = await fetch(API("/api/polls/delete"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin": adminPassword },
+    body: JSON.stringify({ pollId })
+  });
+  
+  if (!r.ok) return alert("Delete failed (commissioner only?)");
+  setActivePollId("");
+  loadPolls();
+}
 
   async function setClosed(pollId, closed) {
     const r = await fetch(API("/api/polls/close"), {

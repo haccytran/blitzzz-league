@@ -1371,9 +1371,17 @@ function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
 function normalizeEpoch(x){
   if (x == null) return Date.now();
   if (typeof x === "string") x = Number(x);
-  if (x > 0 && x < 1e11) return x * 1000;
+  
+  // Handle very large timestamps (likely already in milliseconds but incorrect)
+  if (x > 1e15) return Date.now(); // Use current time for corrupted timestamps
+  
+  // Check if it's already in milliseconds (13 digits) vs seconds (10 digits)
+  if (x > 1e12) return x; // Already milliseconds
+  if (x > 1e9 && x < 1e12) return x * 1000; // Convert seconds to milliseconds
+  
   return x;
 }
+
 function isWithinWaiverWindow(dateLike){
   const z = new Date(dateLike);
   if (z.getDay() !== 4) return false; // Thursday
@@ -1490,8 +1498,8 @@ function isGenuineAddWithDraftContext(move, series, draftPicks, seasonYear) {
 }
 
 const isOwnerAtSomeSP = (series, pid, teamId, sp) => {
-  const candidates = [sp, sp-1, sp+1].filter(x => x>=1 && x < series.length);
-  return candidates.some(s => series?.[s]?.[teamId]?.has(pid));
+  const candidates = [sp, sp-1, sp+1].filter(x => x>=1 && x < series.roster.length);
+  return candidates.some(s => series.roster?.[s]?.[teamId]?.has(pid));
 };
 
 // Replace your validateTransactions function with this ChatGPT-inspired approach:
@@ -1503,8 +1511,8 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
   let validTransactions = transactions.filter(t => t.method !== "CANCEL");
   console.log(`[DEBUG] After CANCEL filtering: ${validTransactions.length} transactions`);
   
-  // Step 2: Build paired transactions by txId (keeps ADD+DROP together)
-  const txPairsByKey = new Map(); // key: `${txId}|${teamId}`
+  // Step 2: Build paired transactions by txId
+  const txPairsByKey = new Map();
   
   for (const r of validTransactions) {
     const txId = r.eventId || `${r.teamIdRaw || r.teamId}-${Math.floor(new Date(r.date).getTime() / 1000)}`;
@@ -1518,86 +1526,107 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
         method: r.method, 
         sp: r.sp || weekBucket(r.date, seasonId).week,
         teamId: r.teamIdRaw || r.teamId,
-        teamIdRaw: r.teamIdRaw || r.teamId, // PRESERVE THIS
-        team: r.team, // PRESERVE TEAM NAME
+        teamIdRaw: r.teamIdRaw || r.teamId,
+        team: r.team,
         add: null, 
         drop: null,
-        originalTransaction: r // PRESERVE ORIGINAL FOR REFERENCE
+        originalTransaction: r,
+        bidAmount: r.bidAmount,
+        executionType: r.executionType
       };
       txPairsByKey.set(key, rec);
     }
     
-    if (r.action === "ADD")  rec.add = r.playerId;
+    if (r.action === "ADD") rec.add = r.playerId;
     if (r.action === "DROP") rec.drop = r.playerId;
   }
   
   const txPairs = [...txPairsByKey.values()].filter(x => x.add || x.drop);
   console.log(`[DEBUG] Built ${txPairs.length} transaction pairs`);
   
-  // Step 3: Build roster owner map for scoring periods we need (only for PROCESS adds)
-   
-    
-  // Step 4: Keep only winners for waivers; keep all EXECUTEs
+  // Build a map of all drops to detect later drops of added players
+  const allDrops = new Map(); // playerId -> [{teamId, timestamp}, ...]
+  for (const rec of txPairs) {
+    if (rec.drop) {
+      if (!allDrops.has(rec.drop)) allDrops.set(rec.drop, []);
+      allDrops.get(rec.drop).push({ teamId: rec.teamId, ts: rec.ts });
+    }
+  }
+  
+  // Process transactions
   const kept = [];
   let processWinners = 0;
   let processLosers = 0;
   
   for (const rec of txPairs) {
-  // Always keep EXECUTE transactions (Free Agents)
-  if (rec.method === "EXECUTE") {
-    kept.push(rec);
-    continue;
-  }
-  
-  // Always keep standalone drops regardless of method
-  if (rec.drop && !rec.add) {
-    kept.push(rec);
-    console.log(`[DEBUG] Keeping standalone drop: Team ${rec.teamId} drops player ${rec.drop}, method: ${rec.method}`);
-    continue;
-  }
-  
-  // Handle PROCESS transactions with adds
-  if (rec.method === "PROCESS" && rec.add) {
-    const winner = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
-    if (winner) {
+    // Always keep EXECUTE transactions (Free Agents)
+    if (rec.method === "EXECUTE") {
       kept.push(rec);
-      processWinners++;
-      console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
-    } else {
-      processLosers++;
-      console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (checked sp±1)`);
+      continue;
     }
-    continue;
-  }
-  
-  // Keep any other PROCESS transactions (edge cases)
-  if (rec.method === "PROCESS") {
+    
+    // Always keep standalone drops
+    if (rec.drop && !rec.add) {
+      kept.push(rec);
+      continue;
+    }
+    
+    // For PROCESS transactions with adds
+    if (rec.method === "PROCESS" && rec.add) {
+      // Check roster to verify if player was actually added
+      const onRoster = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
+      
+      // Check if this player was dropped by the same team later
+      const laterDropped = allDrops.get(rec.add)?.some(drop => 
+        drop.teamId === rec.teamId && drop.ts > rec.ts
+      ) || false;
+      
+      // For waiver claims with bid amounts
+      if (rec.bidAmount !== null && rec.bidAmount !== undefined) {
+        // If it has a bid amount, it's likely a real waiver claim
+        // Keep it if: on roster OR was later dropped by same team
+        if (onRoster || laterDropped) {
+          kept.push(rec);
+          processWinners++;
+          console.log(`[DEBUG] Waiver winner (bid $${rec.bidAmount}): Team ${rec.teamId} gets player ${rec.add}${laterDropped ? ' (later dropped)' : ''}`);
+        } else {
+          processLosers++;
+          console.log(`[DEBUG] Failed waiver bid: Team ${rec.teamId} bid $${rec.bidAmount} for ${rec.add} but didn't get them`);
+        }
+      } else {
+        // No bid amount - use roster check
+        if (onRoster || laterDropped) {
+          kept.push(rec);
+          processWinners++;
+        } else {
+          processLosers++;
+          console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp}`);
+        }
+      }
+      continue;
+    }
+    
+    // Keep any other transactions
     kept.push(rec);
   }
-  
-  // Keep DRAFT transactions
-  if (rec.method === "DRAFT") {
-    kept.push(rec);
-  }
-}
   
   console.log(`[DEBUG] Waiver processing: ${processWinners} winners, ${processLosers} losers filtered out`);
   
-  // Step 5: Expand back out to individual ADD/DROP transactions - PRESERVE ALL ORIGINAL DATA
+  // Expand back to individual transactions
   const finalTransactions = [];
   
   for (const r of kept) {
     const baseTransaction = {
-  date: new Date(r.ts),
-  teamIdRaw: r.teamIdRaw,
-  teamId: r.teamId,
-  team: r.team,
-  method: r.method,
-  eventId: r.txId,
-  src: r.originalTransaction.src || "validated",
-  playerName: null,
-  bidAmount: r.originalTransaction.bidAmount // Add this
-};
+      date: new Date(r.ts),
+      teamIdRaw: r.teamIdRaw,
+      teamId: r.teamId,
+      team: r.team,
+      method: r.method,
+      eventId: r.txId,
+      src: r.originalTransaction.src || "validated",
+      playerName: null,
+      bidAmount: r.bidAmount
+    };
     
     if (r.add) {
       finalTransactions.push({
@@ -1616,27 +1645,27 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
     }
   }
   
-  // Step 6: Final deduplication for truly identical rows
+  // Final deduplication
   const seen = new Set();
   const dedupedFinal = finalTransactions.filter(r => {
     const k = `${r.date.getTime()}|${r.teamIdRaw}|${r.playerId}|${r.action}|${r.method}`;
-    if (seen.has(k)) {
-      console.log(`[DEBUG] Removing duplicate: ${r.action} ${r.playerId} by team ${r.teamIdRaw}`);
-      return false;
-    }
+    if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
   
-  console.log(`[DEBUG] Final validation results:`);
-  console.log(`- Transaction pairs processed: ${txPairs.length}`);
-  console.log(`- Pairs kept after waiver verification: ${kept.length}`);
-  console.log(`- Final individual transactions: ${dedupedFinal.length}`);
-  console.log(`- Final ADDs: ${dedupedFinal.filter(t => t.action === "ADD").length}`);
-  console.log(`- Final DROPs: ${dedupedFinal.filter(t => t.action === "DROP").length}`);
+  console.log(`[DEBUG] Final validation results: ${dedupedFinal.length} transactions`);
+  
+  // Debug logging for 4th Gen And Goal
+  const fourthGenTransactions = dedupedFinal.filter(t => t.team === "4th Gen And Goal");
+  console.log(`[DEBUG] 4th Gen And Goal transactions: ${fourthGenTransactions.length}`);
+  fourthGenTransactions.forEach(t => {
+    console.log(`  - ${t.action} ${t.playerId} on ${t.date.toISOString()} via ${t.method}${t.bidAmount ? ` ($${t.bidAmount})` : ''}`);
+  });
   
   return dedupedFinal;
 }
+
 // =========================
 // ESPN proxy
 // =========================
@@ -1742,6 +1771,48 @@ function extractMoves(json, src="tx"){
   console.log(`[DEBUG] extractMoves called with src="${src}", data keys:`, Object.keys(json || {}));
   console.log(`[DEBUG] Transaction count:`, json?.transactions?.length || 0);
   
+// COMPREHENSIVE DEBUG - CHECK ALL UNDERACHIEVERS TRANSACTIONS
+  if (json?.transactions) {
+    const underachieverTransactions = json.transactions.filter(t => {
+      // Check if any team ID matches The Underachievers (look for team 19 based on your data)
+      return t.teamId === 19 || t.toTeamId === 19 || t.fromTeamId === 19 ||
+             (t.items && t.items.some(item => item.toTeamId === 19 || item.fromTeamId === 19));
+    });
+    
+    if (underachieverTransactions.length > 0) {
+      console.log(`[DEBUG] Found ${underachieverTransactions.length} Underachievers transactions in ${src}:`);
+      underachieverTransactions.forEach((t, i) => {
+        const date = new Date((t.processDate || t.proposedDate || t.executionDate || t.date) * 1000);
+        console.log(`[DEBUG] Underachievers Transaction ${i}:`);
+        console.log(`  Date: ${date.toISOString()}`);
+        console.log(`  Type: ${t.type}, ExecutionType: ${t.executionType}`);
+        console.log(`  TeamId: ${t.teamId}, ToTeam: ${t.toTeamId}, FromTeam: ${t.fromTeamId}`);
+        console.log(`  Items: ${t.items?.length || 0}`);
+        
+        if (t.items) {
+          t.items.forEach((item, idx) => {
+            console.log(`    Item ${idx}: playerId=${item.playerId}, type=${item.type}, toTeam=${item.toTeamId}, fromTeam=${item.fromTeamId}`);
+          });
+        }
+      });
+    }
+    
+    // Also check for Tyler Allgeier specifically (playerId 4373626)
+    const allgeierTransactions = json.transactions.filter(t => {
+      return t.playerId === 4373626 || 
+             (t.items && t.items.some(item => item.playerId === 4373626));
+    });
+    
+    if (allgeierTransactions.length > 0) {
+      console.log(`[DEBUG] Found Tyler Allgeier transactions in ${src}:`);
+      allgeierTransactions.forEach(t => {
+        const date = new Date((t.processDate || t.proposedDate || t.executionDate || t.date) * 1000);
+        console.log(`  Date: ${date.toISOString()}, Team: ${t.teamId}, Type: ${t.type}`);
+      });
+    }
+  }
+  // END NEW DEBUG
+
   if (json?.transactions?.length > 0) {
     console.log(`[DEBUG] Sample transaction:`, JSON.stringify(json.transactions[0], null, 2));
   }
@@ -1755,10 +1826,34 @@ function extractMoves(json, src="tx"){
     (json?.events && typeof json.events === "object" ? Object.values(json.events) : null) ||
     (json && typeof json === "object" && !Array.isArray(json) ? Object.values(json) : null) ||
     [];
-    
+
+  // ADD DEBUG LOGGING FOR SEP 24 TRANSACTIONS - MOVED TO CORRECT LOCATION
+  if (src === "tx") {
+    for (const t of rows) {
+      const processDate = t.processDate || t.proposedDate || t.executionDate || t.date || t.timestamp;
+      if (processDate) {
+        const when = new Date(normalizeEpoch(processDate));
+        const dateStr = when.toISOString();
+        
+        if (dateStr.includes('2025-09-24') && (dateStr.includes('01:03') || dateStr.includes('05:03'))) {
+          console.log('=== ESPN Sep 24 Transaction Debug ===');
+          console.log('Transaction date string:', dateStr);
+          console.log('Full transaction:', JSON.stringify(t, null, 2));
+          console.log('=== End Debug ===');
+        }
+      }
+    }
+  }
+
   const out = [];
   for (const t of rows){
     const when = new Date(normalizeEpoch(t.processDate ?? t.proposedDate ?? t.executionDate ?? t.date ?? t.timestamp ?? Date.now()));
+
+// ADD THIS DEBUG
+if (src === "tx") {
+  const rawDate = t.processDate ?? t.proposedDate ?? t.executionDate ?? t.date ?? t.timestamp;
+  console.log(`[DEBUG] Raw timestamp: ${rawDate}, Normalized: ${normalizeEpoch(rawDate)}, Final date: ${when.toISOString()}`);
+}
     const eventId = t.id ?? t.transactionId ?? t.proposedTransactionId ?? t.proposalId ?? null;
     const items = Array.isArray(t.items) ? t.items
                : Array.isArray(t.messages) ? t.messages
@@ -1828,6 +1923,18 @@ if (/DRAFT/i.test(String(iTypeStr)) || String(iTypeStr) === "DRAFT") {
 }
     }
   }
+// Add this right after you build the `out` array, before the return statement:
+if (src === "tx") {
+  const sep24Transactions = out.filter(move => {
+    const dateStr = move.date.toISOString();
+    return dateStr.includes('2025-09-24') && dateStr.includes('08:03');
+  });
+  
+  if (sep24Transactions.length > 0) {
+    console.log(`[DEBUG] Sep 24 08:03 extracted moves (${sep24Transactions.length}):`, 
+      sep24Transactions.map(m => `${m.action} ${m.playerId} by team ${m.teamId}`));
+  }
+}
 
 // Add this at the end of extractMoves function, before return
 console.log(`[DEBUG] extractMoves from ${src}: ${out.filter(o => o.action === "ADD").length} adds, ${out.filter(o => o.action === "DROP").length} drops`);
@@ -1880,7 +1987,12 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const all = [];
   for (let sp=1; sp<=maxSp; sp++){
-     onProgress?.(sp, maxSp, "Reading ESPN activity…");
+    // ADD DEBUG CODE HERE
+    if (sp === 3 || sp === 4) {
+      console.log(`[DEBUG] ===== CHECKING SCORING PERIOD ${sp} =====`);
+    }
+    
+    onProgress?.(sp, maxSp, "Reading ESPN activity…");
     try { 
       const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); 
       all.push(...extractMoves(j,"tx").map(e => ({ ...e, sp }))); 
@@ -1931,7 +2043,12 @@ async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress
   }
   
   console.log(`[DEBUG] Roster series built for ${maxSp} weeks`);
-  return series;
+console.log(`[DEBUG] Series structure:`, { 
+  length: series.length, 
+  hasData: Object.keys(series).length > 0,
+  sample: series[1] ? Object.keys(series[1]) : 'no data' 
+});
+return { roster: series }; // <- ADD THIS WRAPPER
 }
 
 const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]?.[teamId]?.has(playerId));
@@ -2056,13 +2173,25 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
+// Add this right after the line: const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
+
+console.log('[DEBUG] Team ID to Name mapping:', idToName);
+
 // Get draft data for baseline
 const draftPicks = await fetchDraftData({ leagueId, seasonId, req });
   const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
   console.log(`[DEBUG] Total moves extracted from all sources: ${all.length}`);
   console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
   
+
+console.log('[DEBUG] About to build roster series');
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
+console.log('[DEBUG] Roster building completed:', {
+  rosterExists: !!series.roster,
+  rosterLength: series.roster?.length || 0,
+  firstFewEntries: series.roster?.slice(0, 3)
+});
+
   const deduped = dedupeMoves(all).map(e => ({ 
     ...e, 
     teamIdRaw: e.teamId, 

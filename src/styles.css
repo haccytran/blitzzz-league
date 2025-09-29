@@ -1134,3 +1134,36 @@ body.sculpin-league .trophy-grid-mobile .trophy-row-bg {
     text-align: center;
   }
 }
+
+/* Mobile-friendly polls */
+@media (max-width: 767px) {
+  /* Stack the polls layout on mobile */
+  .grid[style*="gridTemplateColumns: \"240px 1fr\""] {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+  }
+  
+  /* Make poll sidebar full width on mobile */
+  .card:has(> h3:first-child:contains("Polls")) {
+    width: 100% !important;
+  }
+  
+  /* Responsive poll creation form */
+  .card[style*="padding: 8px"] {
+    flex-direction: column !important;
+    padding: 12px !important;
+  }
+  
+  .card[style*="padding: 8px"] input,
+  .card[style*="padding: 8px"] textarea {
+    width: 100% !important;
+    margin-bottom: 8px;
+  }
+  
+  /* Stack admin buttons */
+  .card button[style*="fontSize: 12px"] {
+    width: 100% !important;
+    margin-bottom: 4px;
+  }
+}

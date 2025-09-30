@@ -5180,7 +5180,7 @@ setTrophyCounts(trophyCounts);
     const m = mgr[bestMgrLeader]||{benchPoints:0,percentages:[]};
     const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
     rows.push(
-      <div key="bm">🤖 The <strong>Best Manager</strong> so far is <strong>{bestMgrLeader}</strong>, they left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+      <div key="bm">🤖 The <strong>Best Manager</strong> so far is <strong>{bestMgrLeader}</strong>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and have scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
     );
   }
 
@@ -5188,7 +5188,7 @@ setTrophyCounts(trophyCounts);
     const m = mgr[worstMgrLeader]||{benchPoints:0,percentages:[]};
     const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
     rows.push(
-      <div key="wm">🤡 The <strong>Worst Manager</strong> so far is <strong>{worstMgrLeader}</strong>, they left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+      <div key="wm">🤡 The <strong>Worst Manager</strong> so far is <strong>{worstMgrLeader}</strong>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
     );
   }
 // --- Separator before the last two meta awards ---

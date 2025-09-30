@@ -291,9 +291,9 @@ const VALID_TABS = [
   "transactions","drafts","rosters","powerrankings","settings","trading","paydues","polls" 
 ];
   const initialTabFromHash = () => {
-    const h = (window.location.hash || "").replace("#","").trim();
-    return VALID_TABS.includes(h) ? h : "activity";
-  };
+  const h = (window.location.hash || "").replace("#","").trim();
+  return VALID_TABS.includes(h) ? h : "hoodtrophies";
+};
 
   const [active, setActive] = useState(initialTabFromHash);
 

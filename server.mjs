@@ -2654,9 +2654,107 @@ async function runAutoRefreshForLeague(leagueConfig) {
 
     logRefresh(`Refreshing data for league ${leagueConfig.id}, season ${seasonId}`);
 
+    // === ADD: Import Teams First ===
+    logRefresh(`Importing teams for ${leagueConfig.id}...`);
+    try {
+      // Fetch team and roster data
+      const [teamJson, rosJson, setJson] = await Promise.all([
+        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mTeam", req: { headers: {} }, requireCookie: false }),
+        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mRoster", req: { headers: {} }, requireCookie: false }),
+        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mSettings", req: { headers: {} }, requireCookie: false }),
+      ]);
+      
+      const teams = teamJson?.teams || [];
+      if (teams.length > 0) {
+        const names = [...new Set(teams.map(t => teamName(t)))];
+        const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
+        const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
+        
+        // Build roster data
+        const rosterData = (rosJson?.teams || []).map(t => {
+          const entries = (t.roster?.entries || []).map(e => {
+            const p = e.playerPoolEntry?.player;
+            const fullName = p?.fullName || "Player";
+            const slot = slotMap[e.lineupSlotId] || "—";
+            let position = "";
+            if (p?.defaultPositionId) {
+              position = posIdToName(p.defaultPositionId);
+            }
+            
+            return { 
+              name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
+              slot, 
+              position
+            };
+          });
+
+          // Sort starters and bench
+          const starters = entries.filter(e => e.slot !== "Bench");
+          const bench = entries.filter(e => e.slot === "Bench");
+          
+          const starterOrderWithCounts = [
+            { pos: "QB", max: 1 },
+            { pos: "RB", max: 2 }, 
+            { pos: "RB/WR", max: 1 },
+            { pos: "WR", max: 2 },
+            { pos: "TE", max: 1 },
+            { pos: "FLEX", max: 1 },
+            { pos: "D/ST", max: 1 },
+            { pos: "K", max: 1 }
+          ];
+
+          const sortedStarters = [];
+          starterOrderWithCounts.forEach(({ pos, max }) => {
+            const playersInPosition = starters.filter(p => p.slot === pos);
+            for (let i = 0; i < max; i++) {
+              if (playersInPosition[i]) {
+                sortedStarters.push(playersInPosition[i]);
+              }
+            }
+          });
+
+          const sortedBench = bench
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(p => ({
+              name: p.position ? `${p.name} (${p.position})` : p.name,
+              slot: p.slot
+            }));
+          
+          const finalEntries = [
+            ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
+            ...sortedBench
+          ];
+          
+          return { 
+            teamName: teamsById[t.id] || `Team ${t.id}`, 
+            entries: finalEntries 
+          };
+        });
+        
+        // Save rosters to database/file
+        const data = await getLeagueData(leagueConfig.id);
+        data.members = names.map(name => {
+          const existing = data.members?.find(m => m.name === name);
+          return existing || { id: nid(), name };
+        });
+        
+        data.rosters = data.rosters || {};
+        data.rosters[seasonId] = {
+          rosterData,
+          lastUpdated: new Date().toISOString()
+        };
+        
+        await saveLeagueData(data, leagueConfig.id);
+        logRefresh(`Imported ${names.length} teams with rosters for ${leagueConfig.id}`);
+      }
+    } catch (importError) {
+      logRefresh(`Failed to import teams for ${leagueConfig.id}: ${importError.message}`, 'error');
+      // Don't throw - continue with report update even if import fails
+    }
+
     // Create a race condition with timeout
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Refresh timeout after 4 minutes')), 240000) // 4 minute timeout
+      setTimeout(() => reject(new Error('Refresh timeout after 4 minutes')), 240000)
     );
 
     const refreshPromise = buildOfficialReport({ 
@@ -2688,7 +2786,7 @@ async function runAutoRefreshForLeague(leagueConfig) {
           } catch (dbError) {
             logRefresh(`Database save attempt ${attempt} failed for ${leagueConfig.id}: ${dbError.message}`, 'error');
             if (attempt === 3) throw dbError;
-            await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Progressive delay
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
           }
         }
         
@@ -2702,13 +2800,11 @@ async function runAutoRefreshForLeague(leagueConfig) {
         await writeJson(`report_${leagueConfig.id}_${seasonId}.json`, snapshot);
       } catch (fileError) {
         logRefresh(`File save failed for ${leagueConfig.id}: ${fileError.message}`, 'error');
-        // Don't throw - database save succeeded
       }
       
       const elapsed = Date.now() - startTime;
       logRefresh(`Successfully updated ${leagueConfig.id} (${elapsed}ms) - ${report.totalsRows.length} teams, ${report.rawMoves?.length || 0} transactions`);
       
-      // Reset failure counter on success
       consecutiveFailures = 0;
       return true;
     } else {
@@ -2853,17 +2949,6 @@ app.get("/api/auto-refresh/status", (req, res) => {
   });
 });
 
-// Enhanced manual refresh
-app.post("/api/auto-refresh/force", requireAdmin, async (req, res) => {
-  logRefresh('Manual refresh triggered via API');
-  try {
-    await runAutoRefresh();
-    res.json({ success: true, message: "Refresh completed" });
-  } catch (error) {
-    logRefresh(`Manual refresh failed: ${error.message}`, 'error');
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // =========================
 // Static hosting

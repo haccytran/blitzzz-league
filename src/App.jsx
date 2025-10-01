@@ -1041,7 +1041,28 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
 }
 
 function posIdToName(id) {
-  const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };
+  const map = { 
+    0: "QB",    // Quarterback
+    1: "TQB",   // Team QB
+    2: "RB",    // Running Back
+    3: "WR",    // Wide Receiver (THIS WAS WRONG - was "RB")
+    4: "WR",    // Wide Receiver  
+    5: "WR/TE", // Wide Receiver/Tight End
+    6: "TE",    // Tight End
+    7: "OP",    // Offensive Player
+    8: "DT",    // Defensive Tackle
+    9: "DE",    // Defensive End
+    10: "LB",   // Linebacker
+    11: "DL",   // Defensive Line (THIS WAS WRONG - was "DE")
+    12: "CB",   // Cornerback (THIS WAS WRONG - was "DB")
+    13: "S",    // Safety (THIS WAS WRONG - was "DB")
+    14: "DB",   // Defensive Back
+    15: "DP",   // Defensive Player
+    16: "D/ST", // Defense/Special Teams
+    17: "K",    // Kicker
+    18: "P",    // Punter
+    19: "HC"    // Head Coach
+  };
   return map?.[id] || "—";
 }
 
@@ -1174,57 +1195,75 @@ async function loadReport() {
         
         console.log("Recent moves found:", recentMoves.length);
         
-        // Group moves by team and date, then pair adds with drops
-const groupedMoves = {};
-recentMoves.forEach(move => {
-  const key = `${move.team}-${move.date}`;
-  if (!groupedMoves[key]) {
-    groupedMoves[key] = { adds: [], drops: [], team: move.team, date: move.date, week: move.week };
-  }
-  if (move.action === "ADD") {
-    groupedMoves[key].adds.push(move);
-  } else {
-    groupedMoves[key].drops.push(move);
-  }
-});
-
-// Create paired activities
+        // Simple chronological sort with pairing
 const pairedActivities = [];
-Object.values(groupedMoves).forEach(group => {
-  const maxPairs = Math.max(group.adds.length, group.drops.length);
-  
-  for (let i = 0; i < maxPairs; i++) {
-    const add = group.adds[i];
-    const drop = group.drops[i];
-    
-    if (add) {
-      pairedActivities.push({
-        date: new Date(group.date).toLocaleDateString(),
-        team: group.team,
-        player: add.player,
-        action: "ADDED",
-        week: group.week,
-        isDraft: group.week <= 0,
-        isPair: !!drop
-      });
-    }
-    
-    if (drop) {
-      pairedActivities.push({
-        date: new Date(group.date).toLocaleDateString(),
-        team: group.team,
-        player: drop.player,
-        action: "DROPPED",
-        week: group.week,
-        isDraft: group.week <= 0,
-        isPair: !!add
-      });
-    }
-  }
-});
+const paired = new Set();
 
-// Sort by date (newest first)
-pairedActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
+// Sort original moves by timestamp descending (newest first)
+const sortedMoves = [...recentMoves].sort((a, b) => 
+  new Date(b.date).getTime() - new Date(a.date).getTime()
+);
+
+for (let i = 0; i < sortedMoves.length; i++) {
+  if (paired.has(i)) continue;
+  
+  const move = sortedMoves[i];
+  
+  if (move.action === "ADD") {
+    // Look for matching DROP from same team on same date
+    const matchIdx = sortedMoves.findIndex((m, idx) => 
+      idx > i && 
+      !paired.has(idx) &&
+      m.action === "DROP" && 
+      m.team === move.team && 
+      m.date === move.date
+    );
+    
+    if (matchIdx !== -1) {
+      paired.add(matchIdx);
+      pairedActivities.push({
+        date: new Date(move.date).toLocaleDateString(),
+        team: move.team,
+        player: move.player,
+        action: "ADDED",
+        week: move.week,
+        isDraft: move.week <= 0,
+        isPaired: true,
+        pairWith: sortedMoves[matchIdx].player
+      });
+      pairedActivities.push({
+        date: new Date(move.date).toLocaleDateString(),
+        team: move.team,
+        player: sortedMoves[matchIdx].player,
+        action: "DROPPED",
+        week: move.week,
+        isDraft: move.week <= 0,
+        isPaired: true,
+        pairWith: move.player
+      });
+    } else {
+      pairedActivities.push({
+        date: new Date(move.date).toLocaleDateString(),
+        team: move.team,
+        player: move.player,
+        action: "ADDED",
+        week: move.week,
+        isDraft: move.week <= 0,
+        isPaired: false
+      });
+    }
+  } else {
+    pairedActivities.push({
+      date: new Date(move.date).toLocaleDateString(),
+      team: move.team,
+      player: move.player,
+      action: "DROPPED",
+      week: move.week,
+      isDraft: move.week <= 0,
+      isPaired: false
+    });
+  }
+}
 
 setActivities(pairedActivities);
       }
@@ -1260,68 +1299,78 @@ setActivities(pairedActivities);
         {activities.length > 0 ? (
   <div style={{ marginTop: 12 }}>
     {(() => {
-  const pairedActivities = [];
-  let pairCounter = 0;
-  
-  // Process activities to assign pair numbers
-  for (let i = 0; i < activities.length; i++) {
-    const activity = activities[i];
-    
-    if (activity.action === "ADDED") {
-      // Check if next activity is a DROP from same team on same date
-      const nextActivity = activities[i + 1];
-      if (nextActivity && 
-          nextActivity.action === "DROPPED" && 
-          nextActivity.team === activity.team && 
-          nextActivity.date === activity.date) {
-        // This is a pair
-        pairedActivities.push({ ...activity, pairNumber: pairCounter });
-        pairedActivities.push({ ...nextActivity, pairNumber: pairCounter });
-        pairCounter++;
-        i++; // Skip the next activity since we processed it
-      } else {
-        // Solo add
-        pairedActivities.push({ ...activity, pairNumber: pairCounter });
-        pairCounter++;
+      let pairCounter = 0;
+      const renderedActivities = [];
+      
+      for (let i = 0; i < activities.length; i++) {
+        const activity = activities[i];
+        const nextActivity = activities[i + 1];
+        
+        // Check if this is part of a pair
+        if (activity.action === "ADDED" && 
+            nextActivity && 
+            nextActivity.action === "DROPPED" && 
+            nextActivity.team === activity.team && 
+            nextActivity.date === activity.date) {
+          // This is a pair
+          const isShaded = pairCounter % 2 === 0;
+          renderedActivities.push(
+            <div key={i} style={{ 
+              padding: "8px", 
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 14,
+              color: "#16a34a",
+              backgroundColor: isShaded ? "#fffbeb" : "transparent"
+            }}>
+              <span><b>{activity.team}</b> ADDED <b>{activity.player}</b></span>
+              <span style={{ color: "#64748b" }}>{activity.date}</span>
+            </div>,
+            <div key={i + "drop"} style={{ 
+              padding: "8px", 
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 14,
+              color: "#dc2626",
+              backgroundColor: isShaded ? "#fffbeb" : "transparent"
+            }}>
+              <span><b>{nextActivity.team}</b> DROPPED <b>{nextActivity.player}</b></span>
+              <span style={{ color: "#64748b" }}>{nextActivity.date}</span>
+            </div>
+          );
+          i++; // Skip next since we processed it
+          pairCounter++;
+        } else {
+          // Solo transaction
+          const isShaded = pairCounter % 2 === 0;
+          renderedActivities.push(
+            <div key={i} style={{ 
+              padding: "8px", 
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 14,
+              color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
+              backgroundColor: isShaded ? "#fffbeb" : "transparent"
+            }}>
+              <span><b>{activity.team}</b> {activity.action} <b>{activity.player}</b></span>
+              <span style={{ color: "#64748b" }}>{activity.date}</span>
+            </div>
+          );
+          pairCounter++;
+        }
       }
-    } else {
-      // Solo drop (ADD would have been handled above if it was a pair)
-      pairedActivities.push({ ...activity, pairNumber: pairCounter });
-      pairCounter++;
-    }
-  }
-  
-  return pairedActivities.map((activity, index) => {
-    const isShaded = activity.pairNumber % 2 === 0;
-    const backgroundColor = isShaded ? "#fffbeb" : "transparent";
-    
-    return (
-      <div key={index} style={{ 
-        padding: "8px", 
-        borderBottom: "1px solid #e2e8f0",
-        display: "flex",
-        justifyContent: "space-between",
-        fontSize: 14,
-        fontStyle: activity.isDraft ? "italic" : "normal",
-        opacity: activity.isDraft ? 0.8 : 1,
-        color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
-        backgroundColor: backgroundColor
-      }}>
-        <span>
-          <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
-          {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
-        </span>
-        <span style={{ color: "#64748b" }}>{activity.date}</span>
-      </div>
-    );
-  });
-})()}
+      
+      return renderedActivities;
+    })()}
   </div>
 ) : !loading && !error && (
-          <div style={{ color: "#64748b", marginTop: 8 }}>
-            No recent activity in the last 7 days.
-          </div>
-        )}
+  <div style={{ color: "#64748b", marginTop: 8 }}>
+    No recent activity in the last 7 days.
+  </div>
+)}
 
         {report && (
           <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
@@ -2745,55 +2794,37 @@ byWeek.forEach((transactions, week) => {
                       
   {(() => {
   const combinedRows = [];
-  let pairCounter = 0;
+const paired = new Set(); // Track which indices we've already paired
+
+for (let i = 0; i < rows.length; i++) {
+  if (paired.has(i)) continue; // Skip if already paired
   
-  // Create working copy to avoid mutating original
-  const workingRows = [...rows];
+  const row = rows[i];
   
-  for (let i = 0; i < workingRows.length; i++) {
-    const row = workingRows[i];
+  if (row.action === "ADD") {
+    const matchingDropIndex = rows.findIndex((r, idx) => 
+      idx > i && 
+      !paired.has(idx) && // Don't pair with already-paired items
+      r.action === "DROP" && 
+      r.team === row.team && 
+      r.date === row.date
+    );
     
-    if (row.action === "ADD") {
-      // Look for matching DROP from same team on same date
-      const matchingDropIndex = workingRows.findIndex((r, idx) => 
-        idx > i && 
-        r.action === "DROP" && 
-        r.team === row.team && 
-        r.date === row.date
-      );
-      
-      if (matchingDropIndex !== -1) {
-        // Found a pair - combine them
-        const dropRow = workingRows[matchingDropIndex];
-        combinedRows.push({
-          ...row,
-          isPair: true,
-          dropPlayer: dropRow.player || (dropRow.playerId ? `#${dropRow.playerId}` : "—"),
-          pairNumber: pairCounter
-        });
-        
-        // Remove the drop from working rows
-        workingRows.splice(matchingDropIndex, 1);
-        pairCounter++;
-      } else {
-        // Solo add
-        combinedRows.push({
-          ...row,
-          isPair: false,
-          pairNumber: pairCounter
-        });
-        pairCounter++;
-      }
-    } else {
-      // Solo drop or other action
+    if (matchingDropIndex !== -1) {
+      paired.add(matchingDropIndex); // Mark as paired
       combinedRows.push({
         ...row,
-        isPair: false,
-        pairNumber: pairCounter
+        isPair: true,
+        dropPlayer: rows[matchingDropIndex].player,
+        pairNumber: Math.floor(combinedRows.length / 2)
       });
-      pairCounter++;
+    } else {
+      combinedRows.push({...row, isPair: false});
     }
+  } else {
+    combinedRows.push({...row, isPair: false});
   }
+}
   
   return combinedRows.map((r, index) => {
     const isShaded = r.pairNumber % 2 === 0;
@@ -2875,55 +2906,37 @@ byWeek.forEach((transactions, week) => {
 <div className="transactions-mobile">
   {(() => {
     const combinedRows = [];
-    let pairCounter = 0;
+const paired = new Set(); // Track which indices we've already paired
+
+for (let i = 0; i < rows.length; i++) {
+  if (paired.has(i)) continue; // Skip if already paired
+  
+  const row = rows[i];
+  
+  if (row.action === "ADD") {
+    const matchingDropIndex = rows.findIndex((r, idx) => 
+      idx > i && 
+      !paired.has(idx) && // Don't pair with already-paired items
+      r.action === "DROP" && 
+      r.team === row.team && 
+      r.date === row.date
+    );
     
-    // Create working copy to avoid mutating original
-    const workingRows = [...rows];
-    
-    for (let i = 0; i < workingRows.length; i++) {
-      const row = workingRows[i];
-      
-      if (row.action === "ADD") {
-        // Look for matching DROP from same team on same date
-        const matchingDropIndex = workingRows.findIndex((r, idx) => 
-          idx > i && 
-          r.action === "DROP" && 
-          r.team === row.team && 
-          r.date === row.date
-        );
-        
-        if (matchingDropIndex !== -1) {
-          // Found a pair - combine them
-          const dropRow = workingRows[matchingDropIndex];
-          combinedRows.push({
-            ...row,
-            isPair: true,
-            dropPlayer: dropRow.player || (dropRow.playerId ? `#${dropRow.playerId}` : "—"),
-            pairNumber: pairCounter
-          });
-          
-          // Remove the drop from working rows
-          workingRows.splice(matchingDropIndex, 1);
-          pairCounter++;
-        } else {
-          // Solo add
-          combinedRows.push({
-            ...row,
-            isPair: false,
-            pairNumber: pairCounter
-          });
-          pairCounter++;
-        }
-      } else {
-        // Solo drop or other action
-        combinedRows.push({
-          ...row,
-          isPair: false,
-          pairNumber: pairCounter
-        });
-        pairCounter++;
-      }
+    if (matchingDropIndex !== -1) {
+      paired.add(matchingDropIndex); // Mark as paired
+      combinedRows.push({
+        ...row,
+        isPair: true,
+        dropPlayer: rows[matchingDropIndex].player,
+        pairNumber: Math.floor(combinedRows.length / 2)
+      });
+    } else {
+      combinedRows.push({...row, isPair: false});
     }
+  } else {
+    combinedRows.push({...row, isPair: false});
+  }
+}
     
     return combinedRows.map((r, i) => {
       const isShaded = r.pairNumber % 2 === 0;

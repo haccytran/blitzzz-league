@@ -2673,20 +2673,63 @@ async function runAutoRefreshForLeague(leagueConfig) {
         // Build roster data
         const rosterData = (rosJson?.teams || []).map(t => {
           const entries = (t.roster?.entries || []).map(e => {
-            const p = e.playerPoolEntry?.player;
-            const fullName = p?.fullName || "Player";
-            const slot = slotMap[e.lineupSlotId] || "—";
-            let position = "";
-            if (p?.defaultPositionId) {
-              position = posIdToName(p.defaultPositionId);
-            }
-            
-            return { 
-              name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
-              slot, 
-              position
-            };
-          });
+  const p = e.playerPoolEntry?.player;
+  const fullName = p?.fullName || "Player";
+  const slot = slotMap[e.lineupSlotId] || "—";
+  
+// ADD THE CONSOLE.LOG HERE:
+  if (fullName.includes("Kraft") || fullName.includes("Goedert")) {
+    console.log(`${fullName}:`, {
+      defaultPositionId: p?.defaultPositionId,
+      eligibleSlots: p?.eligibleSlots,
+      slotId: e.lineupSlotId
+    });
+  }
+
+ let position = "";
+const slotId = e.lineupSlotId;
+
+if (slotId === 20) { // Bench
+  const eligible = p?.eligibleSlots || [];
+  
+  // RB check FIRST (slot 2)
+  if (eligible.includes(2)) {
+    position = "RB";
+  }
+  // Then check for pure TE (has slot 6 but NOT slots 3 or 4)
+  else if (eligible.includes(6) && !eligible.includes(3) && !eligible.includes(4)) {
+    position = "TE";
+  }
+  // WR check
+  else if (eligible.includes(3) || eligible.includes(4)) {
+    position = "WR";
+  }
+  // QB check
+  else if (eligible.includes(0)) {
+    position = "QB";
+  }
+  // D/ST check
+  else if (eligible.includes(16)) {
+    position = "D/ST";
+  }
+  // K check
+  else if (eligible.includes(17)) {
+    position = "K";
+  }
+  // Fallback
+  else if (p?.defaultPositionId) {
+    position = posIdToName(p.defaultPositionId);
+  }
+} else {
+  position = slot;
+}
+  
+  return { 
+    name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
+    slot, 
+    position
+  };
+});
 
           // Sort starters and bench
           const starters = entries.filter(e => e.slot !== "Bench");

@@ -696,7 +696,6 @@ const updatePayment = async (teamName, isPaid) => {
   const importEspnTeams = async () => {
   if(!espn.leagueId) return alert("Enter League ID");
   try{
-    // Fetch team data AND roster data
     const [teamJson, rosJson, setJson] = await Promise.all([
       fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" }),
       fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mRoster" }),
@@ -710,24 +709,56 @@ const updatePayment = async (teamName, isPaid) => {
     const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
     const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
     
-    // Build roster data with proper ordering
     const rosterData = (rosJson?.teams || []).map(t => {
       const entries = (t.roster?.entries || []).map(e => {
         const p = e.playerPoolEntry?.player;
         const fullName = p?.fullName || "Player";
         const slot = slotMap[e.lineupSlotId] || "—";
-        // Try multiple ESPN position sources for better accuracy
-let position = "";
-if (p?.defaultPositionId) {
-  position = posIdToName(p.defaultPositionId);
-}
-// Also check if there's position info in other ESPN fields
-if (!position && p?.eligibleSlots) {
-  // Use the first eligible slot that's a real position
-  const eligiblePos = p.eligibleSlots
-    .map(slotId => posIdToName(slotId))
-    .find(pos => pos && !pos.includes("FLEX") && pos !== "—");
-  if (eligiblePos) position = eligiblePos;
+        // ADD THE CONSOLE.LOG HERE:
+  if (fullName.includes("Kraft") || fullName.includes("Goedert")) {
+    console.log(`${fullName}:`, {
+      defaultPositionId: p?.defaultPositionId,
+      eligibleSlots: p?.eligibleSlots,
+      slotId: e.lineupSlotId
+    });
+  }
+        // KEY FIX: Use lineupSlotId to determine position, NOT defaultPositionId
+        let position = "";
+const slotId = e.lineupSlotId;
+
+if (slotId === 20) { // Bench
+  const eligible = p?.eligibleSlots || [];
+  
+  // RB check FIRST (slot 2)
+  if (eligible.includes(2)) {
+    position = "RB";
+  }
+  // Then check for pure TE (has slot 6 but NOT slots 3 or 4)
+  else if (eligible.includes(6) && !eligible.includes(3) && !eligible.includes(4)) {
+    position = "TE";
+  }
+  // WR check
+  else if (eligible.includes(3) || eligible.includes(4)) {
+    position = "WR";
+  }
+  // QB check
+  else if (eligible.includes(0)) {
+    position = "QB";
+  }
+  // D/ST check
+  else if (eligible.includes(16)) {
+    position = "D/ST";
+  }
+  // K check
+  else if (eligible.includes(17)) {
+    position = "K";
+  }
+  // Fallback
+  else if (p?.defaultPositionId) {
+    position = posIdToName(p.defaultPositionId);
+  }
+} else {
+  position = slot;
 }
         
         return { 
@@ -742,29 +773,26 @@ if (!position && p?.eligibleSlots) {
       const bench = entries.filter(e => e.slot === "Bench");
       
       // Define exact starter order
-      const starterOrder = ["QB", "RB", "RB/WR", "WR", "TE", "FLEX", "D/ST", "K"];
-      
-      // Sort starters by the exact order you want
-const sortedStarters = [];
-const starterOrderWithCounts = [
-  { pos: "QB", max: 1 },
-  { pos: "RB", max: 2 }, 
-  { pos: "RB/WR", max: 1 },
-  { pos: "WR", max: 2 },
-  { pos: "TE", max: 1 },
-  { pos: "FLEX", max: 1 },
-  { pos: "D/ST", max: 1 },
-  { pos: "K", max: 1 }
-];
+      const starterOrderWithCounts = [
+        { pos: "QB", max: 1 },
+        { pos: "RB", max: 2 }, 
+        { pos: "RB/WR", max: 1 },
+        { pos: "WR", max: 2 },
+        { pos: "TE", max: 1 },
+        { pos: "FLEX", max: 1 },
+        { pos: "D/ST", max: 1 },
+        { pos: "K", max: 1 }
+      ];
 
-starterOrderWithCounts.forEach(({ pos, max }) => {
-  const playersInPosition = starters.filter(p => p.slot === pos);
-  for (let i = 0; i < max; i++) {
-    if (playersInPosition[i]) {
-      sortedStarters.push(playersInPosition[i]);
-    }
-  }
-});
+      const sortedStarters = [];
+      starterOrderWithCounts.forEach(({ pos, max }) => {
+        const playersInPosition = starters.filter(p => p.slot === pos);
+        for (let i = 0; i < max; i++) {
+          if (playersInPosition[i]) {
+            sortedStarters.push(playersInPosition[i]);
+          }
+        }
+      });
 
       // Sort bench players and add position in parentheses
       const sortedBench = bench
@@ -774,7 +802,6 @@ starterOrderWithCounts.forEach(({ pos, max }) => {
           slot: p.slot
         }));
       
-      // Combine starters and bench
       const finalEntries = [
         ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
         ...sortedBench

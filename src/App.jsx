@@ -729,17 +729,17 @@ const slotId = e.lineupSlotId;
 if (slotId === 20) { // Bench
   const eligible = p?.eligibleSlots || [];
   
-  // RB check FIRST (slot 2)
-  if (eligible.includes(2)) {
-    position = "RB";
-  }
-  // Then check for pure TE (has slot 6 but NOT slots 3 or 4)
-  else if (eligible.includes(6) && !eligible.includes(3) && !eligible.includes(4)) {
+  // Check for pure TE first (has slot 6 but NOT slots 3 or 4)
+  if (eligible.includes(6) && !eligible.includes(3) && !eligible.includes(4)) {
     position = "TE";
   }
   // WR check
   else if (eligible.includes(3) || eligible.includes(4)) {
     position = "WR";
+  }
+  // RB check
+  else if (eligible.includes(2)) {
+    position = "RB";
   }
   // QB check
   else if (eligible.includes(0)) {
@@ -4790,65 +4790,85 @@ setTrophyCounts(trophyCounts);
 
   // Calculate optimal lineup helper
   const calculateOptimalScore = (teamData) => {
-    if (!teamData?.rosterForCurrentScoringPeriod?.entries) return teamData.totalPoints || 0;
+  if (!teamData?.rosterForCurrentScoringPeriod?.entries) return teamData.totalPoints || 0;
+  
+  const entries = teamData.rosterForCurrentScoringPeriod.entries;
+  const playersByPosition = { QB: [], RB: [], WR: [], TE: [], K: [], DEF: [] };
+  
+  entries.forEach(entry => {
+    const pos = entry.playerPoolEntry?.player?.defaultPositionId;
+    const score = entry.playerPoolEntry?.appliedStatTotal || 0;
+    const playerId = entry.playerPoolEntry?.player?.id || Math.random();
+    const playerName = entry.playerPoolEntry?.player?.fullName || 'Unknown';
     
-    const entries = teamData.rosterForCurrentScoringPeriod.entries;
-    const playersByPosition = { QB: [], RB: [], WR: [], TE: [], K: [], DEF: [] };
+    let position;
+    switch(pos) {
+      case 1: position = 'QB'; break;
+      case 2: position = 'RB'; break;
+      case 3: position = 'WR'; break;
+      case 4: position = 'TE'; break;
+      case 6: position = 'TE'; break;
+      case 5: position = 'K'; break;
+      case 16: position = 'DEF'; break;
+      default: return;
+    }
     
-    entries.forEach(entry => {
-      const pos = entry.playerPoolEntry?.player?.defaultPositionId;
-      const score = entry.playerPoolEntry?.appliedStatTotal || 0;
-      
-      // Map position IDs: 1=QB, 2=RB, 3=WR, 4=TE, 5=K, 16=DEF
-      let position;
-      switch(pos) {
-        case 1: position = 'QB'; break;
-        case 2: position = 'RB'; break;
-        case 3: position = 'WR'; break;
-        case 4: position = 'TE'; break;
-        case 5: position = 'K'; break;
-        case 16: position = 'DEF'; break;
-        default: return;
+    playersByPosition[position].push({ score, playerId, playerName });
+  });
+  
+  Object.keys(playersByPosition).forEach(pos => {
+    playersByPosition[pos].sort((a, b) => b.score - a.score);
+  });
+  
+  let optimal = 0;
+  const usedPlayerIds = new Set();
+  const selections = [];
+  
+  const takeNext = (list, slotName) => {
+    for (const player of list) {
+      if (!usedPlayerIds.has(player.playerId)) {
+        usedPlayerIds.add(player.playerId);
+        selections.push(`${slotName}: ${player.playerName} (${player.score.toFixed(1)})`);
+        return player.score;
       }
-      
-      playersByPosition[position].push(score);
-    });
-    
-    // Sort each position by score descending
-    Object.keys(playersByPosition).forEach(pos => {
-      playersByPosition[pos].sort((a, b) => b - a);
-    });
-    
-    // Build optimal lineup
-    let optimal = 0;
-    
-    // Fixed positions
-    optimal += playersByPosition.QB[0] || 0;  // 1 QB
-    optimal += playersByPosition.K[0] || 0;   // 1 K
-    optimal += playersByPosition.DEF[0] || 0; // 1 DEF
-    optimal += playersByPosition.TE[0] || 0;  // 1 TE
-    
-    // 2 RBs
-    optimal += playersByPosition.RB[0] || 0;
-    optimal += playersByPosition.RB[1] || 0;
-    
-    // 2 WRs
-    optimal += playersByPosition.WR[0] || 0;
-    optimal += playersByPosition.WR[1] || 0;
-    
-    // Flex spots - collect remaining eligible players
-    const flexEligible = [
-      ...(playersByPosition.RB.slice(2) || []),
-      ...(playersByPosition.WR.slice(2) || []),
-      ...(playersByPosition.TE.slice(1) || [])
-    ].sort((a, b) => b - a);
-    
-    // 2 Flex spots (best remaining)
-    optimal += flexEligible[0] || 0;
-    optimal += flexEligible[1] || 0;
-    
-    return optimal;
+    }
+    selections.push(`${slotName}: EMPTY (0)`);
+    return 0;
   };
+  
+  optimal += takeNext(playersByPosition.QB, 'QB');
+  optimal += takeNext(playersByPosition.K, 'K');
+  optimal += takeNext(playersByPosition.DEF, 'DEF');
+  optimal += takeNext(playersByPosition.TE, 'TE');
+  optimal += takeNext(playersByPosition.RB, 'RB1');
+  optimal += takeNext(playersByPosition.RB, 'RB2');
+  optimal += takeNext(playersByPosition.WR, 'WR1');
+  optimal += takeNext(playersByPosition.WR, 'WR2');
+  
+  const rbWrCombined = [
+    ...playersByPosition.RB,
+    ...playersByPosition.WR
+  ].sort((a, b) => b.score - a.score);
+  optimal += takeNext(rbWrCombined, 'RB/WR');
+  
+  const flexCombined = [
+    ...playersByPosition.RB,
+    ...playersByPosition.WR,
+    ...playersByPosition.TE
+  ].sort((a, b) => b.score - a.score);
+  optimal += takeNext(flexCombined, 'FLEX');
+  
+  console.log('Optimal lineup for team', teamData.teamId, ':', selections);
+  console.log('Optimal calculation:', {
+    teamId: teamData.teamId,
+    actual: teamData.totalPoints,
+    optimal: optimal,
+    percentage: ((teamData.totalPoints / optimal) * 100).toFixed(1) + '%',
+    usedPlayers: usedPlayerIds.size
+  });
+  
+  return optimal;
+};
 
   useEffect(() => {
     if (espn.seasonId && espn.leagueId) {

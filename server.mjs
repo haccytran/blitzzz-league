@@ -1779,6 +1779,25 @@ app.get("/api/espn", async (req, res) => {
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
+function posIdToName(id) {
+  const map = { 
+    0: "QB", 1: "TQB", 2: "RB", 3: "WR", 4: "WR",
+    5: "WR/TE", 6: "TE", 16: "DEF", 17: "K"
+  };
+  return map?.[id] || "—";
+}
+
+function slotIdToName(lineupSlotCounts) {
+  const map = {
+    0: "QB", 2: "RB", 3: "RB/WR", 4: "WR",
+    6: "TE", 16: "D/ST", 17: "K", 20: "Bench",
+    21: "IR", 23: "FLEX"
+  };
+  return new Proxy(map, {
+    get: (target, prop) => target[prop] || "—"
+  });
+}
+
 function inferMethod(typeStr, typeNum, t, it){
   const s = String(typeStr ?? "").toUpperCase();
   const ts = normalizeEpoch(t?.processDate ?? t?.proposedDate ?? t?.executionDate ?? t?.date ?? Date.now());
@@ -2678,13 +2697,6 @@ async function runAutoRefreshForLeague(leagueConfig) {
   const slot = slotMap[e.lineupSlotId] || "—";
   
 // ADD THE CONSOLE.LOG HERE:
-  if (fullName.includes("Kraft") || fullName.includes("Goedert")) {
-    console.log(`${fullName}:`, {
-      defaultPositionId: p?.defaultPositionId,
-      eligibleSlots: p?.eligibleSlots,
-      slotId: e.lineupSlotId
-    });
-  }
 
  let position = "";
 const slotId = e.lineupSlotId;

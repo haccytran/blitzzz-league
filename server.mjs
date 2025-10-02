@@ -2659,9 +2659,9 @@ async function runAutoRefreshForLeague(leagueConfig) {
     try {
       // Fetch team and roster data
       const [teamJson, rosJson, setJson] = await Promise.all([
-        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mTeam", req: { headers: {} }, requireCookie: false }),
-        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mRoster", req: { headers: {} }, requireCookie: false }),
-        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mSettings", req: { headers: {} }, requireCookie: false }),
+        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mTeam", req: { headers: {} }, requireCookie: true }),
+        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mRoster", req: { headers: {} }, requireCookie: true }),
+        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mSettings", req: { headers: {} }, requireCookie: true }),
       ]);
       
       const teams = teamJson?.teams || [];

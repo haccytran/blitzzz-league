@@ -2722,17 +2722,8 @@ for (const r of filtered) {
     if (w <= 0) {
       rangeByWeek[w] = "All pre-season transactions are FREE";
     } else {
-      // Calculate the actual date range for this week
-const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
-const week1Thursday = firstWednesdayOfSeptemberPT(seasonYear); // This actually returns first Thursday
-
-// Go back 1 day to get Wednesday (billing start day)
-const week1Wednesday = new Date(week1Thursday.getTime() - 24 * 60 * 60 * 1000);
-const weekWednesday = new Date(week1Wednesday.getTime() + (w - 1) * 7 * 24 * 60 * 60 * 1000);
-const weekTuesday = new Date(weekWednesday.getTime() + 6 * 24 * 60 * 60 * 1000);
-
-const formatDate = (date) => date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-rangeByWeek[w] = `${formatDate(weekWednesday)} → ${formatDate(weekTuesday)} (Wed→Tue)`;
+      // Just use the range that came from the server
+      rangeByWeek[w] = r.range;
     }
   }
 }

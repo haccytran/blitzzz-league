@@ -1,4 +1,3 @@
-
 // --- server.mjs (Version 4.0 - Complete PostgreSQL + All Features) ---
 import dotenv from "dotenv";
 dotenv.config();
@@ -297,7 +296,13 @@ app.get("/api/leagues/:leagueId/playoff-odds/:seasonId", async (req, res) => {
 
 app.get('/api/leagues/:leagueId/season-records', async (req, res) => {
   try {
-    const response = await fetch(`http://localhost:8787/season-records?leagueId=${req.query.leagueId || req.params.leagueId}`);
+    const leagueConfigs = {
+      'blitzzz': '226912',
+      'sculpin': '58645'
+    };
+    const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
+    
+    const response = await fetch(`http://localhost:5001/season-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -307,7 +312,13 @@ app.get('/api/leagues/:leagueId/season-records', async (req, res) => {
 
 app.get('/api/leagues/:leagueId/positional-records', async (req, res) => {
   try {
-    const response = await fetch(`http://localhost:8787/positional-records?leagueId=${req.query.leagueId || req.params.leagueId}`);
+    const leagueConfigs = {
+      'blitzzz': '226912',
+      'sculpin': '58645'
+    };
+    const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
+    
+    const response = await fetch(`http://localhost:5001/positional-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -4023,12 +4034,3 @@ app.listen(PORT, () => {
 // Static hosting - MUST BE LAST
 const CLIENT_DIR = path.join(__dirname, "dist");
 app.use(express.static(CLIENT_DIR));
-
-// SPA fallback - serve index.html for all non-API routes
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api/')) {
-    return next();
-  }
-  res.sendFile(path.join(CLIENT_DIR, "index.html"));
-});
-

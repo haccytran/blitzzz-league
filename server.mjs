@@ -736,39 +736,33 @@ app.delete("/api/leagues/:leagueId/weekly", requireAdmin, async (req, res) => {
 });
 
 // Luck Index
-app.post("/api/leagues/:leagueId/luck-index/:seasonId", async (req, res) => {
+app.post('/api/leagues/:leagueId/luck-index/:seasonId', async (req, res) => {
   try {
     const { leagueId, seasonId } = req.params;
     const { currentWeek } = req.query;
-
+    
     const leagueConfigs = {
       'blitzzz': '226912',
       'sculpin': '58645'
     };
-
+    
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
-    const espn_s2 = req.cookies?.espn_s2;
-    const swid = req.cookies?.swid;
+    console.log('[LUCK INDEX] Request:', { leagueId, espnLeagueId, seasonId, currentWeek });
 
-    const response = await fetch('http://localhost:5001/luck-index', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        leagueId: espnLeagueId,
-        year: seasonId,
-        currentWeek: parseInt(currentWeek) || 1,
-        espn_s2,
-        swid
-      })
+    const data = await callPythonService('/luck-index', {
+      leagueId: espnLeagueId,
+      year: parseInt(seasonId),
+      currentWeek: parseInt(currentWeek) || 5,
+      espn_s2: process.env.ESPN_S2 || req.cookies?.espn_s2,
+      swid: process.env.SWID || req.cookies?.swid
     });
 
-    const data = await response.json();
+    console.log('[LUCK INDEX] Python response:', data);
     res.json(data);
-
-  } catch (error) {
-    console.error('Luck index failed:', error);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    console.error('[LUCK INDEX] error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

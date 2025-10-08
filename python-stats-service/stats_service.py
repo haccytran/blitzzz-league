@@ -7,7 +7,8 @@ from espn_api.football import League
 import requests
 import random
 import numpy as np
-import psycopg2
+import psycopg
+from psycopg.rows import dict_row
 from statistics import mean, stdev
 import os
 
@@ -719,8 +720,8 @@ def get_season_records():
     try:
         league_id = request.args.get('leagueId', '226912')
         
-        conn = psycopg2.connect(DB_URL)
-        cur = conn.cursor()
+        conn = psycopg.connect(os.environ["DATABASE_URL"])
+        cur = conn.cursor(row_factory=dict_row)
         
         # Most wins in a season
         cur.execute("""
@@ -791,38 +792,38 @@ def get_season_records():
         
         records = {
             'mostWins': {
-                'teamId': most_wins[0] if most_wins else None,
-                'year': most_wins[1] if most_wins else None,
-                'value': most_wins[2] if most_wins else 0
+                'teamId': most_wins['team_id'] if most_wins else None,
+                'year': most_wins['league_year'] if most_wins else None,
+                'value': most_wins['wins'] if most_wins else 0
             },
             'highestScore': {
-                'teamId': highest_score[0] if highest_score else None,
-                'year': highest_score[1] if highest_score else None,
-                'week': highest_score[2] if highest_score else None,
-                'value': float(highest_score[3]) if highest_score else 0
+                'teamId': highest_score['team_id'] if highest_score else None,
+                'year': highest_score['league_year'] if highest_score else None,
+                'week': highest_score['week'] if highest_score else None,
+                'value': float(highest_score['team_score']) if highest_score else 0
             },
             'mostPointsFor': {
-                'teamId': most_pf[0] if most_pf else None,
-                'year': most_pf[1] if most_pf else None,
-                'value': float(most_pf[2]) if most_pf else 0
+                'teamId': most_pf['team_id'] if most_pf else None,
+                'year': most_pf['league_year'] if most_pf else None,
+                'value': float(most_pf['total_pf']) if most_pf else 0
             },
             'mostPointsAgainst': {
-                'teamId': most_pa[0] if most_pa else None,
-                'year': most_pa[1] if most_pa else None,
-                'value': float(most_pa[2]) if most_pa else 0
+                'teamId': most_pa['team_id'] if most_pa else None,
+                'year': most_pa['league_year'] if most_pa else None,
+                'value': float(most_pa['total_pa']) if most_pa else 0
             },
             'biggestBlowout': {
-                'teamId': biggest_blowout[0] if biggest_blowout else None,
-                'opponentId': biggest_blowout[1] if biggest_blowout else None,
-                'year': biggest_blowout[2] if biggest_blowout else None,
-                'week': biggest_blowout[3] if biggest_blowout else None,
-                'margin': float(biggest_blowout[4]) if biggest_blowout else 0
+                'teamId': biggest_blowout['team_id'] if biggest_blowout else None,
+                'opponentId': biggest_blowout['opponent_id'] if biggest_blowout else None,
+                'year': biggest_blowout['league_year'] if biggest_blowout else None,
+                'week': biggest_blowout['week'] if biggest_blowout else None,
+                'margin': float(biggest_blowout['margin']) if biggest_blowout else 0
             },
             'lowestScore': {
-                'teamId': lowest_score[0] if lowest_score else None,
-                'year': lowest_score[1] if lowest_score else None,
-                'week': lowest_score[2] if lowest_score else None,
-                'value': float(lowest_score[3]) if lowest_score else 0
+                'teamId': lowest_score['team_id'] if lowest_score else None,
+                'year': lowest_score['league_year'] if lowest_score else None,
+                'week': lowest_score['week'] if lowest_score else None,
+                'value': float(lowest_score['team_score']) if lowest_score else 0
             }
         }
         
@@ -837,8 +838,8 @@ def get_positional_records():
     try:
         league_id = request.args.get('leagueId', '226912')
         
-        conn = psycopg2.connect(DB_URL)
-        cur = conn.cursor()
+        conn = psycopg.connect(os.environ["DATABASE_URL"])
+        cur = conn.cursor(row_factory=dict_row)
         
         positions = ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST']
         records = {}
@@ -856,11 +857,11 @@ def get_positional_records():
             
             if result:
                 records[pos] = {
-                    'player': result[0],
-                    'year': result[1],
-                    'week': result[2],
-                    'points': float(result[3]),
-                    'teamId': result[4]
+                    'player': result['player_name'],
+                    'year': result['league_year'],
+                    'week': result['week'],
+                    'points': float(result['points']),
+                    'teamId': result['team_id']
                 }
             else:
                 records[pos] = None

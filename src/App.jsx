@@ -5418,7 +5418,7 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
   
   const [loading, setLoading] = useState(false);
   const [weeklyLuck, setWeeklyLuck] = useState({});
-  const [expandedWeeks, setExpandedWeeks] = useState(new Set([4]));
+  const [expandedWeeks, setExpandedWeeks] = useState(new Set());
   const [currentWeek, setCurrentWeek] = useState(4);
 
   const toggleWeek = (week) => {
@@ -5450,16 +5450,36 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
   console.log('loadLuckIndex called!');
   setLoading(true);
   try {
+    // Calculate the current completed week
+    const now = new Date();
+    const weekCalc = leagueWeekOf(now, seasonYear);
+    const currentInProgressWeek = weekCalc.week || 1;
+    const completedWeek = Math.max(1, currentInProgressWeek);
+    
+    console.log('[LUCK INDEX] Using week:', completedWeek);
+    
     const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
     const response = await fetch(
-      `${baseURL}/api/leagues/${config.id}/luck-index/${espn.seasonId}?currentWeek=${currentWeek}`,
+      `${baseURL}/api/leagues/${config.id}/luck-index/${espn.seasonId}?currentWeek=${completedWeek}`,
       { method: 'POST' }
     );
+    
     console.log('Response status:', response.status);
     const data = await response.json();
     console.log('Parsed data:', data);
     console.log('weeklyLuck from data:', data.weeklyLuck);
+    
     setWeeklyLuck(data.weeklyLuck || {});
+    setCurrentWeek(completedWeek);
+    
+    // Auto-expand the most recent completed week
+    if (data.weeklyLuck && Object.keys(data.weeklyLuck).length > 0) {
+      const weeks = Object.keys(data.weeklyLuck).map(w => parseInt(w));
+      const mostRecentWeek = Math.max(...weeks);
+      console.log('[LUCK INDEX] Auto-expanding week:', mostRecentWeek);
+      setExpandedWeeks(new Set([mostRecentWeek]));
+    }
+    
     console.log('State should be updated now');
   } catch (err) {
     console.error('Failed to load luck index:', err);

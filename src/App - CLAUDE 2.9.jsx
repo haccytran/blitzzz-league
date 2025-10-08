@@ -145,7 +145,27 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, auth =
 }
 
 
-
+/* =========================
+   Server API helpers
+   ========================= */
+async function apiCall(endpoint, options = {}) {
+  const url = API(endpoint);
+  const config = {
+    headers: { "Content-Type": "application/json" },
+    ...options
+  };
+  
+  if (config.method && config.method !== 'GET' && !config.headers["x-admin"]) {
+    config.headers["x-admin"] = ADMIN_ENV;
+  }
+  
+  const response = await fetch(url, config);
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
 
 /* =========================
    Local storage hook for non-server data
@@ -167,21 +187,12 @@ export default function App() {
        const urlParams = new URLSearchParams(window.location.search);
        const leagueFromUrl = urlParams.get('league');
        
-  console.log('URL league param:', leagueFromUrl);
-
        if (leagueFromUrl) {
          // Import the config to validate the league exists
          import('./config/leagueConfigs').then(({ leagueConfigs }) => {
-
-      console.log('Available league configs:', Object.keys(leagueConfigs));
-      console.log('Looking for config:', leagueFromUrl);
-
            if (leagueConfigs[leagueFromUrl]) {
-        console.log('Setting selected league to:', { id: leagueFromUrl, ...leagueConfigs[leagueFromUrl] });
              setSelectedLeague({ id: leagueFromUrl, ...leagueConfigs[leagueFromUrl] });
-
            } else {
-        console.log('League not found, clearing URL');
              // Invalid league in URL, remove it
              window.history.replaceState({}, '', window.location.pathname);
            }
@@ -191,7 +202,6 @@ export default function App() {
 
      // Update URL when league changes
      const handleLeagueSelect = (league) => {
-
        setSelectedLeague(league);
        // Add league to URL
        const url = new URL(window.location);
@@ -219,39 +229,6 @@ export default function App() {
   useEffect(()=>{ document.title = "Blitzzz Fantasy Football League"; }, []);
    const currentYear = new Date().getFullYear();
 const config = useLeagueConfig(selectedLeague);
-
-console.log('=== LEAGUE DEBUGGING ===');
-console.log('selectedLeague object:', selectedLeague);
-console.log('config returned:', config);
-console.log('config.id:', config.id);
-console.log('URL params:', window.location.search);
-
-/* =========================
-   Server API helpers
-   ========================= */
-async function apiCallLeague(endpoint, options = {}) {
-  const leagueAPI = createLeagueAPI(config.id);
-  const url = leagueAPI.API(endpoint);
-
-  console.log('League ID:', config.id);  // ← Add this
-  console.log('Generated URL:', url);    // ← Add this
-
-  const configObj = {
-    headers: { "Content-Type": "application/json" },
-    ...options
-  };
-  
-  if (configObj.method && configObj.method !== 'GET' && !configObj.headers["x-admin"]) {
-    configObj.headers["x-admin"] = ADMIN_ENV;
-  }
-  
-  const response = await fetch(url, configObj);
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || `HTTP ${response.status}`);
-  }
-  return response.json();
-}
   const VALID_TABS = [
     "announcements","activity","weekly","waivers","dues",
      "transactions","drafts","rosters","settings","trading","polls" 
@@ -297,24 +274,26 @@ async function apiCallLeague(endpoint, options = {}) {
     loadServerData();
   }, []);
 
-async function loadServerData() {
-  try {
-    const serverData = await apiCallLeague('/data').catch(() => ({
-      announcements: [],
-      weeklyList: [],
-      members: [],
-      waivers: [],
-      buyins: {},
-      duesPayments: {}, 
-      tradeBlock: [],
-      leagueSettingsHtml: "",
-      lastUpdated: null
-    }));
-    setData(serverData);
-  } catch (error) {
-    console.error('Failed to load server data:', error);
+  async function loadServerData() {
+    try {
+      const leagueAPI = createLeagueAPI(config.id);
+   const serverData = await fetch(leagueAPI.API('/data')).then(r => r.json()).catch(() => ({
+     announcements: [],
+     weeklyList: [],
+     members: [],
+     waivers: [],
+     buyins: {},
+     duesPayments: {}, 
+     tradeBlock: [],
+     leagueSettingsHtml: "",
+     lastUpdated: null
+   }));
+      setData(serverData);
+    } catch (error) {
+      console.error('Failed to load server data:', error);
+    }
   }
-}
+
   // Commissioner mode
   const adminKey = createLeagueStorageKey(config.id, 'is_admin');
    const [isAdmin,setIsAdmin] = useState(localStorage.getItem(adminKey)==="1");
@@ -324,18 +303,16 @@ async function loadServerData() {
     localStorage.setItem("ffl_roast_idx", String(idx+1));
     return msg;
   }
-
-     const login = ()=>{
-     const pass = prompt("Enter Commissioner Password:");
-     const correctPassword = config.adminPassword || ADMIN_ENV; // Use league-specific password if available
-     if(pass === correctPassword){
-       setIsAdmin(true);
-       localStorage.setItem(adminKey,"1");
-       alert("Commissioner mode enabled");
-     } else {
-       alert(nextRoast());
-     }
-   };
+  const login = ()=>{
+    const pass = prompt("Enter Commissioner Password:");
+    if(pass===ADMIN_ENV){
+      setIsAdmin(true);
+      localStorage.setItem(adminKey,"1");
+      alert("Commissioner mode enabled");
+    } else {
+      alert(nextRoast());
+    }
+  };
   const logout = ()=>{ setIsAdmin(false); localStorage.removeItem(adminKey); };
 
 const switchLeague = () => {
@@ -347,26 +324,16 @@ const switchLeague = () => {
 // ESPN config (replace the old useState)
 
 const [espn, setEspn] = useState({ 
-  leagueId: "", 
-  seasonId: "" 
+  leagueId: config.espn.leagueId, 
+  seasonId: config.espn.defaultSeason 
 });
-
-// Add this useEffect right after the espn useState
-useEffect(() => {
-  if (config && config.espn) {
-    setEspn({
-      leagueId: config.espn.leagueId,
-      seasonId: config.espn.defaultSeason
-    });
-  }
-}, [config]);
 
 // Define loadDisplaySeason AFTER espn state exists
 
 async function loadDisplaySeason() {
   try {
     console.log('Loading display season from server...');
-    const response = await fetch(API('/api/report/default-season'));
+    const response = await apiCall('/api/report/default-season');
     console.log('Server default season response:', response);
     
     // More robust season extraction
@@ -431,7 +398,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
   // Server-side CRUD operations
   const addAnnouncement = async (html) => {
     try {
-      await apiCallLeague('/announcements', {
+      await apiCall('/api/league-data/announcements', {
         method: 'POST',
         body: JSON.stringify({ html })
       });
@@ -443,7 +410,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteAnnouncement = async (id) => {
     try {
-      await apiCallLeague('/announcements', {
+      await apiCall('/api/league-data/announcements', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -455,7 +422,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addWeekly = async (entry) => {
     try {
-      await apiCallLeague('/weekly', {
+      await apiCall('/api/league-data/weekly', {
         method: 'POST',
         body: JSON.stringify({ entry })
       });
@@ -468,7 +435,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
   const deleteWeekly = async (id) => {
     if (!confirm("Delete this challenge?")) return;
     try {
-      await apiCallLeague('/weekly', {
+      await apiCall('/api/league-data/weekly', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -481,7 +448,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
    const editWeekly = async (id, updatedEntry) => {
   try {
     // First, delete the existing entry
-    await apiCallLeague('/weekly', {
+    await apiCall('/api/league-data/weekly', {
       method: 'DELETE',
       body: JSON.stringify({ id })
     });
@@ -493,7 +460,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
       createdAt: Date.now()
     };
     
-    await apiCallLeague('/weekly', {
+    await apiCall('/api/league-data/weekly', {
       method: 'POST',
       body: JSON.stringify({ entry: newEntry })
     });
@@ -506,7 +473,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteMember = async (id) => {
     try {
-      await apiCallLeague('/members', {
+      await apiCall('/api/league-data/members', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -518,7 +485,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addWaiver = async (userId, player, date) => {
     try {
-      await apiCallLeague('/waivers', {
+      await apiCall('/api/league-data/waivers', {
         method: 'POST',
         body: JSON.stringify({ userId, player, date: date || today() })
       });
@@ -530,7 +497,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteWaiver = async (id) => {
     try {
-      await apiCallLeague('/waivers', {
+      await apiCall('/api/league-data/waivers', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -542,7 +509,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addTrade = async (trade) => {
     try {
-      await apiCallLeague('/trading', {
+      await apiCall('/api/league-data/trading', {
         method: 'POST',
         body: JSON.stringify({ trade })
       });
@@ -554,7 +521,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const updateBuyIns = async (seasonKey, updates) => {
     try {
-      await apiCallLeague('/buyins', {
+      await apiCall('/api/league-data/buyins', {
         method: 'POST',
         body: JSON.stringify({ seasonKey, updates })
       });
@@ -566,7 +533,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteTrade = async (id) => {
     try {
-      await apiCallLeague('/trading', {
+      await apiCall('/api/league-data/trading', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -578,7 +545,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const saveLeagueSettings = async (html) => {
     try {
-      await apiCallLeague('/settings', {
+      await apiCall('/api/league-data/settings', {
         method: 'POST',
         body: JSON.stringify({ html })
       });
@@ -683,7 +650,7 @@ starterOrderWithCounts.forEach(({ pos, max }) => {
     });
     
     // Save both member names and roster data to server
-    await apiCallLeague('/import-teams', {
+    await apiCall('/api/league-data/import-teams', {
       method: 'POST',
       body: JSON.stringify({ 
         teams: names,
@@ -713,7 +680,7 @@ starterOrderWithCounts.forEach(({ pos, max }) => {
 
 const updateDuesPayments = async (seasonId, updates) => {
   try {
-    await apiCallLeague('/dues-payments', {
+    await apiCall('/api/league-data/dues-payments', {
       method: 'POST',
       body: JSON.stringify({ seasonId, updates })
     });
@@ -728,7 +695,7 @@ async function loadOfficialReport(silent=false){
     if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
     
     // Load the snapshot for the current season
-    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}&leagueId=${config.id}`));
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     
     if (r.ok){
       const j = await r.json();
@@ -767,11 +734,11 @@ async function loadOfficialReport(silent=false){
   try{
     const r = await fetch(API(`/api/report/update?jobId=${jobId}`), {
       method: "POST",
-      headers: { "Content-Type":"application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type":"application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ 
         leagueId: espn.leagueId, 
         seasonId: espn.seasonId,
-        currentLeagueId: config.id // Add this line - passes current league ID
+        updateDefaultSeason: false // Add this flag
       })
     });
     if(!r.ok){
@@ -790,43 +757,43 @@ async function loadOfficialReport(silent=false){
 
   /* ---- Views ---- */
   const views = {
-  announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-  weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} />, 
-  activity: <RecentActivityView espn={espn} config={config} />,
-  transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
-  drafts: <DraftsView espn={espn} />,
-  waivers: <WaiversView 
-    espnReport={espnReport}
-    isAdmin={isAdmin}
-    data={data}
-    selectedWeek={selectedWeek}
-    setSelectedWeek={setSelectedWeek}
-    seasonYear={seasonYear}
-    membersById={membersById}
-    updateOfficialSnapshot={updateOfficialSnapshot}
-    setActive={setActive}
-    loadServerData={loadServerData}
-    addWaiver={addWaiver}
-    deleteWaiver={deleteWaiver}
-    deleteMember={deleteMember}
-  />,
-  dues: <DuesView
-    report={espnReport}
-    lastSynced={lastSynced}
-    loadOfficialReport={loadOfficialReport}
-    updateOfficialSnapshot={updateOfficialSnapshot}
-    isAdmin={isAdmin}
-    data={data}
-    setData={setData}
-    seasonYear={seasonYear}
-    updateBuyIns={updateBuyIns}
-    updateDuesPayments={updateDuesPayments}
-  />,
-  rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" apiCallLeague={apiCallLeague} />,
-  settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
-  trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>,
-  polls: <PollsView {...{isAdmin, members:data.members, espn, config}}/>
-};
+    announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
+    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} />, 
+    activity: <RecentActivityView espn={espn} />,
+    transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
+    drafts: <DraftsView espn={espn} />,
+    waivers: <WaiversView 
+  espnReport={espnReport}
+  isAdmin={isAdmin}
+  data={data}
+  selectedWeek={selectedWeek}
+  setSelectedWeek={setSelectedWeek}
+  seasonYear={seasonYear}
+  membersById={membersById}
+  updateOfficialSnapshot={updateOfficialSnapshot}
+  setActive={setActive}
+  loadServerData={loadServerData}
+  addWaiver={addWaiver}
+  deleteWaiver={deleteWaiver}
+  deleteMember={deleteMember}
+/>,
+    dues: <DuesView
+      report={espnReport}
+      lastSynced={lastSynced}
+      loadOfficialReport={loadOfficialReport}
+      updateOfficialSnapshot={updateOfficialSnapshot}
+      isAdmin={isAdmin}
+      data={data}
+      setData={setData}
+      seasonYear={seasonYear}
+      updateBuyIns={updateBuyIns}
+      updateDuesPayments={updateDuesPayments}
+    />,
+    rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" />,
+    settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
+    trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>,
+    polls: <PollsView {...{isAdmin, members:data.members, espn}}/>
+  };
 
   return (
     <>
@@ -978,7 +945,7 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
   );
 }
 
-function RecentActivityView({ espn, config }) {
+function RecentActivityView({ espn }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activities, setActivities] = useState([]);
@@ -988,7 +955,7 @@ async function loadReport() {
   setLoading(true);
   setError("");
   try {
-    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}&leagueId=${config.id}`));
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     if (r.ok) {
       const reportData = await r.json();
       setReport(reportData);
@@ -1683,60 +1650,56 @@ function DraftsView({ espn }) {
   const [draftData, setDraftData] = useState(null);
 
   const loadDraftData = async () => {
-  if (!espn.leagueId || !espn.seasonId) {
-    setError("Set League ID and Season in League Settings first.");
-    return;
-  }
-
-  setLoading(true);
-  setError("");
-  
-  try {
-    // Get team names
-    const teamJson = await fetchEspnJson({ 
-      leagueId: espn.leagueId, 
-      seasonId: espn.seasonId, 
-      view: "mTeam" 
-    });
-    const teamNames = Object.fromEntries(
-      (teamJson?.teams || []).map(t => [t.id, teamName(t)])
-    );
-
-    // Get draft data - use direct API call instead of apiCall
-    const response = await fetch(API(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`));
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    if (!espn.leagueId || !espn.seasonId) {
+      setError("Set League ID and Season in League Settings first.");
+      return;
     }
-    const data = await response.json();
-    const picks = data.picks || [];
 
-    // Group by team and add team names
-    const draftsByTeam = picks.reduce((acc, pick) => {
-      const team = teamNames[pick.teamId] || `Team ${pick.teamId}`;
-      if (!acc[team]) acc[team] = [];
-      acc[team].push({
-        round: pick.round,
-        pickNumber: pick.pickNumber,
-        player: pick.playerName || `Player #${pick.playerId}`,
-        playerId: pick.playerId
+    setLoading(true);
+    setError("");
+    
+    try {
+      // Get team names
+      const teamJson = await fetchEspnJson({ 
+        leagueId: espn.leagueId, 
+        seasonId: espn.seasonId, 
+        view: "mTeam" 
       });
-      return acc;
-    }, {});
+      const teamNames = Object.fromEntries(
+        (teamJson?.teams || []).map(t => [t.id, teamName(t)])
+      );
 
-    // Sort picks within each team by pick number
-    Object.values(draftsByTeam).forEach(teamPicks => {
-      teamPicks.sort((a, b) => (a.pickNumber || 0) - (b.pickNumber || 0));
-    });
+      // Get draft data
+      const response = await apiCall(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`);
+      const picks = response.picks || [];
 
-    setDraftData({ draftsByTeam, totalPicks: picks.length });
+      // Group by team and add team names
+      const draftsByTeam = picks.reduce((acc, pick) => {
+        const team = teamNames[pick.teamId] || `Team ${pick.teamId}`;
+        if (!acc[team]) acc[team] = [];
+        acc[team].push({
+          round: pick.round,
+          pickNumber: pick.pickNumber,
+          player: pick.playerName || `Player #${pick.playerId}`,
+          playerId: pick.playerId
+        });
+        return acc;
+      }, {});
 
-  } catch (err) {
-    console.error('Failed to load draft data:', err);
-    setError("Failed to load draft data: " + err.message);
-  }
-  
-  setLoading(false);
-};
+      // Sort picks within each team by pick number
+      Object.values(draftsByTeam).forEach(teamPicks => {
+        teamPicks.sort((a, b) => (a.pickNumber || 0) - (b.pickNumber || 0));
+      });
+
+      setDraftData({ draftsByTeam, totalPicks: picks.length });
+
+    } catch (err) {
+      console.error('Failed to load draft data:', err);
+      setError("Failed to load draft data: " + err.message);
+    }
+    
+    setLoading(false);
+  };
 
   useEffect(() => {
     loadDraftData();
@@ -1799,7 +1762,7 @@ function DraftsView({ espn }) {
   );
 }
 
-function Rosters({ leagueId, seasonId, apiCallLeague }) {
+function Rosters({ leagueId, seasonId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
@@ -1825,8 +1788,8 @@ useEffect(() => {
     setLoading(true);
     setError("");
     try {
-      // First try to load server-cached roster data using league-specific API
-      const response = await apiCallLeague(`/rosters?seasonId=${seasonId}`);
+      // First try to load server-cached roster data
+      const response = await apiCall(`/api/league-data/rosters?seasonId=${seasonId}`);
       if (response.rosterData && response.rosterData.length > 0) {
         // Use server-stored roster data
         setTeams(response.rosterData);
@@ -1838,7 +1801,6 @@ useEffect(() => {
           fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
         ]);
         
-        // Rest of the ESPN processing code stays the same...
         const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
         const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
         const items = (rosJson?.teams || []).map(t => {
@@ -1848,9 +1810,9 @@ useEffect(() => {
             const slot = slotMap[e.lineupSlotId] || "—";
             
             const position = p?.defaultPositionId ? posIdToName(p.defaultPositionId) : "";
-            const displayName = slot === "Bench" 
-              ? (position ? `${fullName} (${position})` : fullName)
-              : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+const displayName = slot === "Bench" 
+  ? (position ? `${fullName} (${position})` : fullName)
+  : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
             
             return { name: displayName, slot };
           });
@@ -1874,6 +1836,7 @@ useEffect(() => {
     setLoading(false);
   })();
 }, [leagueId, seasonId]);
+
   return (
     <Section title="Rosters" actions={<span className="badge">Cached from Import</span>}>
       {!seasonId && <p style={{ color: "#64748b" }}>Set your ESPN Season in <b>League Settings</b>.</p>}
@@ -1986,95 +1949,43 @@ function TradingView({ isAdmin, addTrade, deleteTrade, data }) {
   );
 }
 
-function PollsView({ isAdmin, members, espn, config }) {
+function PollsView({ isAdmin, members, espn }) {
   const seasonKey = String(espn?.seasonId ?? "unknown");
   const [teamCode, setTeamCode] = useStored(`poll-teamcode:${seasonKey}`, "");
 
   const [polls, setPolls] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [voteChoice, setVoteChoice] = useState("");
-  const [activePollId, setActivePollId] = useState("");
-  useEffect(() => { if (polls.length > 0 && !activePollId) setActivePollId(polls[0].id); }, [polls, activePollId]);
-}}
 
   async function loadPolls() {
-  setLoading(true);
-  setErr("");
-  try {
-    const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}`));
-    if (!r.ok) {
-      throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    setLoading(true);
+    setErr("");
+    try {
+      const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}`));
+      const j = await r.json();
+      setPolls(j.polls || []);
+    } catch (e) {
+      setErr("Failed to load polls");
     }
-    const j = await r.json();
-    console.log('Raw API response:', j);
-    console.log('Polls array:', j.polls);
-    
-    setPolls(j.polls || []);
-    
-    // If we have polls, make sure one is selected
-    if ((j.polls || []).length > 0 && !activePollId) {
-      setActivePollId(j.polls[0].id);
-    }
-    
-  } catch (e) {
-    console.error('Failed to load polls:', e);
-    setErr("Failed to load polls: " + e.message);
+    setLoading(false);
   }
-  setLoading(false);
-}
-
   useEffect(() => { loadPolls(); }, []);
 
   const [createQ, setCreateQ] = useState("");
   const [createOpts, setCreateOpts] = useState("Yes\nNo");
-
-async function createPoll() {
-  console.log('Creating poll with:', { question: createQ, options: createOpts });
-  const opts = createOpts.split("\n").map(s => s.trim()).filter(Boolean);
-  console.log('Parsed options:', opts);
-  
-  if (!createQ || opts.length < 2) {
-    console.log('Validation failed:', { hasQuestion: !!createQ, optionsCount: opts.length });
-    return alert("Enter a question and at least two options.");
-  }
-  
-  try {
+  async function createPoll() {
+    const opts = createOpts.split("\n").map(s => s.trim()).filter(Boolean);
+    if (!createQ || opts.length < 2) return alert("Enter a question and at least two options.");
     const r = await fetch(API("/api/polls/create"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ question: createQ, options: opts })
     });
-    
-    console.log('Poll create response:', r.status, r.ok);
-    
-    if (!r.ok) {
-      const errorText = await r.text();
-      console.log('Poll create error:', errorText);
-      return alert("Create failed: " + errorText);
-    }
-    
-    // Success feedback
-    alert("Poll created successfully!");
-    
-    // Clear form
+    if (!r.ok) return alert("Create failed (commissioner only?)");
     setCreateQ("");
     setCreateOpts("Yes\nNo");
-    
-    // Force reload polls
-    console.log('Forcing poll reload...');
-    await loadPolls();
-    
-    // Small delay to ensure state updates
-    setTimeout(() => {
-      console.log('Current polls state after reload:', polls);
-    }, 100);
-    
-  } catch (error) {
-    console.error('Poll creation error:', error);
-    alert("Failed to create poll: " + error.message);
+    loadPolls();
   }
-}
 
 async function editPoll(pollId) {
   const poll = polls.find(p => p.id === pollId);
@@ -2091,7 +2002,7 @@ async function editPoll(pollId) {
   try {
     const r = await fetch(API("/api/polls/edit"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ pollId, question: newQuestion, newOptions })
     });
     
@@ -2119,7 +2030,7 @@ async function editPoll(pollId) {
 
       const k = await fetch(API("/api/polls/issue-team-codes"), {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+        headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
         body: JSON.stringify({ seasonId: espn.seasonId, teams })
       });
       if (!k.ok) throw new Error(await k.text());
@@ -2135,7 +2046,7 @@ async function editPoll(pollId) {
     if (!espn?.seasonId) return alert("Season not set.");
     try {
       const r = await fetch(API(`/api/polls/team-codes?seasonId=${espn.seasonId}`), {
-        headers: { "x-admin": config.adminPassword }
+        headers: { "x-admin": ADMIN_ENV }
       });
       if (!r.ok) throw new Error(await r.text());
       const { codes } = await r.json();
@@ -2156,7 +2067,7 @@ async function editPoll(pollId) {
     if (!confirm("Delete this poll? This removes its results and codes.")) return;
     const r = await fetch(API("/api/polls/delete"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ pollId })
     });
     if (!r.ok) return alert("Delete failed (commissioner only?)");
@@ -2167,14 +2078,17 @@ async function editPoll(pollId) {
   async function setClosed(pollId, closed) {
     const r = await fetch(API("/api/polls/close"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ pollId, closed })
     });
     if (!r.ok) return alert("Failed to update poll.");
     loadPolls();
   }
 
-  
+  const [voteChoice, setVoteChoice] = useState("");
+  const [activePollId, setActivePollId] = useState("");
+  useEffect(() => { if (polls.length > 0 && !activePollId) setActivePollId(polls[0].id); }, [polls, activePollId]);
+
   async function castVote() {
     if (!activePollId) return alert("Choose a poll");
     if (!teamCode) {
@@ -2397,7 +2311,7 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
         {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
           if(confirm("Reset waivers and announcements?")) {
             try {
-              await apiCallLeague('/reset-waivers', { method: 'POST' });
+              await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
               await loadServerData();
             } catch (error) {
               alert('Reset failed: ' + error.message);

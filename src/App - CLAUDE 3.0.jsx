@@ -1995,14 +1995,18 @@ function PollsView({ isAdmin, members, espn, config }) {
   const [err, setErr] = useState("");
   const [voteChoice, setVoteChoice] = useState("");
   const [activePollId, setActivePollId] = useState("");
+  const [createQ, setCreateQ] = useState("");
+  const [createOpts, setCreateOpts] = useState("Yes\nNo");
+  const [showClosed, setShowClosed] = useState(false);
+
   useEffect(() => { if (polls.length > 0 && !activePollId) setActivePollId(polls[0].id); }, [polls, activePollId]);
-}}
+
 
   async function loadPolls() {
   setLoading(true);
   setErr("");
   try {
-    const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}`));
+    const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}&leagueId=${config.id}`));  // ← ADD &leagueId=${config.id}
     if (!r.ok) {
       throw new Error(`HTTP ${r.status}: ${await r.text()}`);
     }
@@ -2026,8 +2030,7 @@ function PollsView({ isAdmin, members, espn, config }) {
 
   useEffect(() => { loadPolls(); }, []);
 
-  const [createQ, setCreateQ] = useState("");
-  const [createOpts, setCreateOpts] = useState("Yes\nNo");
+ 
 
 async function createPoll() {
   console.log('Creating poll with:', { question: createQ, options: createOpts });
@@ -2043,7 +2046,7 @@ async function createPoll() {
     const r = await fetch(API("/api/polls/create"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
-      body: JSON.stringify({ question: createQ, options: opts })
+      body: JSON.stringify({ question: createQ, options: opts,  leagueId: config.id })
     });
     
     console.log('Poll create response:', r.status, r.ok);
@@ -2103,32 +2106,55 @@ async function editPoll(pollId) {
 }
 
   async function onIssueSeasonTeamCodes() {
-    if (!isAdmin) return alert("Commissioner only.");
-    if (!espn?.leagueId || !espn?.seasonId) {
-      alert("Set League ID and Season in League Settings first.");
-      return;
-    }
-    try {
-      const r = await fetch(API(`/api/espn?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}&view=mTeam`));
-      if (!r.ok) throw new Error(await r.text());
-      const m = await r.json();
-      const teams = (m?.teams || []).map(t => ({
-        id: t.id,
-        name: (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`)
-      }));
-
-      const k = await fetch(API("/api/polls/issue-team-codes"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
-        body: JSON.stringify({ seasonId: espn.seasonId, teams })
-      });
-      if (!k.ok) throw new Error(await k.text());
-      const j = await k.json();
-      alert(`Issued ${j.issued} team codes for season ${espn.seasonId}.`);
-    } catch (e) {
-      alert(e.message || "Failed issuing codes");
-    }
+  if (!isAdmin) return alert("Commissioner only.");
+  if (!espn?.leagueId || !espn?.seasonId) {
+    alert("Set League ID and Season in League Settings first.");
+    return;
   }
+  
+  console.log('=== ISSUE TEAM CODES DEBUG ===');
+  console.log('League ID:', espn.leagueId);
+  console.log('Season ID:', espn.seasonId);
+  console.log('Admin password:', config.adminPassword);
+  
+  try {
+    console.log('Fetching teams from ESPN...');
+    const r = await fetch(API(`/api/espn?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}&view=mTeam`));
+    console.log('ESPN API response status:', r.status, r.ok);
+    
+    if (!r.ok) throw new Error(await r.text());
+    const m = await r.json();
+    console.log('ESPN teams data:', m);
+    
+    const teams = (m?.teams || []).map(t => ({
+      id: t.id,
+      name: (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`)
+    }));
+    console.log('Processed teams:', teams);
+
+    console.log('Calling issue-team-codes API...');
+    const k = await fetch(API("/api/polls/issue-team-codes"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      body: JSON.stringify({ seasonId: espn.seasonId, teams })
+    });
+    console.log('Issue codes response status:', k.status, k.ok);
+    
+    if (!k.ok) {
+      const errorText = await k.text();
+      console.log('Issue codes error:', errorText);
+      throw new Error(errorText);
+    }
+    
+    const j = await k.json();
+    console.log('Issue codes success:', j);
+    alert(`Issued ${j.issued} team codes for season ${espn.seasonId}.`);
+  } catch (e) {
+    console.error('Issue team codes failed:', e);
+    alert(e.message || "Failed issuing codes");
+  }
+  console.log('=== END ISSUE TEAM CODES DEBUG ===');
+}
 
   async function onCopySeasonTeamCodes() {
     if (!isAdmin) return alert("Commissioner only.");
@@ -2204,7 +2230,7 @@ async function editPoll(pollId) {
     }
   }
 
-  const [showClosed, setShowClosed] = useState(false);
+  
   const visiblePolls = polls.length ? polls.filter(p => showClosed || !p.closed) : [];
   const poll = polls.find(p => p.id === activePollId);
 

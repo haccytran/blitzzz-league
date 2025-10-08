@@ -945,225 +945,63 @@ body.sculpin-league .week-number-highlight {
   .ht-trophy-text  { font-size: 12px; }
 }
 
-/* Trophy Leaderboard - force tight spacing */
-.card table {
+/* =========================
+   Trophy Leaderboard (compact)
+   ========================= */
+.ht-tl-wrap { overflow-x: auto; }
+
+.ht-tl {
+  width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
-  width: auto;
+  table-layout: fixed; /* honor widths */
 }
 
-.card table th,
-.card table td {
-  padding: 8px 2px;
+.ht-tl th,
+.ht-tl td {
+  padding: 6px 3px;      /* tighter */
   border-bottom: 1px solid #e5e7eb;
   text-align: center;
+  font-size: 13px;
+  vertical-align: middle;
 }
 
-.card table thead th {
-  border-bottom: 2px solid #e5e7eb;
-}
-
-/* Remove or comment out the overly broad rule */
-/*
-.card table th:first-child,
-.card table td:first-child {
-  width: 80px;
-  max-width: 80px;
-  text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding-left: 4px;
-}
-*/
-
-/* Add specific styling for tables that need it */
-/* Default table styling */
-.card table th,
-.card table td {
-  padding: 8px 12px;
-  border-bottom: 1px solid #e5e7eb;
-  text-align: left;
-}
-
-/* Specific styling for dues payment tracker */
-.dues-payment-tracker table th:first-child,
-.dues-payment-tracker table td:first-child {
-  width: 60px; /* Just for checkbox column */
-}
-
-/* Specific styling for transactions table */
-.transactions-table table th:first-child,
-.transactions-table table td:first-child {
-  width: 120px; /* Let timestamp column size naturally */
-  white-space: nowrap;
-}
-
-/* Specific styling for power rankings */
-.power-rankings-table table th:first-child,
-.power-rankings-table table td:first-child {
-  width: 60px; /* Just for rank number */
-  text-align: center;
-}
-/* Desktop: show table, hide grid */
-.trophy-table-desktop {
-  display: table;
-  width: auto !important;
-  border-collapse: collapse;
-  table-layout: auto !important;
-  margin: 0 auto; /* Centers the table */
-}
-
-.trophy-table-desktop th:first-child,
-.trophy-table-desktop td:first-child {
-  width: 40% !important;
-}
-
-.trophy-table-desktop th:not(:first-child),
-.trophy-table-desktop td:not(:first-child) {
-  width: 6% !important;
-}
-
-.trophy-table-desktop th,
-.trophy-table-desktop td {
-  padding: 8px !important;
-  border-bottom: 1px solid #e5e7eb;
-  text-align: center;
-  width: auto !important;
-}
-
-.trophy-table-desktop thead th {
+.ht-tl thead th {
   border-bottom: 2px solid #e5e7eb;
   font-weight: 600;
 }
 
-.trophy-table-desktop th:first-child,
-.trophy-table-desktop td:first-child {
-  text-align: left !important;
-  width: auto !important;
-  max-width: none !important;
-  overflow: visible !important;
-  text-overflow: clip !important;
-  white-space: normal !important;
+/* Team column ~40–45% with ellipsis */
+.ht-tl .team-col {
+  width: 42%;
+  text-align: left;
+  padding-left: 8px;
 }
-
-/* Blitzzz League Desktop Team Names - Color and Glow */
-body.blitzzz-league .trophy-table-desktop th:first-child,
-body.blitzzz-league .trophy-table-desktop td:first-child {
-  color: #0084ff !important;
-  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00, 0 0 15px #ffcc00, 0 0 20px #ffcc00 !important;
-}
-
-/* Sculpin League Desktop Team Names - Color and Glow */
-body.sculpin-league .trophy-table-desktop th:first-child,
-body.sculpin-league .trophy-table-desktop td:first-child {
-  color: #2F241D !important;
-  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425, 0 0 15px #FFC425, 0 0 20px #FFC425 !important;
-}
-
-.trophy-grid-mobile {
-  display: none;
-}
-
-/* Mobile: hide table, show grid */
-@media (max-width: 767px) {
-  .trophy-table-desktop {
-    display: none !important;
-  }
-  
-  .trophy-grid-mobile {
-    display: block;
-    font-size: 12px;
-  }
-  
-  .trophy-grid-mobile .trophy-row {
-    position: relative;
-    display: grid;
-    grid-template-columns: repeat(10, 1fr);
-    gap: 0;
-    border-bottom: 1px solid #e5e7eb;
-    padding: 8px 0;
-  }
-  
-/* Default Trophy Leaderboard mobile styles */
-.trophy-grid-mobile .trophy-row-bg {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 15%;
-  transform: translateY(-50%);
-  text-align: center;
-  font-size: 11px;
-  color: #6b7280;
-  font-weight: 600;
-  z-index: 0;
-  pointer-events: none;
+.ht-tl .team-name {
+  display: inline-block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: 4px;
-  text-shadow: 0 0 5px #9ca3af, 0 0 10px #9ca3af, 0 0 15px #9ca3af, 0 0 20px #9ca3af;
 }
 
-/* Blitzzz League Trophy Leaderboard */
-body.blitzzz-league .trophy-grid-mobile .trophy-row-bg {
-  color: #0084ff !important;
-  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00, 0 0 15px #ffcc00, 0 0 20px #ffcc00 !important;
+/* Emoji columns—narrow + tiny padding to kill the gaps */
+.ht-tl .emo-col {
+  width: 4.6ch;
+  padding-left: 2px;
+  padding-right: 2px;
 }
 
-/* Sculpin League Trophy Leaderboard */
-body.sculpin-league .trophy-grid-mobile .trophy-row-bg {
-  color: #2F241D !important;
-  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425, 0 0 15px #FFC425, 0 0 20px #FFC425 !important;
-}
- 
-  .trophy-grid-mobile .trophy-cell {
-    position: relative;
-    z-index: 1;
-    text-align: center;
-    padding: 4px 2px;
-  }
-  
-  .trophy-grid-mobile .trophy-header {
-    display: grid;
-    grid-template-columns: repeat(10, 1fr);
-    gap: 0;
-    border-bottom: 2px solid #e5e7eb;
-    padding: 8px 0;
-    font-weight: 600;
-    text-align: center;
-  }
+/* Even tighter on small phones */
+@media (max-width: 480px) {
+  .ht-tl th,
+  .ht-tl td { font-size: 12px; padding: 5px 2px; }
+  .ht-tl .team-col { width: 48%; }
+  .ht-tl .emo-col  { width: 4.2ch; }
 }
 
-/* Mobile-friendly polls */
-@media (max-width: 767px) {
-  /* Stack the polls layout on mobile */
-  .grid[style*="gridTemplateColumns: \"240px 1fr\""] {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 16px !important;
-  }
-  
-  /* Make poll sidebar full width on mobile */
-  .card:has(> h3:first-child:contains("Polls")) {
-    width: 100% !important;
-  }
-  
-  /* Responsive poll creation form */
-  .card[style*="padding: 8px"] {
-    flex-direction: column !important;
-    padding: 12px !important;
-  }
-  
-  .card[style*="padding: 8px"] input,
-  .card[style*="padding: 8px"] textarea {
-    width: 100% !important;
-    margin-bottom: 8px;
-  }
-  
-  /* Stack admin buttons */
-  .card button[style*="fontSize: 12px"] {
-    width: 100% !important;
-    margin-bottom: 4px;
-  }
+/* =========================
+   Weekly trophies — smaller ONLY on mobile
+   ========================= */
+@media (max-width: 600px) {
+  .weekly-trophy-list { font-size: 0.92rem; line-height: 1.25; }
 }

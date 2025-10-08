@@ -11,7 +11,7 @@ const ADMIN_ENV = import.meta.env.VITE_ADMIN_PASSWORD || "changeme";
 const DEFAULT_LEAGUE_ID = import.meta.env.VITE_ESPN_LEAGUE_ID || "";
 const DEFAULT_SEASON = import.meta.env.VITE_ESPN_SEASON || new Date().getFullYear();
 const LEAGUE_TZ = "America/Los_Angeles";
-const WEEK_START_DAY = 3; // Wednesday
+const WEEK_START_DAY = 4; // Thursday
 
 // This will be updated per league - keeping as fallback
 const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
@@ -103,7 +103,7 @@ function startOfLeagueWeekPT(date){
 
 function firstWednesdayOfSeptemberPT(year){
   const d = toPT(new Date(year, 8, 1));
-  const offset = (3 - d.getDay() + 7) % 7; // 3 = Wednesday
+  const offset = (4 - d.getDay() + 7) % 7; // 4 = Thursday
   d.setDate(d.getDate() + offset);
   d.setHours(0,0,0,0);
   return d;
@@ -212,7 +212,15 @@ export default function App() {
   // Update URL parameter for both development and production
   const url = new URL(window.location);
   url.searchParams.set('league', league.id);
-  url.hash = '#hoodtrophies'; // Always go to Hood Trophies for all leagues
+  
+  // Set different default pages for each league
+  if (league.id === 'sculpin') {
+    url.hash = '#highestscorer';
+  } else if (league.id === 'blitzzz') {
+    url.hash = '#weekly';
+  } else {
+    url.hash = '#announcements'; // fallback for any other leagues
+  }
   
   window.history.pushState({}, '', url);
 };
@@ -288,23 +296,24 @@ const switchLeague = () => {
 
 const VALID_TABS = [
   "announcements","hoodtrophies","activity","weekly","highestscorer","waivers","dues",
-  "transactions","drafts","rosters","powerrankings","nerddata","settings","trading","paydues","polls" 
+  "transactions","drafts","rosters","powerrankings","settings","trading","paydues","polls" 
 ];
   const initialTabFromHash = () => {
-  const h = (window.location.hash || "").replace("#","").trim();
-  return VALID_TABS.includes(h) ? h : "hoodtrophies";
-};
+    const h = (window.location.hash || "").replace("#","").trim();
+    return VALID_TABS.includes(h) ? h : "activity";
+  };
 
   const [active, setActive] = useState(initialTabFromHash);
 
-    useEffect(() => {
-  const onHash = () => {
-    const h = (window.location.hash || "").replace("#","").trim();
-    setActive(VALID_TABS.includes(h) ? h : "activity");
-  };
-  window.addEventListener("hashchange", onHash);
-  return () => window.removeEventListener("hashchange", onHash);
-}, []);
+  useEffect(() => {
+    const onHash = () => {
+      const h = (window.location.hash || "").replace("#","").trim();
+      setActive(VALID_TABS.includes(h) ? h : "activity");
+    };
+    window.addEventListener("hashchange", onHash);
+    onHash();
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   useEffect(() => {
     const want = `#${active}`;
@@ -695,6 +704,7 @@ const updatePayment = async (teamName, isPaid) => {
   const importEspnTeams = async () => {
   if(!espn.leagueId) return alert("Enter League ID");
   try{
+    // Fetch team data AND roster data
     const [teamJson, rosJson, setJson] = await Promise.all([
       fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mTeam" }),
       fetchEspnJson({ leagueId: espn.leagueId, seasonId: espn.seasonId, view: "mRoster" }),
@@ -708,56 +718,24 @@ const updatePayment = async (teamName, isPaid) => {
     const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
     const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
     
+    // Build roster data with proper ordering
     const rosterData = (rosJson?.teams || []).map(t => {
       const entries = (t.roster?.entries || []).map(e => {
         const p = e.playerPoolEntry?.player;
         const fullName = p?.fullName || "Player";
         const slot = slotMap[e.lineupSlotId] || "—";
-        // ADD THE CONSOLE.LOG HERE:
-  if (fullName.includes("Kraft") || fullName.includes("Goedert")) {
-    console.log(`${fullName}:`, {
-      defaultPositionId: p?.defaultPositionId,
-      eligibleSlots: p?.eligibleSlots,
-      slotId: e.lineupSlotId
-    });
-  }
-        // KEY FIX: Use lineupSlotId to determine position, NOT defaultPositionId
-        let position = "";
-const slotId = e.lineupSlotId;
-
-if (slotId === 20) { // Bench
-  const eligible = p?.eligibleSlots || [];
-  
-  // Check for pure TE first (has slot 6 but NOT slots 3 or 4)
-  if (eligible.includes(6) && !eligible.includes(3) && !eligible.includes(4)) {
-    position = "TE";
-  }
-  // WR check
-  else if (eligible.includes(3) || eligible.includes(4)) {
-    position = "WR";
-  }
-  // RB check
-  else if (eligible.includes(2)) {
-    position = "RB";
-  }
-  // QB check
-  else if (eligible.includes(0)) {
-    position = "QB";
-  }
-  // D/ST check
-  else if (eligible.includes(16)) {
-    position = "D/ST";
-  }
-  // K check
-  else if (eligible.includes(17)) {
-    position = "K";
-  }
-  // Fallback
-  else if (p?.defaultPositionId) {
-    position = posIdToName(p.defaultPositionId);
-  }
-} else {
-  position = slot;
+        // Try multiple ESPN position sources for better accuracy
+let position = "";
+if (p?.defaultPositionId) {
+  position = posIdToName(p.defaultPositionId);
+}
+// Also check if there's position info in other ESPN fields
+if (!position && p?.eligibleSlots) {
+  // Use the first eligible slot that's a real position
+  const eligiblePos = p.eligibleSlots
+    .map(slotId => posIdToName(slotId))
+    .find(pos => pos && !pos.includes("FLEX") && pos !== "—");
+  if (eligiblePos) position = eligiblePos;
 }
         
         return { 
@@ -772,26 +750,29 @@ if (slotId === 20) { // Bench
       const bench = entries.filter(e => e.slot === "Bench");
       
       // Define exact starter order
-      const starterOrderWithCounts = [
-        { pos: "QB", max: 1 },
-        { pos: "RB", max: 2 }, 
-        { pos: "RB/WR", max: 1 },
-        { pos: "WR", max: 2 },
-        { pos: "TE", max: 1 },
-        { pos: "FLEX", max: 1 },
-        { pos: "D/ST", max: 1 },
-        { pos: "K", max: 1 }
-      ];
+      const starterOrder = ["QB", "RB", "RB/WR", "WR", "TE", "FLEX", "D/ST", "K"];
+      
+      // Sort starters by the exact order you want
+const sortedStarters = [];
+const starterOrderWithCounts = [
+  { pos: "QB", max: 1 },
+  { pos: "RB", max: 2 }, 
+  { pos: "RB/WR", max: 1 },
+  { pos: "WR", max: 2 },
+  { pos: "TE", max: 1 },
+  { pos: "FLEX", max: 1 },
+  { pos: "D/ST", max: 1 },
+  { pos: "K", max: 1 }
+];
 
-      const sortedStarters = [];
-      starterOrderWithCounts.forEach(({ pos, max }) => {
-        const playersInPosition = starters.filter(p => p.slot === pos);
-        for (let i = 0; i < max; i++) {
-          if (playersInPosition[i]) {
-            sortedStarters.push(playersInPosition[i]);
-          }
-        }
-      });
+starterOrderWithCounts.forEach(({ pos, max }) => {
+  const playersInPosition = starters.filter(p => p.slot === pos);
+  for (let i = 0; i < max; i++) {
+    if (playersInPosition[i]) {
+      sortedStarters.push(playersInPosition[i]);
+    }
+  }
+});
 
       // Sort bench players and add position in parentheses
       const sortedBench = bench
@@ -801,6 +782,7 @@ if (slotId === 20) { // Bench
           slot: p.slot
         }));
       
+      // Combine starters and bench
       const finalEntries = [
         ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
         ...sortedBench
@@ -921,8 +903,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
   announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
-  hoodtrophies: <TrophyCaseView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
-
+  hoodtrophies: <HoodTrophiesView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
   activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
@@ -961,7 +942,6 @@ async function loadOfficialReport(silent=false){
 />,
   rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
   powerrankings: <PowerRankingsView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
-  nerddata: <NerdDataView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}} btnPri={btnPri} btnSec={btnSec}/>,
   trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}} btnPri={btnPri} btnSec={btnSec}/>,
   polls: <PollsView {...{isAdmin, members:data.members, espn, config}} btnPri={btnPri} btnSec={btnSec}/>,
@@ -1036,9 +1016,9 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           
           {/* Navigation with mobile close functionality */}
           <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
-          <NavBtn id="hoodtrophies" label="🏆 Trophy Case" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="hoodtrophies" label="🏆 Hood Trophies" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           {config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
-          {config.id === 'sculpin' && <NavBtn id="highestscorer" label="👑 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
+          {config.id === 'sculpin' && <NavBtn id="highestscorer" label="🏆 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> 
           <NavBtn id="waivers" label="💵 Waivers" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="dues" label="🧾 Dues" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
@@ -1046,7 +1026,6 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           <NavBtn id="drafts" label="📋 Draft Recap" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="rosters" label="📋 Rosters" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="powerrankings" label="🏋️ Power Rankings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
-          <NavBtn id="nerddata" label="🤓 Nerd Data" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="paydues" label="💰 Pay Dues" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
@@ -1060,7 +1039,6 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
         </aside>
         
         <main style={{padding: 24, paddingTop: 47}}>
-  {console.log('Active view:', active, 'View exists:', !!views[active])}
           {views[active]}
         </main>
       </div>
@@ -1071,28 +1049,7 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
 }
 
 function posIdToName(id) {
-  const map = { 
-    0: "QB",    // Quarterback
-    1: "TQB",   // Team QB
-    2: "RB",    // Running Back
-    3: "WR",    // Wide Receiver (THIS WAS WRONG - was "RB")
-    4: "WR",    // Wide Receiver  
-    5: "WR/TE", // Wide Receiver/Tight End
-    6: "TE",    // Tight End
-    7: "OP",    // Offensive Player
-    8: "DT",    // Defensive Tackle
-    9: "DE",    // Defensive End
-    10: "LB",   // Linebacker
-    11: "DL",   // Defensive Line (THIS WAS WRONG - was "DE")
-    12: "CB",   // Cornerback (THIS WAS WRONG - was "DB")
-    13: "S",    // Safety (THIS WAS WRONG - was "DB")
-    14: "DB",   // Defensive Back
-    15: "DP",   // Defensive Player
-    16: "D/ST", // Defense/Special Teams
-    17: "K",    // Kicker
-    18: "P",    // Punter
-    19: "HC"    // Head Coach
-  };
+  const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };
   return map?.[id] || "—";
 }
 
@@ -1225,75 +1182,57 @@ async function loadReport() {
         
         console.log("Recent moves found:", recentMoves.length);
         
-        // Simple chronological sort with pairing
-const pairedActivities = [];
-const paired = new Set();
-
-// Sort original moves by timestamp descending (newest first)
-const sortedMoves = [...recentMoves].sort((a, b) => 
-  new Date(b.date).getTime() - new Date(a.date).getTime()
-);
-
-for (let i = 0; i < sortedMoves.length; i++) {
-  if (paired.has(i)) continue;
-  
-  const move = sortedMoves[i];
-  
+        // Group moves by team and date, then pair adds with drops
+const groupedMoves = {};
+recentMoves.forEach(move => {
+  const key = `${move.team}-${move.date}`;
+  if (!groupedMoves[key]) {
+    groupedMoves[key] = { adds: [], drops: [], team: move.team, date: move.date, week: move.week };
+  }
   if (move.action === "ADD") {
-    // Look for matching DROP from same team on same date
-    const matchIdx = sortedMoves.findIndex((m, idx) => 
-      idx > i && 
-      !paired.has(idx) &&
-      m.action === "DROP" && 
-      m.team === move.team && 
-      m.date === move.date
-    );
+    groupedMoves[key].adds.push(move);
+  } else {
+    groupedMoves[key].drops.push(move);
+  }
+});
+
+// Create paired activities
+const pairedActivities = [];
+Object.values(groupedMoves).forEach(group => {
+  const maxPairs = Math.max(group.adds.length, group.drops.length);
+  
+  for (let i = 0; i < maxPairs; i++) {
+    const add = group.adds[i];
+    const drop = group.drops[i];
     
-    if (matchIdx !== -1) {
-      paired.add(matchIdx);
+    if (add) {
       pairedActivities.push({
-        date: new Date(move.date).toLocaleDateString(),
-        team: move.team,
-        player: move.player,
+        date: new Date(group.date).toLocaleDateString(),
+        team: group.team,
+        player: add.player,
         action: "ADDED",
-        week: move.week,
-        isDraft: move.week <= 0,
-        isPaired: true,
-        pairWith: sortedMoves[matchIdx].player
-      });
-      pairedActivities.push({
-        date: new Date(move.date).toLocaleDateString(),
-        team: move.team,
-        player: sortedMoves[matchIdx].player,
-        action: "DROPPED",
-        week: move.week,
-        isDraft: move.week <= 0,
-        isPaired: true,
-        pairWith: move.player
-      });
-    } else {
-      pairedActivities.push({
-        date: new Date(move.date).toLocaleDateString(),
-        team: move.team,
-        player: move.player,
-        action: "ADDED",
-        week: move.week,
-        isDraft: move.week <= 0,
-        isPaired: false
+        week: group.week,
+        isDraft: group.week <= 0,
+        isPair: !!drop
       });
     }
-  } else {
-    pairedActivities.push({
-      date: new Date(move.date).toLocaleDateString(),
-      team: move.team,
-      player: move.player,
-      action: "DROPPED",
-      week: move.week,
-      isDraft: move.week <= 0,
-      isPaired: false
-    });
+    
+    if (drop) {
+      pairedActivities.push({
+        date: new Date(group.date).toLocaleDateString(),
+        team: group.team,
+        player: drop.player,
+        action: "DROPPED",
+        week: group.week,
+        isDraft: group.week <= 0,
+        isPair: !!add
+      });
+    }
   }
-}
+});
+
+// Sort by date (newest first)
+pairedActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
 
 setActivities(pairedActivities);
       }
@@ -1329,78 +1268,68 @@ setActivities(pairedActivities);
         {activities.length > 0 ? (
   <div style={{ marginTop: 12 }}>
     {(() => {
-      let pairCounter = 0;
-      const renderedActivities = [];
-      
-      for (let i = 0; i < activities.length; i++) {
-        const activity = activities[i];
-        const nextActivity = activities[i + 1];
-        
-        // Check if this is part of a pair
-        if (activity.action === "ADDED" && 
-            nextActivity && 
-            nextActivity.action === "DROPPED" && 
-            nextActivity.team === activity.team && 
-            nextActivity.date === activity.date) {
-          // This is a pair
-          const isShaded = pairCounter % 2 === 0;
-          renderedActivities.push(
-            <div key={i} style={{ 
-              padding: "8px", 
-              borderBottom: "1px solid #e2e8f0",
-              display: "flex",
-              justifyContent: "space-between",
-              fontSize: 14,
-              color: "#16a34a",
-              backgroundColor: isShaded ? "#fffbeb" : "transparent"
-            }}>
-              <span><b>{activity.team}</b> ADDED <b>{activity.player}</b></span>
-              <span style={{ color: "#64748b" }}>{activity.date}</span>
-            </div>,
-            <div key={i + "drop"} style={{ 
-              padding: "8px", 
-              borderBottom: "1px solid #e2e8f0",
-              display: "flex",
-              justifyContent: "space-between",
-              fontSize: 14,
-              color: "#dc2626",
-              backgroundColor: isShaded ? "#fffbeb" : "transparent"
-            }}>
-              <span><b>{nextActivity.team}</b> DROPPED <b>{nextActivity.player}</b></span>
-              <span style={{ color: "#64748b" }}>{nextActivity.date}</span>
-            </div>
-          );
-          i++; // Skip next since we processed it
-          pairCounter++;
-        } else {
-          // Solo transaction
-          const isShaded = pairCounter % 2 === 0;
-          renderedActivities.push(
-            <div key={i} style={{ 
-              padding: "8px", 
-              borderBottom: "1px solid #e2e8f0",
-              display: "flex",
-              justifyContent: "space-between",
-              fontSize: 14,
-              color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
-              backgroundColor: isShaded ? "#fffbeb" : "transparent"
-            }}>
-              <span><b>{activity.team}</b> {activity.action} <b>{activity.player}</b></span>
-              <span style={{ color: "#64748b" }}>{activity.date}</span>
-            </div>
-          );
-          pairCounter++;
-        }
+  const pairedActivities = [];
+  let pairCounter = 0;
+  
+  // Process activities to assign pair numbers
+  for (let i = 0; i < activities.length; i++) {
+    const activity = activities[i];
+    
+    if (activity.action === "ADDED") {
+      // Check if next activity is a DROP from same team on same date
+      const nextActivity = activities[i + 1];
+      if (nextActivity && 
+          nextActivity.action === "DROPPED" && 
+          nextActivity.team === activity.team && 
+          nextActivity.date === activity.date) {
+        // This is a pair
+        pairedActivities.push({ ...activity, pairNumber: pairCounter });
+        pairedActivities.push({ ...nextActivity, pairNumber: pairCounter });
+        pairCounter++;
+        i++; // Skip the next activity since we processed it
+      } else {
+        // Solo add
+        pairedActivities.push({ ...activity, pairNumber: pairCounter });
+        pairCounter++;
       }
-      
-      return renderedActivities;
-    })()}
+    } else {
+      // Solo drop (ADD would have been handled above if it was a pair)
+      pairedActivities.push({ ...activity, pairNumber: pairCounter });
+      pairCounter++;
+    }
+  }
+  
+  return pairedActivities.map((activity, index) => {
+    const isShaded = activity.pairNumber % 2 === 0;
+    const backgroundColor = isShaded ? "#fffbeb" : "transparent";
+    
+    return (
+      <div key={index} style={{ 
+        padding: "8px", 
+        borderBottom: "1px solid #e2e8f0",
+        display: "flex",
+        justifyContent: "space-between",
+        fontSize: 14,
+        fontStyle: activity.isDraft ? "italic" : "normal",
+        opacity: activity.isDraft ? 0.8 : 1,
+        color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
+        backgroundColor: backgroundColor
+      }}>
+        <span>
+          <b>{activity.team}</b> {activity.action} <b>{activity.player}</b>
+          {activity.isDraft && <span style={{ color: "#64748b", fontSize: 12 }}> (draft)</span>}
+        </span>
+        <span style={{ color: "#64748b" }}>{activity.date}</span>
+      </div>
+    );
+  });
+})()}
   </div>
 ) : !loading && !error && (
-  <div style={{ color: "#64748b", marginTop: 8 }}>
-    No recent activity in the last 7 days.
-  </div>
-)}
+          <div style={{ color: "#64748b", marginTop: 8 }}>
+            No recent activity in the last 7 days.
+          </div>
+        )}
 
         {report && (
           <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
@@ -1424,51 +1353,38 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
 
   // Load weekly challenge winners
   const loadWeeklyChallengeWinners = async () => {
-  if (!espn.leagueId || !espn.seasonId) return;
-  
-  setLoading(true);
-  try {
-    const winners = {};
-    const now = new Date();
-    const week1EndDate = new Date('2025-09-08T23:59:00-07:00');
+    if (!espn.leagueId || !espn.seasonId) return;
     
-    // Process weeks 1-13
-    for (let week = 1; week <= 13; week++) {
-      const weekEnd = new Date(week1EndDate);
-      weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7));
+    setLoading(true);
+    try {
+      const winners = {};
+      const now = new Date();
+      const week1EndDate = new Date('2025-09-08T23:59:00-07:00'); // Adjust this to your league's Week 1 end
       
-      if (now <= weekEnd) continue;
-      
-      try {
-        let winner = null;
+      // Process weeks 1-13
+      for (let week = 1; week <= 13; week++) {
+        const weekEnd = new Date(week1EndDate);
+        weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7));
         
-        // Week 6 (Overachiever) - use projection API
-        if (week === 6) {
-          winner = await determineOverachiever(week, espn.leagueId, espn.seasonId);
-        }
-        // Week 12 (Bulls-eye) - use projection API  
-        else if (week === 12) {
-          winner = await determineBullseye(week, espn.leagueId, espn.seasonId);
-        }
-        // Other weeks use existing logic
-        else {
-          winner = await determineWeeklyWinner(week, espn.leagueId, espn.seasonId);
-        }
+        // Only process completed weeks
+        if (now <= weekEnd) continue;
         
-        if (winner) {
-          winners[week] = winner;
+        try {
+          const winner = await determineWeeklyWinner(week, espn.leagueId, espn.seasonId);
+          if (winner) {
+            winners[week] = winner;
+          }
+        } catch (error) {
+          console.error(`Failed to determine Week ${week} winner:`, error);
         }
-      } catch (error) {
-        console.error(`Failed to determine Week ${week} winner:`, error);
       }
+      
+      setWeeklyWinners(winners);
+    } catch (error) {
+      console.error('Failed to load weekly winners:', error);
     }
-    
-    setWeeklyWinners(winners);
-  } catch (error) {
-    console.error('Failed to load weekly winners:', error);
-  }
-  setLoading(false);
-};
+    setLoading(false);
+  };
 
   useEffect(() => {
     if (espn.leagueId && espn.seasonId) {
@@ -1499,6 +1415,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
         {list.map(item => {
           const weekNumber = item.week || 0;
           const winner = weeklyWinners[weekNumber];
+          const requiresManual = [6, 12].includes(weekNumber);
           const isEditing = editingId === item.id;
           
           return (
@@ -1575,7 +1492,19 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
                     </div>
                   )}
 
-                  
+                  {/* Manual Winner Selection for Weeks 6 & 12 */}
+                  {requiresManual && isAdmin && !winner && (
+                    <ManualWinnerSelector
+                      weekNumber={weekNumber}
+                      espn={espn}
+                      onWinnerSelect={(winnerData) => {
+                        setWeeklyWinners(prev => ({ ...prev, [weekNumber]: winnerData }));
+                      }}
+                      btnPri={btnPri}
+                      btnSec={btnSec}
+                    />
+                  )}
+
                                   </>
               )}
             </div>
@@ -1583,6 +1512,103 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
         })}
       </div>
     </Section>
+  );
+}
+
+function ManualWinnerSelector({ weekNumber, espn, onWinnerSelect, btnPri, btnSec }) {
+  const [teams, setTeams] = useState([]);
+  const [selectedTeam, setSelectedTeam] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const loadTeams = async () => {
+      try {
+        const response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const teamList = (data.teams || []).map(team => ({
+            id: team.id,
+            name: (team.location && team.nickname) 
+              ? `${team.location} ${team.nickname}` 
+              : `Team ${team.id}`
+          }));
+          setTeams(teamList);
+        }
+      } catch (error) {
+        console.error('Failed to load teams:', error);
+      }
+    };
+
+    if (espn.leagueId && espn.seasonId) {
+      loadTeams();
+    }
+  }, [espn.leagueId, espn.seasonId]);
+
+  const handleSaveWinner = async () => {
+    if (!selectedTeam) return;
+    
+    setLoading(true);
+    const teamName = teams.find(t => t.id.toString() === selectedTeam)?.name || selectedTeam;
+    
+    const winnerData = {
+      teamName: teamName,
+      details: `Manually selected winner for Week ${weekNumber}`,
+      manual: true
+    };
+
+    // Save to server (you'll need to implement this endpoint)
+    try {
+      // await apiCallLeague('/weekly-winners', {
+      //   method: 'POST',
+      //   body: JSON.stringify({ week: weekNumber, winner: winnerData })
+      // });
+      
+      onWinnerSelect(winnerData);
+    } catch (error) {
+      console.error('Failed to save winner:', error);
+    }
+    
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ 
+      marginTop: 12, 
+      padding: 12, 
+      background: "#f8fafc", 
+      borderRadius: 6,
+      border: "1px solid #e2e8f0"
+    }}>
+      <div style={{ marginBottom: 8, fontWeight: "600" }}>Select Winner:</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <select 
+          className="input" 
+          value={selectedTeam} 
+          onChange={(e) => setSelectedTeam(e.target.value)}
+          style={{ flex: 1 }}
+        >
+          <option value="">Choose team...</option>
+          {teams.map(team => (
+            <option key={team.id} value={team.id}>{team.name}</option>
+          ))}
+        </select>
+        <button 
+          className="btn" 
+          style={btnPri} 
+          onClick={handleSaveWinner}
+          disabled={!selectedTeam || loading}
+        >
+          {loading ? "Saving..." : "Save Winner"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1691,144 +1717,6 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
     }
   } catch (error) {
     console.error(`Error determining Week ${weekNumber} winner:`, error);
-    return null;
-  }
-}
-
-
-// Week 6: Overachiever - biggest positive difference from projection
-async function determineOverachiever(weekNumber, leagueId, seasonId) {
-  try {
-    const [teamResponse, boxscoreResponse] = await Promise.all([
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      }),
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      })
-    ]);
-    
-    if (!teamResponse.ok || !boxscoreResponse.ok) {
-      throw new Error(`ESPN API error`);
-    }
-    
-    const [teamData, boxscoreData] = await Promise.all([
-      teamResponse.json(),
-      boxscoreResponse.json()
-    ]);
-    
-    const teamNames = {};
-    if (teamData.teams) {
-      teamData.teams.forEach(team => {
-        teamNames[team.id] = team.location && team.nickname 
-          ? `${team.location} ${team.nickname}` 
-          : team.name || `Team ${team.id}`;
-      });
-    }
-    
-    let biggestOverachieve = { team: "", delta: -Infinity, actual: 0, proj: 0 };
-    
-    if (boxscoreData.schedule) {
-      boxscoreData.schedule.forEach(matchup => {
-        [matchup.home, matchup.away].forEach(team => {
-          if (!team) return;
-          
-          const actual = team.totalPoints || 0;
-          const proj = ht_teamProjection(team, weekNumber);
-          const delta = actual - proj;
-          
-          if (delta > biggestOverachieve.delta) {
-            biggestOverachieve = {
-              team: teamNames[team.teamId] || `Team ${team.teamId}`,
-              delta: delta,
-              actual: actual,
-              proj: proj
-            };
-          }
-        });
-      });
-    }
-    
-    if (biggestOverachieve.team) {
-      return {
-        teamName: biggestOverachieve.team,
-        details: `Outperformed projection by ${biggestOverachieve.delta.toFixed(2)} points (${biggestOverachieve.actual.toFixed(2)} vs ${biggestOverachieve.proj.toFixed(2)})`
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error(`Error determining Week ${weekNumber} Overachiever:`, error);
-    return null;
-  }
-}
-
-// Week 12: Bulls-eye - closest to 130 points
-async function determineBullseye(weekNumber, leagueId, seasonId) {
-  try {
-    const [teamResponse, matchupResponse] = await Promise.all([
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      }),
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&scoringPeriodId=${weekNumber}`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      })
-    ]);
-    
-    if (!teamResponse.ok || !matchupResponse.ok) {
-      throw new Error(`ESPN API error`);
-    }
-    
-    const [teamData, matchupData] = await Promise.all([
-      teamResponse.json(),
-      matchupResponse.json()
-    ]);
-    
-    const teamNames = {};
-    if (teamData.teams) {
-      teamData.teams.forEach(team => {
-        teamNames[team.id] = team.location && team.nickname 
-          ? `${team.location} ${team.nickname}` 
-          : team.name || `Team ${team.id}`;
-      });
-    }
-    
-    const TARGET = 130;
-    let closestTo130 = Infinity;
-    let winningTeam = null;
-    let winningScore = 0;
-    
-    if (matchupData.schedule) {
-      matchupData.schedule.forEach(matchup => {
-        [matchup.home, matchup.away].forEach(team => {
-          if (!team) return;
-          
-          const score = team.totalPoints || 0;
-          const diff = Math.abs(score - TARGET);
-          
-          if (diff < closestTo130) {
-            closestTo130 = diff;
-            winningTeam = teamNames[team.teamId] || `Team ${team.teamId}`;
-            winningScore = score;
-          }
-        });
-      });
-    }
-    
-    if (winningTeam) {
-      return {
-        teamName: winningTeam,
-        details: `Scored ${winningScore.toFixed(1)} points (${closestTo130.toFixed(1)} from 130)`
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error(`Error determining Week ${weekNumber} Bulls-eye:`, error);
     return null;
   }
 }
@@ -2725,8 +2613,17 @@ for (const r of filtered) {
     if (w <= 0) {
       rangeByWeek[w] = "All pre-season transactions are FREE";
     } else {
-      // Just use the range that came from the server
-      rangeByWeek[w] = r.range;
+      // Calculate the actual date range for this week
+const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
+const week1Thursday = firstWednesdayOfSeptemberPT(seasonYear); // This actually returns first Thursday
+
+// Go back 1 day to get Wednesday (billing start day)
+const week1Wednesday = new Date(week1Thursday.getTime() - 24 * 60 * 60 * 1000);
+const weekWednesday = new Date(week1Wednesday.getTime() + (w - 1) * 7 * 24 * 60 * 60 * 1000);
+const weekTuesday = new Date(weekWednesday.getTime() + 6 * 24 * 60 * 60 * 1000);
+
+const formatDate = (date) => date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+rangeByWeek[w] = `${formatDate(weekWednesday)} → ${formatDate(weekTuesday)} (Wed→Tue)`;
     }
   }
 }
@@ -2815,37 +2712,55 @@ byWeek.forEach((transactions, week) => {
                       
   {(() => {
   const combinedRows = [];
-const paired = new Set(); // Track which indices we've already paired
-
-for (let i = 0; i < rows.length; i++) {
-  if (paired.has(i)) continue; // Skip if already paired
+  let pairCounter = 0;
   
-  const row = rows[i];
+  // Create working copy to avoid mutating original
+  const workingRows = [...rows];
   
-  if (row.action === "ADD") {
-    const matchingDropIndex = rows.findIndex((r, idx) => 
-      idx > i && 
-      !paired.has(idx) && // Don't pair with already-paired items
-      r.action === "DROP" && 
-      r.team === row.team && 
-      r.date === row.date
-    );
+  for (let i = 0; i < workingRows.length; i++) {
+    const row = workingRows[i];
     
-    if (matchingDropIndex !== -1) {
-      paired.add(matchingDropIndex); // Mark as paired
+    if (row.action === "ADD") {
+      // Look for matching DROP from same team on same date
+      const matchingDropIndex = workingRows.findIndex((r, idx) => 
+        idx > i && 
+        r.action === "DROP" && 
+        r.team === row.team && 
+        r.date === row.date
+      );
+      
+      if (matchingDropIndex !== -1) {
+        // Found a pair - combine them
+        const dropRow = workingRows[matchingDropIndex];
+        combinedRows.push({
+          ...row,
+          isPair: true,
+          dropPlayer: dropRow.player || (dropRow.playerId ? `#${dropRow.playerId}` : "—"),
+          pairNumber: pairCounter
+        });
+        
+        // Remove the drop from working rows
+        workingRows.splice(matchingDropIndex, 1);
+        pairCounter++;
+      } else {
+        // Solo add
+        combinedRows.push({
+          ...row,
+          isPair: false,
+          pairNumber: pairCounter
+        });
+        pairCounter++;
+      }
+    } else {
+      // Solo drop or other action
       combinedRows.push({
         ...row,
-        isPair: true,
-        dropPlayer: rows[matchingDropIndex].player,
-        pairNumber: Math.floor(combinedRows.length / 2)
+        isPair: false,
+        pairNumber: pairCounter
       });
-    } else {
-      combinedRows.push({...row, isPair: false});
+      pairCounter++;
     }
-  } else {
-    combinedRows.push({...row, isPair: false});
   }
-}
   
   return combinedRows.map((r, index) => {
     const isShaded = r.pairNumber % 2 === 0;
@@ -2927,37 +2842,55 @@ for (let i = 0; i < rows.length; i++) {
 <div className="transactions-mobile">
   {(() => {
     const combinedRows = [];
-const paired = new Set(); // Track which indices we've already paired
-
-for (let i = 0; i < rows.length; i++) {
-  if (paired.has(i)) continue; // Skip if already paired
-  
-  const row = rows[i];
-  
-  if (row.action === "ADD") {
-    const matchingDropIndex = rows.findIndex((r, idx) => 
-      idx > i && 
-      !paired.has(idx) && // Don't pair with already-paired items
-      r.action === "DROP" && 
-      r.team === row.team && 
-      r.date === row.date
-    );
+    let pairCounter = 0;
     
-    if (matchingDropIndex !== -1) {
-      paired.add(matchingDropIndex); // Mark as paired
-      combinedRows.push({
-        ...row,
-        isPair: true,
-        dropPlayer: rows[matchingDropIndex].player,
-        pairNumber: Math.floor(combinedRows.length / 2)
-      });
-    } else {
-      combinedRows.push({...row, isPair: false});
+    // Create working copy to avoid mutating original
+    const workingRows = [...rows];
+    
+    for (let i = 0; i < workingRows.length; i++) {
+      const row = workingRows[i];
+      
+      if (row.action === "ADD") {
+        // Look for matching DROP from same team on same date
+        const matchingDropIndex = workingRows.findIndex((r, idx) => 
+          idx > i && 
+          r.action === "DROP" && 
+          r.team === row.team && 
+          r.date === row.date
+        );
+        
+        if (matchingDropIndex !== -1) {
+          // Found a pair - combine them
+          const dropRow = workingRows[matchingDropIndex];
+          combinedRows.push({
+            ...row,
+            isPair: true,
+            dropPlayer: dropRow.player || (dropRow.playerId ? `#${dropRow.playerId}` : "—"),
+            pairNumber: pairCounter
+          });
+          
+          // Remove the drop from working rows
+          workingRows.splice(matchingDropIndex, 1);
+          pairCounter++;
+        } else {
+          // Solo add
+          combinedRows.push({
+            ...row,
+            isPair: false,
+            pairNumber: pairCounter
+          });
+          pairCounter++;
+        }
+      } else {
+        // Solo drop or other action
+        combinedRows.push({
+          ...row,
+          isPair: false,
+          pairNumber: pairCounter
+        });
+        pairCounter++;
+      }
     }
-  } else {
-    combinedRows.push({...row, isPair: false});
-  }
-}
     
     return combinedRows.map((r, i) => {
       const isShaded = r.pairNumber % 2 === 0;
@@ -3551,21 +3484,16 @@ async function editPoll(pollId) {
   }
 
   async function deletePoll(pollId) {
-  if (!confirm("Delete this poll? This removes its results and codes.")) return;
-  
-  // Make sure we're using the correct password for the current league
-  const adminPassword = config.adminPassword || ADMIN_ENV;
-  
-  const r = await fetch(API("/api/polls/delete"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-admin": adminPassword },
-    body: JSON.stringify({ pollId })
-  });
-  
-  if (!r.ok) return alert("Delete failed (commissioner only?)");
-  setActivePollId("");
-  loadPolls();
-}
+    if (!confirm("Delete this poll? This removes its results and codes.")) return;
+    const r = await fetch(API("/api/polls/delete"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      body: JSON.stringify({ pollId })
+    });
+    if (!r.ok) return alert("Delete failed (commissioner only?)");
+    setActivePollId("");
+    loadPolls();
+  }
 
   async function setClosed(pollId, closed) {
     const r = await fetch(API("/api/polls/close"), {
@@ -4238,7 +4166,7 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
   );
 }
 
-function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
+function HoodTrophiesView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
 const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21; // Bench, IR
 
@@ -4276,7 +4204,7 @@ const ht_teamProjection = (teamSideObj, week) => {
   }
   return sum;
 };
-  const [naughtyLists, setNaughtyLists] = useState({}); // Store naughty lists by week
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [weeklyTrophies, setWeeklyTrophies] = useState([]);
@@ -4342,22 +4270,6 @@ let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
         );
         
         if (!allGamesComplete) continue;
-
-// Fetch naughty list for this week
-try {
-  const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
-  const naughtyResponse = await fetch(
-    `${baseURL}/api/leagues/${config.id}/weekly-awards/${espn.seasonId}?week=${weekNum}`
-  );
-  const naughtyData = await naughtyResponse.json();
-  
-  setNaughtyLists(prev => ({
-    ...prev,
-    [weekNum]: naughtyData.naughtyList || []
-  }));
-} catch (err) {
-  console.error(`Failed to load naughty list for week ${weekNum}:`, err);
-}
  
         const weekTrophies = {
           week: weekNum,
@@ -4607,6 +4519,22 @@ if (unluckyLoss) {
   });
 }
 
+        if (bestManager.percentage > 0 && bestManager.team) {
+          weekTrophies.trophies.push({
+            emoji: "🤖",
+            title: "Best Manager",
+            value: `${bestManager.team} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
+          });
+        }
+
+        if (worstManager.benchPoints > 0 && worstManager.team) {
+          weekTrophies.trophies.push({
+            emoji: "🤡",
+            title: "Worst Manager",
+            value: `${worstManager.team} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
+          });
+        }
+
 // === ADD: Overachiever / Underachiever trophy rows ===
 if (__overT.team) {
   weekTrophies.trophies.push({
@@ -4624,22 +4552,6 @@ if (__underT.team) {
   });
 }
 
-
-        if (bestManager.percentage > 0 && bestManager.team) {
-          weekTrophies.trophies.push({
-            emoji: "🤖",
-            title: "Best Manager",
-            value: `${bestManager.team} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
-          });
-        }
-
-        if (worstManager.benchPoints > 0 && worstManager.team) {
-          weekTrophies.trophies.push({
-            emoji: "🤡",
-            title: "Worst Manager",
-            value: `${worstManager.team} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
-          });
-        }
 
         trophiesData.push(weekTrophies);
       }
@@ -4660,133 +4572,85 @@ const seasonStats = {
   blowoutMargins: {},
   closeWinMargins: {},
   luckyUnluckyRecords: {},
-  managerStats: {},
-  overTotals: {},
-  underTotals: {},
-  overCounts: {},      // <-- ADD
-  underCounts: {}
+  managerStats: {}
 };
 
-// Build team list (from the names map you already created earlier in loadTrophies)
+// Initialize team tracking
 Object.values(teamNames).forEach(team => {
   trophyCounts[team] = {
-    "👑": 0, "💩": 0, "😱": 0, "😅": 0,
-    "🍀": 0, "😡": 0, "📈": 0, "📉": 0,
+    "👑": 0, "💩": 0, "😱": 0, "😅": 0, 
+    "🍀": 0, "😡": 0, "📈": 0, "📉": 0, 
     "🤖": 0, "🤡": 0
   };
   seasonStats.totalPoints[team] = 0;
   seasonStats.blowoutMargins[team] = [];
   seasonStats.closeWinMargins[team] = [];
-  seasonStats.luckyUnluckyRecords[team] = { wins: 0, losses: 0, vsW: 0, vsL: 0 };
-  seasonStats.managerStats[team] = { benchPoints: 0, percentages: [] };
-  seasonStats.overTotals[team] = 0;
-  seasonStats.underTotals[team] = 0;
-  seasonStats.overCounts[team] = 0;   // <-- ADD
-  seasonStats.underCounts[team] = 0; 
+  seasonStats.luckyUnluckyRecords[team] = { wins: 0, losses: 0, vsLeague: 0 };
+  seasonStats.managerStats[team] = { benchPoints: 0, percentages: [], optimalTotal: 0, actualTotal: 0 };
 });
 
-// Walk every week we just computed
-for (const week of trophiesData) {
-  // 1) Count trophies you award in week.trophies (if you already do this elsewhere, keep it)
-  for (const t of (week.trophies || [])) {
-    // bump per-team trophy counts (optional; keeps your existing behavior)
-    const row = String(t.value || t.text || "");
-    const name = Object.values(teamNames).find(n => row.includes(n));
-    if (name && trophyCounts[name] && t.emoji) {
-      if (t.emoji in trophyCounts[name]) trophyCounts[name][t.emoji] += 1;
-    }
-  }
-
-  // 2) Per-matchup: add season totals for points & winning margins (you already had this logic)
-  for (const mu of (week.matchups || [])) {
-    const home = mu.home, away = mu.away;
-    const hs = parseFloat(mu.homeScore || 0);
-    const as = parseFloat(mu.awayScore || 0);
-
-    // season total team points
-    seasonStats.totalPoints[home] += hs;
-    seasonStats.totalPoints[away] += as;
-
-    // winner’s margin into both “blowout” and “close win” lists; we’ll average later
-    const margin = Math.abs(hs - as);
-    if (hs > as) {
-      seasonStats.blowoutMargins[home].push(margin);
-      seasonStats.closeWinMargins[home].push(margin);
-    } else if (as > hs) {
-      seasonStats.blowoutMargins[away].push(margin);
-      seasonStats.closeWinMargins[away].push(margin);
-    }
-  }
-
-  // 3) === ADD HERE: All-play (Lucky/Unlucky) for THIS week ===
-  // Build a plain score list for the week
-  const weekScores = [];
-  for (const mu of (week.matchups || [])) {
-    const hs = parseFloat(mu.homeScore || 0);
-    const as = parseFloat(mu.awayScore || 0);
-    weekScores.push({ team: mu.home, points: hs, won: hs > as });
-    weekScores.push({ team: mu.away, points: as, won: as > hs });
-  }
-  const teamsThisWeek = weekScores.length;
-  for (const t of weekScores) {
-    const wouldBeat = weekScores.reduce((acc, o) => acc + (t.points > o.points ? 1 : 0), 0);
-    const wouldLose = (teamsThisWeek - 1) - wouldBeat;
-    const rec = seasonStats.luckyUnluckyRecords[t.team];
-    rec.vsW += wouldBeat;
-    rec.vsL += wouldLose;
-    if (t.won) rec.wins += 1; else rec.losses += 1;
-  }
-
-  // 4) === ADD HERE: Over/Under totals + Manager stats for THIS week ===
-  // Pull ESPN boxscore for this week to read projections & optimal lineup
-  try {
-    const boxResp = await fetchEspnJson({
-      leagueId: espn.leagueId,
-      seasonId: espn.seasonId,
-      view: "mBoxscore",
-      scoringPeriodId: week.week
-    });
-    const rows = Array.isArray(boxResp?.schedule) ? boxResp.schedule : [];
-    for (const r of rows) {
-      if (r?.matchupPeriodId !== week.week) continue;
-
-      // process both sides
-      for (const side of ["home", "away"]) {
-        const s = r[side];
-        if (!s) continue;
-        const teamName = teamNames[s.teamId] || `Team ${s.teamId}`;
-        const actual = Number(s.totalPoints || 0);
-
-        // Over / Under: sum only the positive side each week
-        const proj = ht_teamProjection(s, week.week);
-        const delta = actual - proj;
-if (delta > 0) { 
-  seasonStats.overTotals[teamName] += delta;
-  seasonStats.overCounts[teamName] += 1;     // <-- ADD
-}
-if (delta < 0) { 
-  seasonStats.underTotals[teamName] += (-delta);
-  seasonStats.underCounts[teamName] += 1;    // <-- ADD
-}
-
-
-        // Manager stats: add bench points and % of optimal
-        const optimal = calculateOptimalScore(s); // your existing helper in this file
-        const bench = Math.max(0, optimal - actual);
-        seasonStats.managerStats[teamName].benchPoints += bench;
-        if (optimal > 0) {
-          seasonStats.managerStats[teamName].percentages.push((actual / optimal) * 100);
-        }
+// Count trophies properly by parsing each trophy
+trophiesData.forEach(week => {
+  week.trophies.forEach(trophy => {
+    let teamToCredit = null;
+    
+    // Parse team name based on trophy type
+    if (trophy.title === "High score" || trophy.title === "Low score") {
+      teamToCredit = trophy.value.split(" with ")[0];
+    } else if (trophy.title === "Blow out") {
+      teamToCredit = trophy.value.split(" blew out ")[0];
+    } else if (trophy.title === "Close win") {
+      teamToCredit = trophy.value.split(" barely beat ")[0];
+    } else if (trophy.title === "Lucky" || trophy.title === "Unlucky") {
+      if (trophy.value.includes("All winning teams") || trophy.value.includes("All losing teams")) {
+        teamToCredit = trophy.value.split(" had the ")[0].split(", but ")[1];
+      } else {
+        teamToCredit = trophy.value.split(" was ")[0];
+      }
+    } else if (trophy.title === "Overachiever" || trophy.title === "Underachiever") {
+      teamToCredit = trophy.value.split(" was ")[0];
+    } else if (trophy.title === "Best Manager" || trophy.title === "Worst Manager") {
+      teamToCredit = trophy.value.split(" scored ")[0];
+      if (trophy.title === "Worst Manager") {
+        teamToCredit = trophy.value.split(" left ")[0];
       }
     }
-  } catch (_) {
-    // If boxscore isn’t available for this week, skip manager/over/under for this week.
-  }
-}
+    
+    if (teamToCredit && trophyCounts[teamToCredit]) {
+      trophyCounts[teamToCredit][trophy.emoji]++;
+    }
+  });
+  
+  // Also track stats for season leaders
+  week.matchups.forEach(matchup => {
+    const homeTeam = matchup.home;
+    const awayTeam = matchup.away;
+    const homeScore = parseFloat(matchup.homeScore);
+    const awayScore = parseFloat(matchup.awayScore);
+    
+    if (seasonStats.totalPoints[homeTeam]) {
+      seasonStats.totalPoints[homeTeam] += homeScore;
+    }
+    if (seasonStats.totalPoints[awayTeam]) {
+      seasonStats.totalPoints[awayTeam] += awayScore;
+    }
+    
+    const margin = Math.abs(homeScore - awayScore);
+    if (homeScore > awayScore) {
+      if (seasonStats.blowoutMargins[homeTeam]) {
+        seasonStats.blowoutMargins[homeTeam].push(margin);
+      }
+    } else {
+      if (seasonStats.blowoutMargins[awayTeam]) {
+        seasonStats.blowoutMargins[awayTeam].push(margin);
+      }
+    }
+  });
+});
 
-// At this point seasonStats is fully populated; keep your rendering as-is
-setSeasonStats(seasonStats);
 setTrophyCounts(trophyCounts);
+setSeasonStats(seasonStats);
+
     } catch (err) {
       console.error('Failed to load trophies:', err);
       setError("Failed to load trophy data: " + err.message);
@@ -4797,85 +4661,65 @@ setTrophyCounts(trophyCounts);
 
   // Calculate optimal lineup helper
   const calculateOptimalScore = (teamData) => {
-  if (!teamData?.rosterForCurrentScoringPeriod?.entries) return teamData.totalPoints || 0;
-  
-  const entries = teamData.rosterForCurrentScoringPeriod.entries;
-  const playersByPosition = { QB: [], RB: [], WR: [], TE: [], K: [], DEF: [] };
-  
-  entries.forEach(entry => {
-    const pos = entry.playerPoolEntry?.player?.defaultPositionId;
-    const score = entry.playerPoolEntry?.appliedStatTotal || 0;
-    const playerId = entry.playerPoolEntry?.player?.id || Math.random();
-    const playerName = entry.playerPoolEntry?.player?.fullName || 'Unknown';
+    if (!teamData?.rosterForCurrentScoringPeriod?.entries) return teamData.totalPoints || 0;
     
-    let position;
-    switch(pos) {
-      case 1: position = 'QB'; break;
-      case 2: position = 'RB'; break;
-      case 3: position = 'WR'; break;
-      case 4: position = 'TE'; break;
-      case 6: position = 'TE'; break;
-      case 5: position = 'K'; break;
-      case 16: position = 'DEF'; break;
-      default: return;
-    }
+    const entries = teamData.rosterForCurrentScoringPeriod.entries;
+    const playersByPosition = { QB: [], RB: [], WR: [], TE: [], K: [], DEF: [] };
     
-    playersByPosition[position].push({ score, playerId, playerName });
-  });
-  
-  Object.keys(playersByPosition).forEach(pos => {
-    playersByPosition[pos].sort((a, b) => b.score - a.score);
-  });
-  
-  let optimal = 0;
-  const usedPlayerIds = new Set();
-  const selections = [];
-  
-  const takeNext = (list, slotName) => {
-    for (const player of list) {
-      if (!usedPlayerIds.has(player.playerId)) {
-        usedPlayerIds.add(player.playerId);
-        selections.push(`${slotName}: ${player.playerName} (${player.score.toFixed(1)})`);
-        return player.score;
+    entries.forEach(entry => {
+      const pos = entry.playerPoolEntry?.player?.defaultPositionId;
+      const score = entry.playerPoolEntry?.appliedStatTotal || 0;
+      
+      // Map position IDs: 1=QB, 2=RB, 3=WR, 4=TE, 5=K, 16=DEF
+      let position;
+      switch(pos) {
+        case 1: position = 'QB'; break;
+        case 2: position = 'RB'; break;
+        case 3: position = 'WR'; break;
+        case 4: position = 'TE'; break;
+        case 5: position = 'K'; break;
+        case 16: position = 'DEF'; break;
+        default: return;
       }
-    }
-    selections.push(`${slotName}: EMPTY (0)`);
-    return 0;
+      
+      playersByPosition[position].push(score);
+    });
+    
+    // Sort each position by score descending
+    Object.keys(playersByPosition).forEach(pos => {
+      playersByPosition[pos].sort((a, b) => b - a);
+    });
+    
+    // Build optimal lineup
+    let optimal = 0;
+    
+    // Fixed positions
+    optimal += playersByPosition.QB[0] || 0;  // 1 QB
+    optimal += playersByPosition.K[0] || 0;   // 1 K
+    optimal += playersByPosition.DEF[0] || 0; // 1 DEF
+    optimal += playersByPosition.TE[0] || 0;  // 1 TE
+    
+    // 2 RBs
+    optimal += playersByPosition.RB[0] || 0;
+    optimal += playersByPosition.RB[1] || 0;
+    
+    // 2 WRs
+    optimal += playersByPosition.WR[0] || 0;
+    optimal += playersByPosition.WR[1] || 0;
+    
+    // Flex spots - collect remaining eligible players
+    const flexEligible = [
+      ...(playersByPosition.RB.slice(2) || []),
+      ...(playersByPosition.WR.slice(2) || []),
+      ...(playersByPosition.TE.slice(1) || [])
+    ].sort((a, b) => b - a);
+    
+    // 2 Flex spots (best remaining)
+    optimal += flexEligible[0] || 0;
+    optimal += flexEligible[1] || 0;
+    
+    return optimal;
   };
-  
-  optimal += takeNext(playersByPosition.QB, 'QB');
-  optimal += takeNext(playersByPosition.K, 'K');
-  optimal += takeNext(playersByPosition.DEF, 'DEF');
-  optimal += takeNext(playersByPosition.TE, 'TE');
-  optimal += takeNext(playersByPosition.RB, 'RB1');
-  optimal += takeNext(playersByPosition.RB, 'RB2');
-  optimal += takeNext(playersByPosition.WR, 'WR1');
-  optimal += takeNext(playersByPosition.WR, 'WR2');
-  
-  const rbWrCombined = [
-    ...playersByPosition.RB,
-    ...playersByPosition.WR
-  ].sort((a, b) => b.score - a.score);
-  optimal += takeNext(rbWrCombined, 'RB/WR');
-  
-  const flexCombined = [
-    ...playersByPosition.RB,
-    ...playersByPosition.WR,
-    ...playersByPosition.TE
-  ].sort((a, b) => b.score - a.score);
-  optimal += takeNext(flexCombined, 'FLEX');
-  
-  console.log('Optimal lineup for team', teamData.teamId, ':', selections);
-  console.log('Optimal calculation:', {
-    teamId: teamData.teamId,
-    actual: teamData.totalPoints,
-    optimal: optimal,
-    percentage: ((teamData.totalPoints / optimal) * 100).toFixed(1) + '%',
-    usedPlayers: usedPlayerIds.size
-  });
-  
-  return optimal;
-};
 
   useEffect(() => {
     if (espn.seasonId && espn.leagueId) {
@@ -4894,7 +4738,7 @@ setTrophyCounts(trophyCounts);
   };
 
   return (
-    <Section title="🏆 Trophy Case" actions={
+    <Section title="🏆 Hood Trophies" actions={
       <button className="btn" style={btnSec} onClick={loadTrophies} disabled={loading}>
         {loading ? "Loading..." : "Refresh"}
       </button>
@@ -4919,72 +4763,71 @@ setTrophyCounts(trophyCounts);
 
           {expandedWeeks.has(weekData.week) && (
             <div style={{ marginTop: 16 }}>
-              {/* Final Scores (aligned names/scores, mobile-safe) */}
+              {/* Final Scores */}
 <div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 6 }}>
   <h4 style={{ marginTop: 0, marginBottom: 12, textAlign: "center" }}>Final Scores</h4>
-
-  <style>{`
-    .ht-fs-grid {
-      display: grid;
-      /* [away name] [away score] [vs] [home score] [home name] */
-      grid-template-columns: minmax(0,1fr) auto auto auto minmax(0,1fr);
-      column-gap: 0;     /* no gap; we control spacing with padding so scores sit tight to "vs" */
-      row-gap: 6px;
-      align-items: center;
-      width: 100%;
-    }
-    .ht-fs-team {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .ht-fs-team.left  { text-align: right;  padding-right: 1ch; } /* name␠score */
-    .ht-fs-team.right { text-align: left;   padding-left:  1ch; } /* score␠name */
-    .ht-fs-score.away { text-align: left;  }
-    .ht-fs-score.home { text-align: right; }
-    .ht-fs-vs { text-align: center; padding: 0 6px; opacity: 0.6; } /* equal buffer to both scores */
-
-    @media (max-width: 480px) {
-      .ht-fs-team, .ht-fs-score { font-size: 12px; }
-      .ht-fs-vs { padding: 0 4px; }
-    }
-  `}</style>
-
-  <div style={{ display: "grid", rowGap: 6 }}>
-    {weekData.matchups.map((m, i) => {
-  const homeWon = parseFloat(m.homeScore) > parseFloat(m.awayScore);
-  const awayWon = !homeWon;
-
-  // Colors
-  const NAME_WIN  = "#111827"; // black
-  const NAME_LOSE = "#6b7280"; // gray
-  const SCORE_WIN = "#059669"; // green
-  const SCORE_LOSE= "#6b7280"; // gray
-
-  // Names: winner = bold black, loser = normal gray
-  const homeNameStyle = { fontWeight: homeWon ? "bold" : "normal", color: homeWon ? NAME_WIN : NAME_LOSE };
-  const awayNameStyle = { fontWeight: awayWon ? "bold" : "normal", color: awayWon ? NAME_WIN : NAME_LOSE };
-
-  // Scores: winner = green, loser = gray
-  const homeScoreStyle = { fontWeight: homeWon ? "bold" : "normal", color: homeWon ? SCORE_WIN : SCORE_LOSE };
-  const awayScoreStyle = { fontWeight: awayWon ? "bold" : "normal", color: awayWon ? SCORE_WIN : SCORE_LOSE };
-
-  return (
-    <div key={i} className="ht-fs-grid">
-      <div className="ht-fs-team left"  style={awayNameStyle}  title={m.away}>{m.away}</div>
-      <div className="ht-fs-score away" style={awayScoreStyle}>{m.awayScore}</div>
-      <div className="ht-fs-vs">vs</div>
-      <div className="ht-fs-score home" style={homeScoreStyle}>{m.homeScore}</div>
-      <div className="ht-fs-team right" style={homeNameStyle}  title={m.home}>{m.home}</div>
-    </div>
-  );
-})}
-
+  <div style={{ display: "table", width: "100%", borderSpacing: "0 4px" }}>
+    {weekData.matchups.map((matchup, i) => {
+      const homeWon = parseFloat(matchup.homeScore) > parseFloat(matchup.awayScore);
+      const awayWon = !homeWon;
+      return (
+        <div key={i} style={{ 
+          display: "table-row"
+        }}>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "left",
+            fontWeight: awayWon ? "bold" : "normal",
+            color: awayWon ? "#059669" : "#6b7280",
+            fontSize: 14
+          }}>
+            {matchup.awayScore}
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "right",
+            fontWeight: awayWon ? "bold" : "normal",
+            color: awayWon ? "#059669" : "#6b7280",
+            fontSize: 13
+          }}>
+            {matchup.away}
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 12px",
+            textAlign: "center",
+            color: "#9ca3af",
+            fontSize: 12
+          }}>
+            vs
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "left",
+            fontWeight: homeWon ? "bold" : "normal",
+            color: homeWon ? "#059669" : "#6b7280",
+            fontSize: 13
+          }}>
+            {matchup.home}
+          </div>
+          <div style={{ 
+            display: "table-cell",
+            padding: "4px 8px",
+            textAlign: "right",
+            fontWeight: homeWon ? "bold" : "normal",
+            color: homeWon ? "#059669" : "#6b7280",
+            fontSize: 14
+          }}>
+            {matchup.homeScore}
+          </div>
+        </div>
+      );
+    })}
   </div>
 </div>
-
-
 
               <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8 }}>
                 {weekData.trophies.map((trophy, i) => (
@@ -5005,7 +4848,6 @@ setTrophyCounts(trophyCounts);
                   </div>
                 ))}
               </div>
-
             </div>
           )}
         </div>
@@ -5014,535 +4856,98 @@ setTrophyCounts(trophyCounts);
 {Object.keys(trophyCounts).length > 0 && (
   <div className="card" style={{ padding: 16, marginTop: 16 }}>
     <h3 style={{ marginBottom: 16 }}>🏆 Trophy Leaderboard</h3>
-    <div style={{ overflowX: 'auto' }}>
-      {/* Desktop Table */}
-      <table className="trophy-table-desktop">
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            <th>Team</th>
+            <th style={{ textAlign: "left", padding: 8, borderBottom: "2px solid #e5e7eb" }}>Team</th>
             {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-              <th key={emoji}>{emoji}</th>
+              <th key={emoji} style={{ textAlign: "center", padding: 8, borderBottom: "2px solid #e5e7eb" }}>
+                {emoji}
+              </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {Object.entries(trophyCounts)
-  .sort(([teamA, countsA], [teamB, countsB]) => {
-    const totalA = Object.values(countsA).reduce((sum, count) => sum + count, 0);
-    const totalB = Object.values(countsB).reduce((sum, count) => sum + count, 0);
-    return totalB - totalA; // Sort descending (most trophies first)
-  })
-  .map(([team, counts]) => (
+          {Object.entries(trophyCounts).map(([team, counts]) => (
             <tr key={team}>
-              <td>{team}</td>
+              <td style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>{team}</td>
               {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-                <td key={emoji}>{counts[emoji] || 0}</td>
+                <td key={emoji} style={{ textAlign: "center", padding: 8, borderBottom: "1px solid #e5e7eb" }}>
+                  {counts[emoji] || 0}
+                </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
-      
-      {/* Mobile Grid */}
-<div className="trophy-grid-mobile">
-  {/* Header row - emojis only */}
-  <div className="trophy-header">
-    {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-      <div key={emoji}>{emoji}</div>
-    ))}
-  </div>
-  
-  {/* Data rows with background team names */}
-  {Object.entries(trophyCounts)
-  .sort(([teamA, countsA], [teamB, countsB]) => {
-    const totalA = Object.values(countsA).reduce((sum, count) => sum + count, 0);
-    const totalB = Object.values(countsB).reduce((sum, count) => sum + count, 0);
-    return totalB - totalA; // Sort descending (most trophies first)
-  })
-  .map(([team, counts]) => (
-    <div key={team} className="trophy-row">
-      <div className="trophy-row-bg">{team}</div>
-      {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-        <div key={emoji} className="trophy-cell">{counts[emoji] || 0}</div>
-      ))}
-    </div>
-  ))}
-</div>
     </div>
   </div>
 )}
+
 {/* Season Leaders */}
-{Object.keys(seasonStats?.totalPoints ?? {}).length > 0 && (
+{Object.keys(seasonStats.totalPoints).length > 0 && (
   <div className="card" style={{ padding: 16, marginTop: 16 }}>
     <h3 style={{ marginBottom: 16 }}>📊 Season Leaders</h3>
-
-{(() => {
-  // ---------- helpers ----------
-  const teams = Object.keys(trophyCounts || {});
-  if (!teams.length) return null;
-
-  const totalPts = seasonStats.totalPoints || {};
-  const blow = seasonStats.blowoutMargins || {};
-  const close = seasonStats.closeWinMargins || {};
-  const luck = seasonStats.luckyUnluckyRecords || {};
-  const mgr  = seasonStats.managerStats || {};
-  const overTotals = seasonStats.overTotals || {};
-  const underTotals = seasonStats.underTotals || {};
-
-  const avg = (arr) => (Array.isArray(arr) && arr.length ? arr.reduce((s,x)=>s+x,0)/arr.length : 0);
-
-  // For Over/Under averages “per game when over/under” we prefer explicit counters if you added them
-  // (seasonStats.overCounts / seasonStats.underCounts). If not present, we FALL BACK to the number of
-  // 📈 / 📉 trophies as a proxy count so the section still renders.
-  const overCounts = seasonStats.overCounts || {};
-  const underCounts = seasonStats.underCounts || {};
-
-  const getCount = (team, emoji) => (trophyCounts?.[team]?.[emoji] ?? 0);
-
-  // Pick leader by trophy count, then break ties with a comparator.
-  // `better` should return true if a beats b under the tiebreak rule.
-  const pickLeader = (emoji, better) => {
-    // 1) find max count for this emoji
-    let maxCount = -Infinity;
-    for (const t of teams) maxCount = Math.max(maxCount, getCount(t, emoji));
-    const contenders = teams.filter(t => getCount(t, emoji) === maxCount);
-    if (!contenders.length) return null;
-    if (contenders.length === 1) return contenders[0];
-
-    // 2) tie-break among contenders
-    let best = contenders[0];
-    for (let i = 1; i < contenders.length; i++) {
-      const t = contenders[i];
-      if (better(t, best)) best = t;
-    }
-    return best;
-  };
-
-  // ---------- compute each leader using counts + tie-breakers ----------
-  // 👑 High score: tie-break = MOST total season points
-  const highLeader = pickLeader("👑", (a,b) => (totalPts[a]||0) > (totalPts[b]||0));
-
-  // 💩 Low score: tie-break = LEAST total season points
-  const lowLeader  = pickLeader("💩", (a,b) => (totalPts[a]||0) < (totalPts[b]||0));
-
-  // 😱 Blow out: tie-break = HIGHEST average winning margin (wins only)
-  const blowLeader = pickLeader("😱", (a,b) => avg(blow[a]||[]) > avg(blow[b]||[]));
-
-  // 😅 Close win: tie-break = SMALLEST average winning margin (wins only)
-  const closeLeader = pickLeader("😅", (a,b) => {
-    const avga = avg(close[a]||[]);
-    const avgb = avg(close[b]||[]);
-    // smaller wins; if one has 0 wins and the other >0, treat the one with wins as better
-    if (avga === 0 && avgb > 0) return false;
-    if (avgb === 0 && avga > 0) return true;
-    return avga < avgb;
-  });
-
-  // 🍀 Lucky: tie-break = WORST all-play record (lowest vsW - vsL; if tie, lowest vsW%)
-  const luckyLeader = pickLeader("🍀", (a,b) => {
-    const A = luck[a]||{vsW:0,vsL:0}; const B = luck[b]||{vsW:0,vsL:0};
-    const diffA = (A.vsW - A.vsL), diffB = (B.vsW - B.vsL);
-    if (diffA !== diffB) return diffA < diffB; // more "unlucky" = worse all-play record
-    // tie: lower win%
-    const wa = A.vsW + A.vsL ? A.vsW / (A.vsW + A.vsL) : 0;
-    const wb = B.vsW + B.vsL ? B.vsW / (B.vsW + B.vsL) : 0;
-    return wa < wb;
-  });
-
-  // 😡 Unlucky: tie-break = BEST all-play record (highest vsW - vsL; then highest vsW%)
-  const unluckyLeader = pickLeader("😡", (a,b) => {
-    const A = luck[a]||{vsW:0,vsL:0}; const B = luck[b]||{vsW:0,vsL:0};
-    const diffA = (A.vsW - A.vsL), diffB = (B.vsW - B.vsL);
-    if (diffA !== diffB) return diffA > diffB;
-    const wa = A.vsW + A.vsL ? A.vsW / (A.vsW + A.vsL) : 0;
-    const wb = B.vsW + B.vsL ? B.vsW / (B.vsW + B.vsL) : 0;
-    return wa > wb;
-  });
-
-  // 📈 Overachiever: tie-break = HIGHEST average (overTotals / games with delta>0)
-  const overLeader = pickLeader("📈", (a,b) => {
-    const ca = overCounts[a] ?? getCount(a,"📈");  // fallback to 📈 count if you didn’t store overCounts
-    const cb = overCounts[b] ?? getCount(b,"📈");
-    const avga = ca ? (overTotals[a]||0) / ca : 0;
-    const avgb = cb ? (overTotals[b]||0) / cb : 0;
-    return avga > avgb;
-  });
-
-  // 📉 Underachiever: tie-break = LOWEST average (underTotals / games with delta<0)
-  const underLeader = pickLeader("📉", (a,b) => {
-    const ca = underCounts[a] ?? getCount(a,"📉"); // fallback to 📉 count if you didn’t store underCounts
-    const cb = underCounts[b] ?? getCount(b,"📉");
-    const avga = ca ? (underTotals[a]||0) / ca : 0;
-    const avgb = cb ? (underTotals[b]||0) / cb : 0;
-    return avga < avgb;
-  });
-
-  // 🤖 Best Manager: tie-break = HIGHEST average % of optimal
-  const bestMgrLeader = pickLeader("🤖", (a,b) => {
-    const pa = mgr[a]?.percentages||[], pb = mgr[b]?.percentages||[];
-    const avga = pa.length ? pa.reduce((s,x)=>s+x,0)/pa.length : 0;
-    const avgb = pb.length ? pb.reduce((s,x)=>s+x,0)/pb.length : 0;
-    return avga > avgb;
-  });
-
-  // 🤡 Worst Manager: tie-break = LOWEST average % of optimal
-  const worstMgrLeader = pickLeader("🤡", (a,b) => {
-    const pa = mgr[a]?.percentages||[], pb = mgr[b]?.percentages||[];
-    const avga = pa.length ? pa.reduce((s,x)=>s+x,0)/pa.length : 0;
-    const avgb = pb.length ? pb.reduce((s,x)=>s+x,0)/pb.length : 0;
-    return avga < avgb;
-  });
-
-  // ---------- rows (with your requested wording) ----------
-  const rows = [];
-
-  if (highLeader) rows.push(
-    <div key="hi">👑 The current <strong>Highest Scorer</strong> king is <strong>{highLeader}</strong> with a total of {Number(totalPts[highLeader]||0).toFixed(2)} points</div>
-  );
-
-  if (lowLeader) rows.push(
-    <div key="lo">💩 The current <strong>Lowest Scorer</strong> peasant is <strong>{lowLeader}</strong> with a total of {Number(totalPts[lowLeader]||0).toFixed(2)} points</div>
-  );
-
-  if (blowLeader) rows.push(
-    <div key="bl">😱 The current <strong>Blow Out</strong> leader is <strong>{blowLeader}</strong> who has blown out their opponents by an average of {avg(blow[blowLeader]||[]).toFixed(2)} points</div>
-  );
-
-  if (closeLeader) rows.push(
-    <div key="cw">😅 The current <strong>Close Wins</strong> title holder is <strong>{closeLeader}</strong> who has won by an average of {avg(close[closeLeader]||[]).toFixed(2)} points</div>
-  );
-
-  if (luckyLeader) {
-    const r = luck[luckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
-    rows.push(
-      <div key="lc">🍀 <strong>{luckyLeader}</strong> should buy lotto tickets, they are currently {r.vsW}-{r.vsL} against the league yet won {r.wins} of {r.wins + r.losses} matchups</div>
-    );
-  }
-
-  if (unluckyLeader) {
-    const r = luck[unluckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
-    rows.push(
-      <div key="ul">😡 <strong>{unluckyLeader}</strong> should file a complaint with the schedule maker, they are currently {r.vsW}-{r.vsL} against the league but lost {r.losses} of {r.wins + r.losses} matchups</div>
-    );
-  }
-
-  if (overLeader) {
-    const total = Number(overTotals[overLeader]||0);
-    const count = (overCounts[overLeader] ?? getCount(overLeader,"📈")) || 0;
-    const average = count ? (total / count) : 0;
-    rows.push(
-      <div key="ov">📈 The biggest <strong>Overachiever</strong> is <strong>{overLeader}</strong> scoring a total of {total.toFixed(2)} points over their projections and averaging {average.toFixed(2)} points over their projection each game</div>
-    );
-  }
-
-  if (underLeader) {
-    const total = Number(underTotals[underLeader]||0);
-    const count = (underCounts[underLeader] ?? getCount(underLeader,"📉")) || 0;
-    const average = count ? (total / count) : 0;
-    rows.push(
-      <div key="un">📉 The biggest <strong>Underachiever</strong> is <strong>{underLeader}</strong> scoring a total of {total.toFixed(2)} points under their projections and averaging {average.toFixed(2)} points under their projection each game</div>
-    );
-  }
-
-  if (bestMgrLeader) {
-    const m = mgr[bestMgrLeader]||{benchPoints:0,percentages:[]};
-    const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
-    rows.push(
-      <div key="bm">🤖 The <strong>Best Manager</strong> so far is <strong>{bestMgrLeader}</strong>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and have scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
-    );
-  }
-
-  if (worstMgrLeader) {
-    const m = mgr[worstMgrLeader]||{benchPoints:0,percentages:[]};
-    const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
-    rows.push(
-      <div key="wm">🤡 The <strong>Worst Manager</strong> so far is <strong>{worstMgrLeader}</strong>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
-    );
-  }
-
-// --- Separator before the last two meta awards ---
-rows.push(<br key="sep-br" />);
-
-// --- Positive/Negative meta awards -----------------------------------------
-const POSITIVE_EMOJIS = ["👑","😱","😅","🍀","🤖","📈"]; // High, Blowout, Close Win, Lucky, Best Mgr, Overachiever
-const NEGATIVE_EMOJIS = ["💩","😡","🤡","📉"];         // Low, Unlucky, Worst Mgr, Underachiever
-const sumByEmojiSet = (team, set) =>
-  set.reduce((s, e) => s + (trophyCounts?.[team]?.[e] || 0), 0);
-
-// Build winners by most trophies; tie-breakers use season total points
-// Positive: tie -> MOST total points
-let posMax = -1, posContenders = [];
-teams.forEach(t => {
-  const v = sumByEmojiSet(t, POSITIVE_EMOJIS);
-  if (v > posMax) { posMax = v; posContenders = [t]; }
-  else if (v === posMax) posContenders.push(t);
-});
-let posLeader = posContenders[0] || null;
-for (let i = 1; i < posContenders.length; i++) {
-  if ((totalPts[posContenders[i]] || 0) > (totalPts[posLeader] || 0)) posLeader = posContenders[i];
-}
-
-// Negative: tie -> LEAST total points
-let negMax = -1, negContenders = [];
-teams.forEach(t => {
-  const v = sumByEmojiSet(t, NEGATIVE_EMOJIS);
-  if (v > negMax) { negMax = v; negContenders = [t]; }
-  else if (v === negMax) negContenders.push(t);
-});
-let negLeader = negContenders[0] || null;
-for (let i = 1; i < negContenders.length; i++) {
-  if ((totalPts[negContenders[i]] || 0) < (totalPts[negLeader] || 0)) negLeader = negContenders[i];
-}
-
-// Render the new awards
-if (posLeader && posMax > 0) {
-  rows.push(
-    <div key="meta-positive">
-      <div style={{ fontSize: "1.1em" }}>
-          <div style={{ textAlign: "center" }}>🧲 The <strong>Trophy Magnet</strong> award goes to <strong>{posLeader}</strong>
-      </div></div>
-
-      <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>
-        <div><div style={{ textAlign: "center" }}><strong>{posMax}</strong> positive trophies</div></div>
-        <div><div style={{ fontSize: "0.75em" }}><div style={{ textAlign: "center" }}>(High Score👑, Blow Out😱, Close Win😅, Lucky🍀, Best Manager🤖, and Overachiever📈)</div></div></div>
-        <div style={{ fontSize: "1.1em", marginTop: 8, lineHeight: 1.4 }}><div style={{ textAlign: "center" }}>That’s a fantasy GM clinic.. skills so good it looks suspiciously like luck!</div></div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Highest Scorer */}
+      <div>
+        {(() => {
+          const highestScorer = Object.entries(seasonStats.totalPoints)
+            .sort(([,a], [,b]) => b - a)[0];
+          return highestScorer && (
+            <div>👑 The current <strong>Highest Scorer</strong> king is {highestScorer[0]} with a total of {highestScorer[1].toFixed(2)} points</div>
+          );
+        })()}
+      </div>
+      
+      {/* Lowest Scorer */}
+      <div>
+        {(() => {
+          const lowestScorer = Object.entries(seasonStats.totalPoints)
+            .filter(([,points]) => points > 0)
+            .sort(([,a], [,b]) => a - b)[0];
+          return lowestScorer && (
+            <div>💩 The current <strong>Lowest Scorer</strong> is {lowestScorer[0]} with a total of {lowestScorer[1].toFixed(2)} points</div>
+          );
+        })()}
+      </div>
+      
+      {/* Biggest Blowout */}
+      <div>
+        {(() => {
+          const blowoutLeader = Object.entries(seasonStats.blowoutMargins)
+            .filter(([,margins]) => margins.length > 0)
+            .map(([team, margins]) => ({
+              team,
+              avg: margins.reduce((a,b) => a+b, 0) / margins.length
+            }))
+            .sort((a,b) => b.avg - a.avg)[0];
+          return blowoutLeader && (
+            <div>😱 The current <strong>Blow Out</strong> leader is {blowoutLeader.team} who has won by an average of {blowoutLeader.avg.toFixed(2)} points</div>
+          );
+        })()}
+      </div>
+      
+      {/* Most trophies overall */}
+      <div>
+        {(() => {
+          const mostTrophies = Object.entries(trophyCounts)
+            .map(([team, counts]) => ({
+              team,
+              total: Object.values(counts).reduce((a,b) => a+b, 0)
+            }))
+            .sort((a,b) => b.total - a.total)[0];
+          return mostTrophies && (
+            <div>🏆 <strong>{mostTrophies.team}</strong> leads with {mostTrophies.total} total trophies</div>
+          );
+        })()}
       </div>
     </div>
-  );
-}
-
-if (negLeader && negMax > 0) {
-  rows.push(
-    <div key="meta-negative">
-<br />
-      <div style={{ fontSize: "1.1em" }}>
-  <div style={{ textAlign: "center" }}>
-        🥄 The <strong>Wooden Spoon</strong> award goes to <strong>{negLeader}</strong>
-      </div></div>
-
-      <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>
-
-        <div><div style={{ textAlign: "center" }}><strong>{negMax}</strong> negative trophies</div></div>
-        <div><div style={{ fontSize: "0.75em" }}><div style={{ textAlign: "center" }}>(Low Score💩, Unlucky😡, Worst Manager🤡, and Underachiever📉)</div></div></div>
-        <div style={{ fontSize: "1.1em", marginTop: 8, lineHeight: 1.4 }}><div style={{ textAlign: "center" }}>Not the hardware you want… might be time to retire the franchise and focus on pickleball!🏓</div></div>
-      </div>
-    </div>
-  );
-}
-
-
-  return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{rows}</div>;
-})()}
-
-
   </div>
 )}
-
-{/* Naughty List Section - After all weekly trophies */}
-      {Object.keys(naughtyLists).length > 0 && (
-        <div style={{ marginTop: 32 }}>
-          <h2 style={{ marginBottom: 16 }}>🎅 Naughty List (Started Inactive Players)</h2>
-          
-          {Object.entries(naughtyLists)
-            .sort(([weekA], [weekB]) => parseInt(weekB) - parseInt(weekA)) // Newest first
-            .map(([week, naughtyList], index) => {
-              const weekNum = parseInt(week);
-              const isExpanded = index === 0; // Only first (most recent) is expanded
-              
-              if (!naughtyList || naughtyList.length === 0) return null;
-              
-              return (
-                <div key={week} className="card" style={{ padding: 16, marginBottom: 16 }}>
-                  <div 
-                    style={{ 
-                      display: "flex", 
-                      justifyContent: "space-between", 
-                      alignItems: "center", 
-                      cursor: "pointer" 
-                    }}
-                    onClick={() => toggleWeek(weekNum)}
-                  >
-                    <h3 style={{ margin: 0 }}>Week {week} Naughty List</h3>
-                    <button className="btn" style={btnSec}>
-                      {expandedWeeks.has(weekNum) ? "Hide ▲" : "Show ▼"}
-                    </button>
-                  </div>
-
-                  {expandedWeeks.has(weekNum) && (
-                    <div style={{ marginTop: 16, overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                            <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
-                            <th style={{ padding: "12px 8px", textAlign: "center" }}>Inactive Count</th>
-                            <th style={{ padding: "12px 8px", textAlign: "left" }}>Players</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {naughtyList.map((team, idx) => (
-                            <tr key={idx} style={{ 
-                              borderBottom: "1px solid #f1f5f9",
-                              backgroundColor: idx === 0 ? "#fef2f2" : "transparent"
-                            }}>
-                              <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
-                              <td style={{ 
-                                padding: "12px 8px", 
-                                textAlign: "center",
-                                fontWeight: "bold",
-                                color: team.inactiveCount > 2 ? "#dc2626" : "#ea580c"
-                              }}>
-                                {team.inactiveCount}
-                              </td>
-                              <td style={{ padding: "12px 8px", fontSize: "12px", color: "#64748b" }}>
-                                {team.inactivePlayers.map(p => p.name).join(', ')}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-        </div>
-      )}
-
     </Section>
   );
-}
-
-function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
-  console.log('NerdDataView - espn:', espn);
-  console.log('NerdDataView - config:', config);
-  
-  const [loading, setLoading] = useState(false);
-  const [weeklyLuck, setWeeklyLuck] = useState({});
-  const [expandedWeeks, setExpandedWeeks] = useState(new Set([4]));
-  const [currentWeek, setCurrentWeek] = useState(4);
-
-  const toggleWeek = (week) => {
-    setExpandedWeeks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(week)) {
-        newSet.delete(week);
-      } else {
-        newSet.add(week);
-      }
-      return newSet;
-    });
-  };
-
-  useEffect(() => {
-    console.log('useEffect running - espn:', espn);
-    console.log('useEffect running - seasonId:', espn.seasonId);
-    console.log('useEffect running - leagueId:', espn.leagueId);
-    
-    if (espn.seasonId && espn.leagueId) {
-      console.log('Condition passed, calling loadLuckIndex');
-      loadLuckIndex();
-    } else {
-      console.log('Condition failed - not calling loadLuckIndex');
-    }
-  }, [espn.seasonId, espn.leagueId]);
-
-  const loadLuckIndex = async () => {
-  console.log('loadLuckIndex called!');
-  setLoading(true);
-  try {
-    const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
-    const response = await fetch(
-      `${baseURL}/api/leagues/${config.id}/luck-index/${espn.seasonId}?currentWeek=${currentWeek}`,
-      { method: 'POST' }
-    );
-    console.log('Response status:', response.status);
-    const data = await response.json();
-    console.log('Parsed data:', data);
-    console.log('weeklyLuck from data:', data.weeklyLuck);
-    setWeeklyLuck(data.weeklyLuck || {});
-    console.log('State should be updated now');
-  } catch (err) {
-    console.error('Failed to load luck index:', err);
-  }
-  setLoading(false);
-};
-
-  return (
-  <Section title="🤓 Nerd Data">
-    <div className="card" style={{ padding: 16 }}>
-      <h2 style={{ marginBottom: 16 }}>Weekly Luck Index</h2>
-      
-      {loading && <div style={{ padding: 32, textAlign: 'center' }}>Loading...</div>}
-      
-      {!loading && Object.keys(weeklyLuck).length > 0 && (
-        <div>
-          {Object.entries(weeklyLuck)
-            .sort(([a], [b]) => parseInt(b) - parseInt(a))
-            .map(([week, teams]) => (
-              <div key={week} className="card" style={{ padding: 16, marginBottom: 16 }}>
-                <div 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => toggleWeek(parseInt(week))}
-                >
-                  <h3 style={{ margin: 0 }}>Week {week}</h3>
-                  <button className="btn" style={btnSec}>
-                    {expandedWeeks.has(parseInt(week)) ? 'Hide ▲' : 'Show ▼'}
-                  </button>
-                </div>
-
-                {expandedWeeks.has(parseInt(week)) && (
-                  <div style={{ marginTop: 16, overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                          <th style={{ padding: '12px 8px', textAlign: 'left' }}>Team</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Result</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>All-Play</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Expected Win %</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Luck Index</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {teams
-                          .sort((a, b) => b.luckIndex - a.luckIndex)
-                          .map((team, idx) => (
-                            <tr key={team.teamId} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: '12px 8px' }}>{team.teamName}</td>
-                              <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                                {team.actualWin ? 'W' : 'L'}
-                              </td>
-                              <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                                {team.allPlayWins}-{team.allPlayLosses}
-                              </td>
-                              <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                                {team.expectedWinPct}%
-                              </td>
-                              <td style={{ 
-                                padding: '12px 8px', 
-                                textAlign: 'center',
-                                color: team.luckIndex > 0 ? '#16a34a' : team.luckIndex < 0 ? '#dc2626' : '#64748b',
-                                fontWeight: 'bold'
-                              }}>
-                                {team.luckIndex > 0 ? '+' : ''}{team.luckIndex}
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))}
-        </div>
-      )}
-    </div>
-  </Section>
-);
 }
 /* =========================
    Power Rankings
@@ -5552,39 +4957,7 @@ function PowerRankingsView({ espn, config, seasonYear, btnPri, btnSec }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [rankings, setRankings] = useState([]);
-  const [playoffOdds, setPlayoffOdds] = useState([]);
-  const [finalStandingsOdds, setFinalStandingsOdds] = useState([]);
-  const [strengthOfSchedule, setStrengthOfSchedule] = useState([]);
   const [lastUpdated, setLastUpdated] = useState("");
-  const [currentWeek, setCurrentWeek] = useState(4);
-
-const [sortConfig, setSortConfig] = useState({ key: 'comprehensivePowerScore', direction: 'desc' });
-
-const handleSort = (key) => {
-  setSortConfig(prev => ({
-    key,
-    direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
-  }));
-};
-
-const sortedRankings = [...rankings].sort((a, b) => {
-  if (sortConfig.key === 'record') {
-    const winsA = a.wins;
-    const winsB = b.wins;
-    if (winsA !== winsB) {
-      return sortConfig.direction === 'desc' ? winsB - winsA : winsA - winsB;
-    }
-    return sortConfig.direction === 'desc' ? b.totalPointsFor - a.totalPointsFor : a.totalPointsFor - b.totalPointsFor;
-  }
-  
-  const aVal = a[sortConfig.key];
-  const bVal = b[sortConfig.key];
-  
-  if (sortConfig.direction === 'desc') {
-    return bVal - aVal;
-  }
-  return aVal - bVal;
-});
 
   const loadPowerRankings = async () => {
     if (!espn.leagueId || !espn.seasonId) {
@@ -5596,42 +4969,179 @@ const sortedRankings = [...rankings].sort((a, b) => {
     setError("");
 
     try {
-      // Calculate current week - use last COMPLETED week
-      const now = new Date();
-      const weekCalc = leagueWeekOf(now, seasonYear);
-      const currentInProgressWeek = weekCalc.week || 1;
-      const completedWeek = Math.max(1, currentInProgressWeek - 1);
-      setCurrentWeek(completedWeek);
+  // Fetch both matchup data AND team data to get proper team names
+  const [matchupResponse, teamResponse] = await Promise.all([
+    fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    }),
+    fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    })
+  ]);
 
-      // Fetch all data from Python backend
-      const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
-      const [rankingsRes, playoffRes, sosRes] = await Promise.all([
-        fetch(`${baseURL}/api/leagues/${config.id}/power-rankings/${espn.seasonId}?currentWeek=${completedWeek}`).then(r => r.json()),
-        fetch(`${baseURL}/api/leagues/${config.id}/playoff-odds/${espn.seasonId}?currentWeek=${completedWeek}&simulations=50000`).then(r => r.json()),
-        fetch(`${baseURL}/api/leagues/${config.id}/strength-of-schedule/${espn.seasonId}?currentWeek=${completedWeek}`).then(r => r.json())
-      ]);
+  if (!matchupResponse.ok || !teamResponse.ok) {
+    throw new Error(`ESPN API error: ${matchupResponse.status} / ${teamResponse.status}`);
+  }
 
-      if (rankingsRes.error) {
-        throw new Error(rankingsRes.error);
+  const [data, teamData] = await Promise.all([
+    matchupResponse.json(),
+    teamResponse.json()
+  ]);
+
+      // Get team names from the dedicated team data
+const teamNames = {};
+if (teamData.teams) {
+  teamData.teams.forEach(team => {
+    let name = "";
+    if (team.location && team.nickname) {
+      name = `${team.location} ${team.nickname}`;
+    } else if (team.name) {
+      name = team.name;
+    } else if (team.abbrev) {
+      name = team.abbrev;
+    } else {
+      name = `Team ${team.id}`;
+    }
+    teamNames[team.id] = name;
+  });
+}
+
+      // Initialize team stats
+      const teamStats = {};
+      Object.keys(teamNames).forEach(teamId => {
+        teamStats[teamId] = {
+          name: teamNames[teamId],
+          totalPoints: 0,
+          wins: 0,
+          losses: 0,
+          ties: 0,
+          games: 0,
+          medianWins: 0
+        };
+      });
+
+      // Group matchups by period and calculate stats
+      const byPeriod = {};
+      if (data.schedule) {
+        data.schedule.forEach(matchup => {
+          const period = matchup.matchupPeriodId;
+          if (period && period > 0) {
+            if (!byPeriod[period]) byPeriod[period] = [];
+            byPeriod[period].push(matchup);
+          }
+        });
       }
 
-      setRankings(rankingsRes.rankings || []);
-      
-      if (playoffRes.playoffOdds) {
-        setPlayoffOdds(playoffRes.playoffOdds);
-        setFinalStandingsOdds(playoffRes.playoffOdds.map(team => ({
-          name: team.teamName,
-          positions: team.positions
-        })));
-      }
+      // Process each completed week
+      Object.keys(byPeriod).forEach(period => {
+        const matchups = byPeriod[period];
+        const weekScores = [];
+        
+        // Collect all scores for median calculation
+        matchups.forEach(matchup => {
+          const homeScore = matchup.home?.totalPoints || 0;
+          const awayScore = matchup.away?.totalPoints || 0;
+          
+          if (homeScore > 0) weekScores.push(homeScore);
+          if (awayScore > 0) weekScores.push(awayScore);
+        });
+        
+        // Skip weeks with no scores
+        if (weekScores.length === 0) return;
+        
+        // Calculate median score for the week
+        weekScores.sort((a, b) => a - b);
+        const medianScore = weekScores.length % 2 === 0 
+          ? (weekScores[weekScores.length / 2 - 1] + weekScores[weekScores.length / 2]) / 2
+          : weekScores[Math.floor(weekScores.length / 2)];
 
-      setStrengthOfSchedule(sosRes.strengthOfSchedule || []);
+        // Update team stats
+        matchups.forEach(matchup => {
+          const homeId = matchup.home?.teamId;
+          const awayId = matchup.away?.teamId;
+          const homeScore = matchup.home?.totalPoints || 0;
+          const awayScore = matchup.away?.totalPoints || 0;
+          
+          if (homeId && homeScore > 0) {
+            teamStats[homeId].totalPoints += homeScore;
+            teamStats[homeId].games++;
+            
+            // Win/loss/tie
+            if (homeScore > awayScore) {
+              teamStats[homeId].wins++;
+            } else if (homeScore < awayScore) {
+              teamStats[homeId].losses++;
+            } else {
+              teamStats[homeId].ties++;
+            }
+            
+            // Median comparison
+            if (homeScore > medianScore) {
+              teamStats[homeId].medianWins++;
+            }
+          }
+          
+          if (awayId && awayScore > 0) {
+            teamStats[awayId].totalPoints += awayScore;
+            teamStats[awayId].games++;
+            
+            // Win/loss/tie
+            if (awayScore > homeScore) {
+              teamStats[awayId].wins++;
+            } else if (awayScore < homeScore) {
+              teamStats[awayId].losses++;
+            } else {
+              teamStats[awayId].ties++;
+            }
+            
+            // Median comparison
+            if (awayScore > medianScore) {
+              teamStats[awayId].medianWins++;
+            }
+          }
+        });
+      });
+
+      // Calculate power rankings
+      const powerRankings = Object.values(teamStats)
+        .filter(team => team.games > 0)
+        .map(team => {
+          const winningPct = team.games > 0 ? team.wins / team.games : 0;
+          const medianWinningPct = team.games > 0 ? team.medianWins / team.games : 0;
+          
+          const powerScore = (team.totalPoints * 2) + 
+                           (team.totalPoints * winningPct) + 
+                           (team.totalPoints * medianWinningPct);
+          
+          return {
+            name: team.name,
+            powerScore: Math.round(powerScore * 100) / 100,
+            totalPoints: Math.round(team.totalPoints * 100) / 100,
+            wins: team.wins,
+            losses: team.losses,
+            ties: team.ties,
+            winningPct: Math.round(winningPct * 1000) / 10,
+            medianWins: team.medianWins,
+            medianWinningPct: Math.round(medianWinningPct * 1000) / 10
+          };
+        })
+        .sort((a, b) => b.powerScore - a.powerScore);
+
+      setRankings(powerRankings);
       setLastUpdated(new Date().toLocaleString());
       setError("");
 
     } catch (err) {
       console.error('Failed to load power rankings:', err);
-      setError(err.message || "Failed to load power rankings");
+      setError("Failed to load power rankings: " + err.message);
     }
     
     setLoading(false);
@@ -5643,8 +5153,6 @@ const sortedRankings = [...rankings].sort((a, b) => {
     }
   }, [espn.seasonId, espn.leagueId]);
 
-  const remainingWeeks = Math.max(0, 14 - currentWeek);
-
   return (
     <Section title="Power Rankings" actions={
       <div style={{ display: "flex", gap: 8 }}>
@@ -5654,234 +5162,72 @@ const sortedRankings = [...rankings].sort((a, b) => {
       </div>
     }>
       <div className="card" style={{ padding: 16 }}>
-        <div className="mb-4 text-sm text-gray-600"><div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
-  <p><strong>Comprehensive Power Score:</strong> (Dominance × 0.8) + (Avg Score × 0.15) + (Avg Margin of Victory × 0.05)</p>
-  <p><strong>Simple Power Score:</strong> (Points For × 2) + (Points For × Win %) + (Points For × All-Play Win %)</p></div>
-</div>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+            Power Score = (Points Scored × 2) + (Points Scored × Winning %) + (Points Scored × Winning % if played vs median)
+          </div>
+        </div>
 
-        {error && <div style={{ color: "#dc2626", marginBottom: 16 }}>{error}</div>}
+        {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         
-        {loading && <div style={{ padding: 32, textAlign: "center", color: "#64748b" }}>Loading power rankings...</div>}
-        
-        {!loading && rankings.length > 0 && (
-          <>
-            {/* Power Rankings Table */}
-            <div className="power-rankings-table" style={{ overflowX: "auto", marginBottom: 32 }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-<th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
-    <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
-                    <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('comprehensivePowerScore')}>
-  Comprehensive {sortConfig.key === 'comprehensivePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('simplePowerScore')}>
-  Simple {sortConfig.key === 'simplePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('record')}>
-  Record {sortConfig.key === 'record' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsFor')}>
-  PF {sortConfig.key === 'totalPointsFor' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsAgainst')}>
-  PA {sortConfig.key === 'totalPointsAgainst' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedRankings.map((team, index) => (
-                    <tr key={team.teamName} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{index + 1}</td>
-                      <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
-                      <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold", color: "#16a34a" }}>
-                        {team.comprehensivePowerScore}
-                      </td>
-                      <td style={{ padding: "12px 8px", textAlign: "right", color: "#64748b" }}>
-                        {team.simplePowerScore}
-                      </td>
-                      <td style={{ padding: "12px 8px", textAlign: "center" }}>
-                        {team.wins}-{team.losses}{team.ties > 0 ? `-${team.ties}` : ''}
-                      </td>
-                      <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPointsFor}</td>
-                      <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPointsAgainst}</td>
-                    
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        {rankings.length > 0 ? (
+  <>
+    {/* Desktop table */}
+    <div className="power-rankings-table" style={{ overflowX: "auto" }}>
+  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <thead>
+      <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+        <th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
+        <th style={{ padding: "12px 8px", textAlign: "left" }}>Team Name</th>
+        <th style={{ padding: "12px 8px", textAlign: "right" }}>Power Score</th>
+        <th style={{ padding: "12px 8px", textAlign: "center" }}>Wins</th>
+        <th style={{ padding: "12px 8px", textAlign: "center" }}>Losses</th>
+        <th style={{ padding: "12px 8px", textAlign: "center" }}>Ties</th>
+        <th style={{ padding: "12px 8px", textAlign: "right" }}>Total Points</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rankings.map((team, index) => (
+        <tr key={team.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
+          <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{index + 1}</td>
+          <td style={{ padding: "12px 8px" }}>{team.name}</td>
+          <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold", color: "#16a34a" }}>
+            {team.powerScore}
+          </td>
+          <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.wins}</td>
+          <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.losses}</td>
+          <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.ties}</td>
+          <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPoints}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+          </div>
 
-            {/* Mobile view */}
-            <div className="power-rankings-mobile" style={{ marginBottom: 32 }}>
-              {rankings.map((team, index) => (
-                <div key={team.teamName} className="card" style={{ padding: 12, marginBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <div style={{ fontWeight: "bold", fontSize: 16 }}>#{index + 1} {team.teamName}</div>
-                    <div style={{ fontWeight: "bold", color: "#16a34a" }}>{team.comprehensivePowerScore}</div>
-                  </div>
-                 
+          {/* Mobile cards */}
+          <div className="power-rankings-mobile">
+            {rankings.map((team, index) => (
+              <div key={team.name} className="card" style={{ padding: 12, marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <div style={{ fontWeight: "bold", fontSize: 16 }}>#{index + 1} {team.name}</div>
+                  <div style={{ fontWeight: "bold", color: "#16a34a" }}>{team.powerScore}</div>
                 </div>
-              ))}
-            </div>
-
-            {/* Playoff Odds Table */}
-            <div style={{ marginTop: 32 }}>
-              <h3 style={{ marginBottom: 12 }}>Playoff Odds (prior to Week {currentWeek + 1} matchups)</h3>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                      <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
-		      <th style={{ padding: "12px 8px", textAlign: "right" }}>Playoff %</th>
-                      <th style={{ padding: "12px 8px", textAlign: "center" }}>Current Record</th>
-                      <th style={{ padding: "12px 8px", textAlign: "center" }}>Proj. Wins</th>
-                      <th style={{ padding: "12px 8px", textAlign: "center" }}>Proj. Losses</th>
-                      <th style={{ padding: "12px 8px", textAlign: "right" }}>Proj. PF</th>
-                      
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {playoffOdds.map(team => (
-                      <tr key={team.teamName} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
-                        <td style={{ 
-                          padding: "12px 8px", 
-                          textAlign: "right",
-                          fontWeight: "bold",
-                          color: team.playoffOdds > 75 ? "#16a34a" : team.playoffOdds > 25 ? "#f59e0b" : "#dc2626"
-                        }}>
-                          {team.playoffOdds}%
-                        </td>
-                        <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.currentRecord}</td>
-                        <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.projectedWins}</td>
-                        <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.projectedLosses}</td>
-                        <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.projectedPointsFor}</td>
-                        
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Final Standings Odds */}
-            <div style={{ marginTop: 32 }}>
-              <h3 style={{ marginBottom: 12 }}>Final Standings Odds</h3>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                      <th style={{ padding: "8px", textAlign: "left", position: "sticky", left: 0, background: "white", zIndex: 1 }}>Team</th>
-                      {finalStandingsOdds[0]?.positions.map((_, index) => (
-                        <th key={index} style={{ padding: "8px", textAlign: "center", minWidth: "45px" }}>
-                          {index + 1}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {finalStandingsOdds.map(team => (
-                      <tr key={team.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "8px", position: "sticky", left: 0, background: "white", zIndex: 1, fontWeight: 500 }}>
-                          {team.name}
-                        </td>
-                        {team.positions.map((pos, index) => (
-                          <td 
-                            key={index} 
-                            style={{ 
-                              padding: "8px", 
-                              textAlign: "center",
-                              backgroundColor: pos.probability > 15 
-                                ? `rgba(34, 197, 94, ${Math.min(pos.probability / 100, 0.7)})` 
-                                : pos.probability > 5
-                                ? `rgba(251, 191, 36, ${pos.probability / 100})`
-                                : 'transparent',
-                              fontWeight: pos.probability > 20 ? 'bold' : 'normal'
-                            }}
-                          >
-                            {pos.probability > 0 ? `${pos.probability}%` : '-'}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Strength of Schedule */}
-            {strengthOfSchedule.length > 0 && (
-              <div style={{ marginTop: 32 }}>
-                <h3 style={{ marginBottom: 12 }}>
-                  Remaining Strength of Schedule (Weeks {currentWeek + 1} to 14)
-                </h3>
-<div className="mb-4 text-sm text-gray-600">
-<div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
-  <p><strong>How it works:< br/></strong> Opponent Power Rank combines each team's win record, scoring strength, and head-to-head performance.< br/> Overall Difficulty averages three factors: your upcoming opponents' scoring averages, win percentages, and power rankings—all normalized against league-wide ranges.</p></div>
-</div>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                        <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
-                        <th style={{ padding: "12px 8px", textAlign: "right" }}>Opp. PPG</th>
-                        <th style={{ padding: "12px 8px", textAlign: "right" }}>Opp. Win %</th>
-                        <th style={{ padding: "12px 8px", textAlign: "right" }}>Opp. Power Rank</th>
-                        <th style={{ padding: "12px 8px", textAlign: "right" }}>Overall Difficulty</th>
-                        <th style={{ padding: "12px 8px", textAlign: "center" }}>Difficulty</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {strengthOfSchedule.map((team, index) => {
-                        const difficultyLevel = index < strengthOfSchedule.length / 3 ? "Hard" : 
-                                               index < (2 * strengthOfSchedule.length) / 3 ? "Medium" : "Easy";
-                        const difficultyColor = difficultyLevel === "Hard" ? "#fee2e2" : 
-                                               difficultyLevel === "Medium" ? "#fef3c7" : "#dcfce7";
-                        const textColor = difficultyLevel === "Hard" ? "#991b1b" : 
-                                         difficultyLevel === "Medium" ? "#92400e" : "#166534";
-                        
-                        return (
-                          <tr key={team.teamName} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                            <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
-                            <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.avgOpponentPPG}</td>
-                            <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.opponentWinPct}%</td>
-                            <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.avgOpponentPowerRank}</td>
-                            <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold" }}>
-                              {team.overallDifficulty}
-                            </td>
-                            <td style={{ padding: "12px 8px", textAlign: "center" }}>
-                              <span style={{
-                                padding: "4px 8px",
-                                borderRadius: "4px",
-                                fontSize: "11px",
-                                fontWeight: "bold",
-                                backgroundColor: difficultyColor,
-                                color: textColor
-                              }}>
-                                {difficultyLevel}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  {team.wins}W-{team.losses}L{team.ties > 0 ? `-${team.ties}T` : ''} • {team.totalPoints} pts
                 </div>
               </div>
-            )}
-          </>
-        )}
-
-        {!loading && rankings.length === 0 && !error && (
-          <div style={{ padding: 32, textAlign: "center", color: "#64748b" }}>
-            No power rankings data available yet. Make sure weekly snapshots have been captured.
+            ))}
+          </div>
+        </>
+        ) : !loading && !error && (
+          <div style={{ color: "#64748b", marginTop: 8 }}>
+            No data available yet.
           </div>
         )}
 
         {lastUpdated && (
-          <div style={{ marginTop: 16, fontSize: 12, color: "#64748b" }}>
-            Last updated: {lastUpdated} • Simulations: 50,000
+          <div style={{ marginTop: 12, fontSize: 12, color: "#64748b" }}>
+            Last updated: {lastUpdated}
           </div>
         )}
       </div>

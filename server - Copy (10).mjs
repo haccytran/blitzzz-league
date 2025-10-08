@@ -1,8 +1,6 @@
 // --- server.mjs (Version 4.0 - Complete PostgreSQL + All Features) ---
 import dotenv from "dotenv";
 dotenv.config();
-console.log('ESPN_S2 loaded:', !!process.env.ESPN_S2);
-console.log('SWID loaded:', !!process.env.SWID);
 
 import express from "express";
 import cors from "cors";
@@ -10,7 +8,6 @@ import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import pkg from 'pg';
-import cookieParser from 'cookie-parser';
 const { Pool } = pkg;
 
 const DEFAULT_LEAGUE_ID = process.env.VITE_ESPN_LEAGUE_ID || "";
@@ -22,7 +19,6 @@ const PORT = process.env.PORT || 8787;
 const ADMIN_PASSWORD = process.env.VITE_ADMIN_PASSWORD || "changeme";
 
 const app = express();
-app.use(cookieParser());
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
@@ -38,14 +34,6 @@ if (DATABASE_URL) {
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
   });
 
-// after: const pool = new Pool({ connectionString: DATABASE_URL, ssl: ... })
-pool.on('connect', (client) => {
-  client.query("SET search_path = public").catch((err) => {
-    console.error("Failed to set search_path to public", err);
-  });
-});
-
-
   // Initialize database tables
  async function initDB() {
   const client = await pool.connect();
@@ -59,76 +47,6 @@ pool.on('connect', (client) => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `);
-
-// ADD THESE NEW TABLES:
-    
-    // Weekly snapshots table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS weekly_snapshots (
-        id SERIAL PRIMARY KEY,
-        league_id VARCHAR(50) NOT NULL,
-        season_id VARCHAR(20) NOT NULL,
-        week_number INTEGER NOT NULL,
-        snapshot_data JSONB NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(league_id, season_id, week_number)
-      )
-    `);
-
-    // Team stats history table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS team_stats_history (
-        id SERIAL PRIMARY KEY,
-        league_id VARCHAR(50) NOT NULL,
-        season_id VARCHAR(20) NOT NULL,
-        week_number INTEGER NOT NULL,
-        team_id INTEGER NOT NULL,
-        team_name VARCHAR(200) NOT NULL,
-        points_for DECIMAL(10,2),
-        points_against DECIMAL(10,2),
-        wins INTEGER DEFAULT 0,
-        losses INTEGER DEFAULT 0,
-        ties INTEGER DEFAULT 0,
-        roster_data JSONB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(league_id, season_id, week_number, team_id)
-      )
-    `);
-
-    // League records table (for tracking all-time bests)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS league_records (
-        id SERIAL PRIMARY KEY,
-        league_id VARCHAR(50) NOT NULL,
-        record_type VARCHAR(100) NOT NULL,
-        record_category VARCHAR(50) NOT NULL,
-        team_name VARCHAR(200),
-        player_name VARCHAR(200),
-        value DECIMAL(10,2),
-        season_id VARCHAR(20),
-        week_number INTEGER,
-        set_date TIMESTAMP,
-        metadata JSONB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(league_id, record_type, record_category)
-      )
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_weekly_snapshots_lookup 
-        ON weekly_snapshots(league_id, season_id, week_number)
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_team_stats_lookup 
-        ON team_stats_history(league_id, season_id, team_id)
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_league_records_lookup 
-        ON league_records(league_id, record_category)
     `);
     
     // Add this additional constraint creation to ensure it exists
@@ -162,8 +80,6 @@ pool.on('connect', (client) => {
           ['{}', '{}', '{}']);
       }
 
-
-
       console.log('Database initialized successfully');
     } catch (err) {
       console.error('Database initialization error:', err);
@@ -174,163 +90,6 @@ pool.on('connect', (client) => {
 
   initDB().catch(console.error);
 }
-
-// =========================
-// Update Node.js Server with Fallback (Python stuff)
-// =========================
-
-const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:5001';
-
-async function callPythonService(endpoint, data) {
-  try {
-    const response = await fetch(`${PYTHON_SERVICE_URL}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-      timeout: 30000 // 30 second timeout
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Python service error: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error(`[PYTHON SERVICE] ${endpoint} failed:`, error.message);
-    throw error;
-  }
-}
-
-// Updated power rankings endpoint with fallback
-app.get("/api/leagues/:leagueId/power-rankings/:seasonId", async (req, res) => {
-  try {
-    const { leagueId, seasonId } = req.params;
-    const { currentWeek } = req.query;
-    
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    // Try Python service first
-    try {
-      console.log('[POWER RANKINGS] Attempting Python service...');
-      const result = await callPythonService('/power-rankings', {
-  leagueId: espnLeagueId,
-  year: parseInt(seasonId),
-  currentWeek: parseInt(currentWeek) || 4,
-  espn_s2: process.env.ESPN_S2 || req.cookies?.espn_s2,
-  swid: process.env.SWID || req.cookies?.swid
-});
-      
-      console.log('[POWER RANKINGS] Python service succeeded');
-      return res.json(result);
-    } catch (pythonError) {
-      console.log('[POWER RANKINGS] Python service failed, using JavaScript fallback');
-      
-      // Fallback to JavaScript implementation
-      const snapshots = await getSeasonSnapshots(espnLeagueId, seasonId);
-      if (snapshots.length === 0) {
-        return res.status(404).json({ error: "No historical data available" });
-      }
-      
-      const rankings = calculateDoritoStatsPowerRankings(snapshots, parseInt(currentWeek) || 4);
-      return res.json({ rankings });
-    }
-    
-  } catch (error) {
-    console.error('Power rankings calculation failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Updated playoff odds endpoint with fallback
-app.get("/api/leagues/:leagueId/playoff-odds/:seasonId", async (req, res) => {
-  try {
-    const { leagueId, seasonId } = req.params;
-    const { currentWeek, simulations } = req.query;
-    
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    // Try Python service first
-    try {
-      console.log('[PLAYOFF ODDS] Attempting Python service...');
-      const result = await callPythonService('/playoff-odds', {
-        leagueId: espnLeagueId,
-  year: parseInt(seasonId),
-  currentWeek: parseInt(currentWeek) || 4,
-  espn_s2: process.env.ESPN_S2 || req.cookies?.espn_s2,
-  swid: process.env.SWID || req.cookies?.swid
-});
-      
-      console.log('[PLAYOFF ODDS] Python service succeeded');
-      return res.json(result);
-    } catch (pythonError) {
-      console.log('[PLAYOFF ODDS] Python service failed, using JavaScript fallback');
-      
-      // Fallback to JavaScript implementation
-      const odds = await calculatePlayoffOdds({
-        leagueId: espnLeagueId,
-        seasonId,
-        currentWeek: parseInt(currentWeek) || 4,
-        numSimulations: parseInt(simulations) || 10000,
-        req
-      });
-      
-      return res.json({ playoffOdds: odds });
-    }
-    
-  } catch (error) {
-    console.error('Playoff odds calculation failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-
-app.get('/api/leagues/:leagueId/season-records', async (req, res) => {
-  console.log('*** SEASON RECORDS ROUTE HIT ***', req.params, req.query);
-  try {
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
-    
-    const response = await fetch(`http://localhost:5001/season-records?leagueId=${espnLeagueId}`);
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    console.error('Season records error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/leagues/:leagueId/positional-records', async (req, res) => {
-  try {
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
-    
-    const response = await fetch(`http://localhost:5001/positional-records?leagueId=${espnLeagueId}`);
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/test-route', (req, res) => {
-  res.json({ message: 'Route working!' });
-});
 
 // =========================
 // Data Storage Functions
@@ -440,10 +199,8 @@ async function saveLeagueData(data, leagueId = 'default') {
 // =========================
 
 // Add this simple endpoint for keep-alive pings
-app.get('/api/health', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  await pool.query('SELECT 1');
-  res.json({ ok: true });
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // MAIN LEAGUE DATA ROUTE - PUT THIS FIRST
@@ -732,43 +489,6 @@ app.delete("/api/leagues/:leagueId/weekly", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Failed to delete weekly challenge:', error);
     res.status(500).json({ error: "Failed to delete weekly challenge" });
-  }
-});
-
-// Luck Index
-app.post("/api/leagues/:leagueId/luck-index/:seasonId", async (req, res) => {
-  try {
-    const { leagueId, seasonId } = req.params;
-    const { currentWeek } = req.query;
-
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    const espn_s2 = req.cookies?.espn_s2;
-    const swid = req.cookies?.swid;
-
-    const response = await fetch('http://localhost:5001/luck-index', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        leagueId: espnLeagueId,
-        year: seasonId,
-        currentWeek: parseInt(currentWeek) || 1,
-        espn_s2,
-        swid
-      })
-    });
-
-    const data = await response.json();
-    res.json(data);
-
-  } catch (error) {
-    console.error('Luck index failed:', error);
-    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1216,167 +936,6 @@ app.get("/api/league-data/rosters", async (req, res) => {
   }
 });
 
-// Capture weekly snapshot endpoint
-app.post("/api/leagues/:leagueId/snapshot", requireAdmin, async (req, res) => {
-  try {
-    const { seasonId, weekNumber } = req.body;
-    const { leagueId } = req.params;
-    
-    if (!seasonId || !weekNumber) {
-      return res.status(400).json({ error: "Season ID and week number required" });
-    }
-
-    // Map frontend league ID to ESPN league ID
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-
-    const snapshot = await captureWeeklySnapshot({
-      leagueId: espnLeagueId,
-      seasonId,
-      weekNumber,
-      req
-    });
-
-    res.json({ success: true, snapshot });
-  } catch (error) {
-    console.error('Snapshot capture failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get weekly snapshot
-app.get("/api/leagues/:leagueId/snapshot/:seasonId/:weekNumber", async (req, res) => {
-  try {
-    const { leagueId, seasonId, weekNumber } = req.params;
-    
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    const snapshot = await getWeeklySnapshot(espnLeagueId, seasonId, parseInt(weekNumber));
-    
-    if (snapshot) {
-      res.json(snapshot);
-    } else {
-      res.status(404).json({ error: "Snapshot not found" });
-    }
-  } catch (error) {
-    console.error('Failed to retrieve snapshot:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get all snapshots for a season
-app.get("/api/leagues/:leagueId/snapshots/:seasonId", async (req, res) => {
-  try {
-    const { leagueId, seasonId } = req.params;
-    
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    const snapshots = await getSeasonSnapshots(espnLeagueId, seasonId);
-    res.json({ snapshots });
-  } catch (error) {
-    console.error('Failed to retrieve snapshots:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get team history
-app.get("/api/leagues/:leagueId/team-history/:seasonId/:teamId", async (req, res) => {
-  try {
-    const { leagueId, seasonId, teamId } = req.params;
-    
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    const history = await getTeamHistory(espnLeagueId, seasonId, parseInt(teamId));
-    res.json({ history });
-  } catch (error) {
-    console.error('Failed to retrieve team history:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-
-// Strength of schedule - PROXY TO PYTHON
-app.get("/api/leagues/:leagueId/strength-of-schedule/:seasonId", async (req, res) => {
-  try {
-    const { leagueId, seasonId } = req.params;
-    const { currentWeek } = req.query;
-    
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    // Get ESPN credentials
-    const espn_s2 = req.cookies?.espn_s2;
-    const swid = req.cookies?.swid;
-    
-    // Call Python service
-    const response = await fetch('http://localhost:5001/strength-of-schedule', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        leagueId: espnLeagueId,
-        year: seasonId,
-        currentWeek: parseInt(currentWeek) || 4,
-        espn_s2,
-        swid
-      })
-    });
-    
-    const data = await response.json();
-    res.json(data);
-    
-  } catch (error) {
-    console.error('SOS calculation failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Debug endpoint to check snapshots
-app.get("/api/debug/snapshots/:leagueId/:seasonId", async (req, res) => {
-  try {
-    const { leagueId, seasonId } = req.params;
-    
-    if (DATABASE_URL) {
-      const client = await pool.connect();
-      const result = await client.query(
-        'SELECT week_number, created_at FROM weekly_snapshots WHERE league_id = $1 AND season_id = $2 ORDER BY week_number',
-        [leagueId, seasonId]
-      );
-      client.release();
-      res.json({ 
-        found: result.rows.length,
-        weeks: result.rows 
-      });
-    } else {
-      res.json({ error: "Using file system, check data folder" });
-    }
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // === WAIVERS ===
 app.post("/api/league-data/waivers", requireAdmin, async (req, res) => {
   try {
@@ -1561,33 +1120,7 @@ async function savePolls(pollsState) {
   console.log('Polls keys:', Object.keys(pollsState.polls || {}));
   
   if (DATABASE_URL) {
-    try {
-      const client = await pool.connect();
-      
-      // Delete any duplicate/empty rows first
-      await client.query('DELETE FROM polls_data WHERE id > 1');
-      
-      // Update the first row (which has your existing data)
-      const updateResult = await client.query(
-        'UPDATE polls_data SET polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP WHERE id = 1',
-        [JSON.stringify(pollsState.polls || {}), JSON.stringify(pollsState.votes || {}), JSON.stringify(pollsState.teamCodes || {})]
-      );
-      
-      // If no row exists with id=1, insert it
-      if (updateResult.rowCount === 0) {
-        await client.query(
-          'INSERT INTO polls_data (id, polls, votes, team_codes) VALUES (1, $1, $2, $3) ON CONFLICT (id) DO UPDATE SET polls = $1, votes = $2, team_codes = $3, updated_at = CURRENT_TIMESTAMP',
-          [JSON.stringify(pollsState.polls || {}), JSON.stringify(pollsState.votes || {}), JSON.stringify(pollsState.teamCodes || {})]
-        );
-      }
-      
-      client.release();
-      console.log('Saved to database');
-    } catch (err) {
-      console.error('Database polls save error:', err);
-      // Fall back to file system
-      await writeJson("polls.json", pollsState);
-    }
+    // ... existing database code
   } else {
     console.log('Saving to file system...');
     await writeJson("polls.json", pollsState);
@@ -1722,7 +1255,7 @@ app.post("/api/polls/create", async (req, res) => {
 
 app.post("/api/polls/close", async (req, res) => {
   const adminHeader = req.header("x-admin");
-  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
+  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
   if (!validPasswords.includes(adminHeader)) {
     return res.status(401).send("Unauthorized");
   }
@@ -1738,7 +1271,7 @@ app.post("/api/polls/close", async (req, res) => {
 
 app.post("/api/polls/delete", async (req, res) => {
   const adminHeader = req.header("x-admin");
-  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
+  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
   if (!validPasswords.includes(adminHeader)) {
     return res.status(401).send("Unauthorized");
   }
@@ -1756,7 +1289,7 @@ app.post("/api/polls/delete", async (req, res) => {
 
 app.post("/api/polls/edit", async (req, res) => {
   const adminHeader = req.header("x-admin");
-  const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
+  const validPasswords = [ADMIN_PASSWORD, "sculpin_password", "blitzzz_password"];
   if (!validPasswords.includes(adminHeader)) {
     return res.status(401).send("Unauthorized");
   }
@@ -1828,17 +1361,9 @@ function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
 function normalizeEpoch(x){
   if (x == null) return Date.now();
   if (typeof x === "string") x = Number(x);
-  
-  // Handle very large timestamps (likely already in milliseconds but incorrect)
-  if (x > 1e15) return Date.now(); // Use current time for corrupted timestamps
-  
-  // Check if it's already in milliseconds (13 digits) vs seconds (10 digits)
-  if (x > 1e12) return x; // Already milliseconds
-  if (x > 1e9 && x < 1e12) return x * 1000; // Convert seconds to milliseconds
-  
+  if (x > 0 && x < 1e11) return x * 1000;
   return x;
 }
-
 function isWithinWaiverWindow(dateLike){
   const z = new Date(dateLike);
   if (z.getDay() !== 4) return false; // Thursday
@@ -1955,8 +1480,8 @@ function isGenuineAddWithDraftContext(move, series, draftPicks, seasonYear) {
 }
 
 const isOwnerAtSomeSP = (series, pid, teamId, sp) => {
-  const candidates = [sp, sp-1, sp+1].filter(x => x>=1 && x < series.roster.length);
-  return candidates.some(s => series.roster?.[s]?.[teamId]?.has(pid));
+  const candidates = [sp, sp-1, sp+1].filter(x => x>=1 && x < series.length);
+  return candidates.some(s => series?.[s]?.[teamId]?.has(pid));
 };
 
 // Replace your validateTransactions function with this ChatGPT-inspired approach:
@@ -1968,8 +1493,8 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
   let validTransactions = transactions.filter(t => t.method !== "CANCEL");
   console.log(`[DEBUG] After CANCEL filtering: ${validTransactions.length} transactions`);
   
-  // Step 2: Build paired transactions by txId
-  const txPairsByKey = new Map();
+  // Step 2: Build paired transactions by txId (keeps ADD+DROP together)
+  const txPairsByKey = new Map(); // key: `${txId}|${teamId}`
   
   for (const r of validTransactions) {
     const txId = r.eventId || `${r.teamIdRaw || r.teamId}-${Math.floor(new Date(r.date).getTime() / 1000)}`;
@@ -1983,106 +1508,90 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
         method: r.method, 
         sp: r.sp || weekBucket(r.date, seasonId).week,
         teamId: r.teamIdRaw || r.teamId,
-        teamIdRaw: r.teamIdRaw || r.teamId,
-        team: r.team,
+        teamIdRaw: r.teamIdRaw || r.teamId, // PRESERVE THIS
+        team: r.team, // PRESERVE TEAM NAME
         add: null, 
         drop: null,
-        originalTransaction: r,
-        bidAmount: r.bidAmount,
-        executionType: r.executionType
+        originalTransaction: r // PRESERVE ORIGINAL FOR REFERENCE
       };
       txPairsByKey.set(key, rec);
     }
     
-    if (r.action === "ADD") rec.add = r.playerId;
+    if (r.action === "ADD")  rec.add = r.playerId;
     if (r.action === "DROP") rec.drop = r.playerId;
   }
   
   const txPairs = [...txPairsByKey.values()].filter(x => x.add || x.drop);
   console.log(`[DEBUG] Built ${txPairs.length} transaction pairs`);
   
-  // Build a map of all drops to detect later drops of added players
-  const allDrops = new Map(); // playerId -> [{teamId, timestamp}, ...]
-  for (const rec of txPairs) {
-    if (rec.drop) {
-      if (!allDrops.has(rec.drop)) allDrops.set(rec.drop, []);
-      allDrops.get(rec.drop).push({ teamId: rec.teamId, ts: rec.ts });
-    }
+  // Step 3: Build roster owner map for scoring periods we need (only for PROCESS adds)
+   
+    
+  // Step 4: Keep only winners for waivers; keep all EXECUTEs; keep all standalone drops
+const kept = [];
+let processWinners = 0;
+let processLosers = 0;
+
+for (const rec of txPairs) {
+  // Always keep EXECUTE transactions (Free Agents)
+  if (rec.method === "EXECUTE") {
+    kept.push(rec);
+    continue;
   }
   
-  // Process transactions
-  const kept = [];
-  let processWinners = 0;
-  let processLosers = 0;
-  
-  for (const rec of txPairs) {
-    // Always keep EXECUTE transactions (Free Agents)
-    if (rec.method === "EXECUTE") {
-      kept.push(rec);
-      continue;
-    }
-    
-    // Always keep standalone drops
+  // Handle PROCESS transactions (Waivers)
+  if (rec.method === "PROCESS") {
+    // If it's a standalone drop (no add), always keep it
     if (rec.drop && !rec.add) {
       kept.push(rec);
+      console.log(`[DEBUG] Keeping standalone PROCESS drop: Team ${rec.teamId} drops player ${rec.drop}`);
       continue;
     }
     
-    // For PROCESS transactions with adds
-    if (rec.method === "PROCESS" && rec.add) {
-      // Check roster to verify if player was actually added
-      const onRoster = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
-      
-      // Check if this player was dropped by the same team later
-      const laterDropped = allDrops.get(rec.add)?.some(drop => 
-        drop.teamId === rec.teamId && drop.ts > rec.ts
-      ) || false;
-      
-      // For waiver claims with bid amounts
-      if (rec.bidAmount !== null && rec.bidAmount !== undefined) {
-        // If it has a bid amount, it's likely a real waiver claim
-        // Keep it if: on roster OR was later dropped by same team
-        if (onRoster || laterDropped) {
-          kept.push(rec);
-          processWinners++;
-          console.log(`[DEBUG] Waiver winner (bid $${rec.bidAmount}): Team ${rec.teamId} gets player ${rec.add}${laterDropped ? ' (later dropped)' : ''}`);
-        } else {
-          processLosers++;
-          console.log(`[DEBUG] Failed waiver bid: Team ${rec.teamId} bid $${rec.bidAmount} for ${rec.add} but didn't get them`);
-        }
+    // If it has an add, validate it against rosters
+    if (rec.add) {
+      const winner = isOwnerAtSomeSP(series, rec.add, rec.teamId, rec.sp);
+      if (winner) {
+        kept.push(rec);
+        processWinners++;
+        console.log(`[DEBUG] Waiver winner: Team ${rec.teamId} gets player ${rec.add} in SP ${rec.sp}`);
       } else {
-        // No bid amount - use roster check
-        if (onRoster || laterDropped) {
-          kept.push(rec);
-          processWinners++;
-        } else {
-          processLosers++;
-          console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp}`);
-        }
+        processLosers++;
+        console.log(`[DEBUG] No roster match for PROCESS add pid=${rec.add}, team=${rec.teamId}, sp=${rec.sp} (filtered out)`);
       }
       continue;
     }
     
-    // Keep any other transactions
+    // If it's a PROCESS transaction with only a drop or other edge case
     kept.push(rec);
   }
   
-  console.log(`[DEBUG] Waiver processing: ${processWinners} winners, ${processLosers} losers filtered out`);
+  // Handle DRAFT transactions (keep all)
+  if (rec.method === "DRAFT") {
+    kept.push(rec);
+  }
+}
+
+// Add this after line ~1440 (after txPairs are built)
+const standaloneDrops = txPairs.filter(tx => tx.drop && !tx.add);
+console.log(`[DEBUG] Found ${standaloneDrops.length} standalone drop transactions:`);
+standaloneDrops.forEach(drop => {
+  console.log(`[DEBUG] - Team ${drop.teamId} (${drop.team}) drops player ${drop.drop}, method: ${drop.method}`);
+});
   
-  // Expand back to individual transactions
+  // Step 5: Expand back out to individual ADD/DROP transactions - PRESERVE ALL ORIGINAL DATA
   const finalTransactions = [];
   
   for (const r of kept) {
     const baseTransaction = {
       date: new Date(r.ts),
-      teamIdRaw: r.teamIdRaw,
-      teamId: r.teamId,
-      team: r.team,
+      teamIdRaw: r.teamIdRaw, // PRESERVE THIS
+      teamId: r.teamId, // PRESERVE THIS
+      team: r.team, // PRESERVE TEAM NAME
       method: r.method,
       eventId: r.txId,
       src: r.originalTransaction.src || "validated",
-      playerName: null,
-      bidAmount: r.bidAmount
+      playerName: null // Will be filled later
     };
     
     if (r.add) {
@@ -2102,27 +1611,27 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
     }
   }
   
-  // Final deduplication
+  // Step 6: Final deduplication for truly identical rows
   const seen = new Set();
   const dedupedFinal = finalTransactions.filter(r => {
     const k = `${r.date.getTime()}|${r.teamIdRaw}|${r.playerId}|${r.action}|${r.method}`;
-    if (seen.has(k)) return false;
+    if (seen.has(k)) {
+      console.log(`[DEBUG] Removing duplicate: ${r.action} ${r.playerId} by team ${r.teamIdRaw}`);
+      return false;
+    }
     seen.add(k);
     return true;
   });
   
-  console.log(`[DEBUG] Final validation results: ${dedupedFinal.length} transactions`);
-  
-  // Debug logging for 4th Gen And Goal
-  const fourthGenTransactions = dedupedFinal.filter(t => t.team === "4th Gen And Goal");
-  console.log(`[DEBUG] 4th Gen And Goal transactions: ${fourthGenTransactions.length}`);
-  fourthGenTransactions.forEach(t => {
-    console.log(`  - ${t.action} ${t.playerId} on ${t.date.toISOString()} via ${t.method}${t.bidAmount ? ` ($${t.bidAmount})` : ''}`);
-  });
+  console.log(`[DEBUG] Final validation results:`);
+  console.log(`- Transaction pairs processed: ${txPairs.length}`);
+  console.log(`- Pairs kept after waiver verification: ${kept.length}`);
+  console.log(`- Final individual transactions: ${dedupedFinal.length}`);
+  console.log(`- Final ADDs: ${dedupedFinal.filter(t => t.action === "ADD").length}`);
+  console.log(`- Final DROPs: ${dedupedFinal.filter(t => t.action === "DROP").length}`);
   
   return dedupedFinal;
 }
-
 // =========================
 // ESPN proxy
 // =========================
@@ -2210,25 +1719,6 @@ app.get("/api/espn", async (req, res) => {
 const REPORT_FILE = "report.json";
 const teamName = (t) => (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`);
 
-function posIdToName(id) {
-  const map = { 
-    0: "QB", 1: "TQB", 2: "RB", 3: "WR", 4: "WR",
-    5: "WR/TE", 6: "TE", 16: "DEF", 17: "K"
-  };
-  return map?.[id] || "—";
-}
-
-function slotIdToName(lineupSlotCounts) {
-  const map = {
-    0: "QB", 2: "RB", 3: "RB/WR", 4: "WR",
-    6: "TE", 16: "D/ST", 17: "K", 20: "Bench",
-    21: "IR", 23: "FLEX"
-  };
-  return new Proxy(map, {
-    get: (target, prop) => target[prop] || "—"
-  });
-}
-
 function inferMethod(typeStr, typeNum, t, it){
   const s = String(typeStr ?? "").toUpperCase();
   const ts = normalizeEpoch(t?.processDate ?? t?.proposedDate ?? t?.executionDate ?? t?.date ?? Date.now());
@@ -2247,48 +1737,6 @@ function extractMoves(json, src="tx"){
   console.log(`[DEBUG] extractMoves called with src="${src}", data keys:`, Object.keys(json || {}));
   console.log(`[DEBUG] Transaction count:`, json?.transactions?.length || 0);
   
-// COMPREHENSIVE DEBUG - CHECK ALL UNDERACHIEVERS TRANSACTIONS
-  if (json?.transactions) {
-    const underachieverTransactions = json.transactions.filter(t => {
-      // Check if any team ID matches The Underachievers (look for team 19 based on your data)
-      return t.teamId === 19 || t.toTeamId === 19 || t.fromTeamId === 19 ||
-             (t.items && t.items.some(item => item.toTeamId === 19 || item.fromTeamId === 19));
-    });
-    
-    if (underachieverTransactions.length > 0) {
-      console.log(`[DEBUG] Found ${underachieverTransactions.length} Underachievers transactions in ${src}:`);
-      underachieverTransactions.forEach((t, i) => {
-        const date = new Date((t.processDate || t.proposedDate || t.executionDate || t.date) * 1000);
-        console.log(`[DEBUG] Underachievers Transaction ${i}:`);
-        console.log(`  Date: ${date.toISOString()}`);
-        console.log(`  Type: ${t.type}, ExecutionType: ${t.executionType}`);
-        console.log(`  TeamId: ${t.teamId}, ToTeam: ${t.toTeamId}, FromTeam: ${t.fromTeamId}`);
-        console.log(`  Items: ${t.items?.length || 0}`);
-        
-        if (t.items) {
-          t.items.forEach((item, idx) => {
-            console.log(`    Item ${idx}: playerId=${item.playerId}, type=${item.type}, toTeam=${item.toTeamId}, fromTeam=${item.fromTeamId}`);
-          });
-        }
-      });
-    }
-    
-    // Also check for Tyler Allgeier specifically (playerId 4373626)
-    const allgeierTransactions = json.transactions.filter(t => {
-      return t.playerId === 4373626 || 
-             (t.items && t.items.some(item => item.playerId === 4373626));
-    });
-    
-    if (allgeierTransactions.length > 0) {
-      console.log(`[DEBUG] Found Tyler Allgeier transactions in ${src}:`);
-      allgeierTransactions.forEach(t => {
-        const date = new Date((t.processDate || t.proposedDate || t.executionDate || t.date) * 1000);
-        console.log(`  Date: ${date.toISOString()}, Team: ${t.teamId}, Type: ${t.type}`);
-      });
-    }
-  }
-  // END NEW DEBUG
-
   if (json?.transactions?.length > 0) {
     console.log(`[DEBUG] Sample transaction:`, JSON.stringify(json.transactions[0], null, 2));
   }
@@ -2302,34 +1750,10 @@ function extractMoves(json, src="tx"){
     (json?.events && typeof json.events === "object" ? Object.values(json.events) : null) ||
     (json && typeof json === "object" && !Array.isArray(json) ? Object.values(json) : null) ||
     [];
-
-  // ADD DEBUG LOGGING FOR SEP 24 TRANSACTIONS - MOVED TO CORRECT LOCATION
-  if (src === "tx") {
-    for (const t of rows) {
-      const processDate = t.processDate || t.proposedDate || t.executionDate || t.date || t.timestamp;
-      if (processDate) {
-        const when = new Date(normalizeEpoch(processDate));
-        const dateStr = when.toISOString();
-        
-        if (dateStr.includes('2025-09-24') && (dateStr.includes('01:03') || dateStr.includes('05:03'))) {
-          console.log('=== ESPN Sep 24 Transaction Debug ===');
-          console.log('Transaction date string:', dateStr);
-          console.log('Full transaction:', JSON.stringify(t, null, 2));
-          console.log('=== End Debug ===');
-        }
-      }
-    }
-  }
-
+    
   const out = [];
   for (const t of rows){
     const when = new Date(normalizeEpoch(t.processDate ?? t.proposedDate ?? t.executionDate ?? t.date ?? t.timestamp ?? Date.now()));
-
-// ADD THIS DEBUG
-if (src === "tx") {
-  const rawDate = t.processDate ?? t.proposedDate ?? t.executionDate ?? t.date ?? t.timestamp;
-  console.log(`[DEBUG] Raw timestamp: ${rawDate}, Normalized: ${normalizeEpoch(rawDate)}, Final date: ${when.toISOString()}`);
-}
     const eventId = t.id ?? t.transactionId ?? t.proposedTransactionId ?? t.proposalId ?? null;
     const items = Array.isArray(t.items) ? t.items
                : Array.isArray(t.messages) ? t.messages
@@ -2376,15 +1800,15 @@ waiverProcessDate: t?.waiverProcessDate || it?.waiverProcessDate
       }
       
       if (/DROP/i.test(String(iTypeStr)) || [2].includes(iTypeNum)) {
-  const fromTeamId = it.fromTeamId ?? t.fromTeamId ?? it.teamId ?? null;
-  if (fromTeamId != null) {
-    out.push({
-      teamId: fromTeamId, date:when, action:"DROP", method, src, 
-      eventId: it.id ?? eventId ?? null,
-      playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
-    });
-  }
-}
+        const fromTeamId = it.fromTeamId ?? t.fromTeamId ?? it.teamId ?? null;
+        if (fromTeamId != null) {
+          out.push({
+            teamId: fromTeamId, date:when, action:"DROP", method:"FA", src, 
+            eventId: it.id ?? eventId ?? null,
+            playerId: pickPlayerId(it), playerName: pickPlayerName(it,t)
+          });
+        }
+      }
 
 // Handle DRAFT picks separately (for Recent Activity, but they won't count toward dues)
 if (/DRAFT/i.test(String(iTypeStr)) || String(iTypeStr) === "DRAFT") {
@@ -2399,18 +1823,6 @@ if (/DRAFT/i.test(String(iTypeStr)) || String(iTypeStr) === "DRAFT") {
 }
     }
   }
-// Add this right after you build the `out` array, before the return statement:
-if (src === "tx") {
-  const sep24Transactions = out.filter(move => {
-    const dateStr = move.date.toISOString();
-    return dateStr.includes('2025-09-24') && dateStr.includes('08:03');
-  });
-  
-  if (sep24Transactions.length > 0) {
-    console.log(`[DEBUG] Sep 24 08:03 extracted moves (${sep24Transactions.length}):`, 
-      sep24Transactions.map(m => `${m.action} ${m.playerId} by team ${m.teamId}`));
-  }
-}
 
 // Add this at the end of extractMoves function, before return
 console.log(`[DEBUG] extractMoves from ${src}: ${out.filter(o => o.action === "ADD").length} adds, ${out.filter(o => o.action === "DROP").length} drops`);
@@ -2463,12 +1875,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const all = [];
   for (let sp=1; sp<=maxSp; sp++){
-    // ADD DEBUG CODE HERE
-    if (sp === 3 || sp === 4) {
-      console.log(`[DEBUG] ===== CHECKING SCORING PERIOD ${sp} =====`);
-    }
-    
-    onProgress?.(sp, maxSp, "Reading ESPN activity…");
+     onProgress?.(sp, maxSp, "Reading ESPN activity…");
     try { 
       const j = await espnFetch({ leagueId, seasonId, view:"mTransactions2", scoringPeriodId: sp, req, requireCookie:true }); 
       all.push(...extractMoves(j,"tx").map(e => ({ ...e, sp }))); 
@@ -2519,12 +1926,7 @@ async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress
   }
   
   console.log(`[DEBUG] Roster series built for ${maxSp} weeks`);
-console.log(`[DEBUG] Series structure:`, { 
-  length: series.length, 
-  hasData: Object.keys(series).length > 0,
-  sample: series[1] ? Object.keys(series[1]) : 'no data' 
-});
-return { roster: series }; // <- ADD THIS WRAPPER
+  return series;
 }
 
 const isOnRoster = (series, sp, teamId, playerId) => !!(playerId && series?.[sp]?.[teamId]?.has(playerId));
@@ -2649,25 +2051,13 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
-// Add this right after the line: const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
-
-console.log('[DEBUG] Team ID to Name mapping:', idToName);
-
 // Get draft data for baseline
 const draftPicks = await fetchDraftData({ leagueId, seasonId, req });
   const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
   console.log(`[DEBUG] Total moves extracted from all sources: ${all.length}`);
   console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
   
-
-console.log('[DEBUG] About to build roster series');
   const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
-console.log('[DEBUG] Roster building completed:', {
-  rosterExists: !!series.roster,
-  rosterLength: series.roster?.length || 0,
-  firstFewEntries: series.roster?.slice(0, 3)
-});
-
   const deduped = dedupeMoves(all).map(e => ({ 
     ...e, 
     teamIdRaw: e.teamId, 
@@ -2731,60 +2121,22 @@ for (const r of [...allAdds, ...drops]) {  // â† Use allAdds instead of bil
   if (!r.player && r.playerId) r.player = pmap[r.playerId] || `#${r.playerId}`;
 } 
 
-// Detect if this is a FAAB league by checking if any waiver has a bid amount > 0
-const isFAABLeague = [...allAdds, ...drops].some(r => 
-  r.method === "PROCESS" && r.bidAmount != null && r.bidAmount > 0
-);
-console.log(`[DEBUG] FAAB League detected: ${isFAABLeague}`);
-
-// First, identify paired transactions
-const pairedTransactions = new Set();
-[...allAdds, ...drops].forEach((transaction, index, allTransactions) => {
-  if (transaction.method === "EXECUTE") {
-    // Check if there's a matching transaction (opposite action, same team, same time)
-    const hasMatch = allTransactions.some(other => 
-      other.team === transaction.team &&
-      other.action !== transaction.action &&
-      Math.abs(new Date(other.date).getTime() - new Date(transaction.date).getTime()) < 1000 && // Within 1 second
-      other.method === "EXECUTE"
-    );
-    if (hasMatch) {
-      const key = `${transaction.team}-${new Date(transaction.date).getTime()}`;
-      pairedTransactions.add(key);
-    }
-  }
-});
-
 let rawMoves = [...allAdds, ...drops].map(r => {
     const wb = weekBucket(r.date, seasonId);
-    const transactionKey = `${r.team}-${new Date(r.date).getTime()}`;
-    const isPaired = pairedTransactions.has(transactionKey) && r.method === "EXECUTE";
-    
-    // Format method with bid amount for waivers
-let displayMethod = r.method === "PROCESS" ? "Waivers" : r.method === "EXECUTE" ? "Free Agent" : r.method;
-let bidAmount = null;
-
-// Only include bid amounts if this is a FAAB league
-if (displayMethod === "Waivers" && isFAABLeague) {
-  bidAmount = r.bidAmount != null ? r.bidAmount : 0;
-} else if (displayMethod === "Waivers" && !isFAABLeague) {
-  bidAmount = undefined; // Use undefined instead of null
-}    
     return {
       date: fmtPT(r.date),
       ts: new Date(r.date).getTime(),
       week: wb.week,
       range: weekRangeLabelDisplay(wb.start),
       team: r.team,
-      player: r.player || (r.playerId ? `#${r.playerId}` : "—"),
+      player: r.player || (r.playerId ? `#${r.playerId}` : "â€”"),
       action: r.action,
-      method: displayMethod,
-      isPaired: isPaired,
+      method: r.method === "PROCESS" ? "Waivers" : r.method === "EXECUTE" ? "Free Agent" : r.method,
       source: r.src,
-      playerId: r.playerId || null,
-      bidAmount: r.bidAmount // Keep raw amount too if needed
+      playerId: r.playerId || null
     };
-  }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));  
+  }).sort((a,b)=> (a.week - b.week) || (new Date(a.date) - new Date(b.date)));
+  
   const DEDUPE_WINDOW_MS = 5 * 60 * 1000; // Increased to 5 minutes
   const dedupedMoves = [];
   const lastByKey = new Map();
@@ -2995,44 +2347,6 @@ app.get("/api/report/current-season", async (req, res) => {
   }
 });
 
-// Weekly awards (Trophy Case)
-app.get("/api/leagues/:leagueId/weekly-awards/:seasonId", async (req, res) => {
-  try {
-    const { leagueId, seasonId } = req.params;
-    const { week } = req.query;
-
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-
-    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    // Get ESPN credentials
-    const espn_s2 = req.cookies?.espn_s2;
-    const swid = req.cookies?.swid;
-
-    const response = await fetch('http://localhost:5001/weekly-awards', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        leagueId: espnLeagueId,
-        year: seasonId,
-        week: parseInt(week) || 1,
-        espn_s2,
-        swid
-      })
-    });
-
-    const data = await response.json();
-    res.json(data);
-
-  } catch (error) {
-    console.error('Weekly awards failed:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.post("/api/report/update", async (req, res) => {
   const adminHeader = req.header("x-admin");
 const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];
@@ -3088,536 +2402,6 @@ if (!validPasswords.includes(adminHeader)) {
   }
 });
 
-async function captureWeeklySnapshot({ leagueId, seasonId, weekNumber, req }) {
-  console.log(`[SNAPSHOT] Capturing Week ${weekNumber} for league ${leagueId}, season ${seasonId}`);
-  
-  try {
-    // Fetch all necessary data for this week
-    const [teamData, matchupData, boxscoreData, rosterData] = await Promise.all([
-      espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false }),
-      espnFetch({ leagueId, seasonId, view: "mMatchup", scoringPeriodId: weekNumber, req, requireCookie: false }),
-      espnFetch({ leagueId, seasonId, view: "mBoxscore", scoringPeriodId: weekNumber, req, requireCookie: false }),
-      espnFetch({ leagueId, seasonId, view: "mRoster", scoringPeriodId: weekNumber, req, requireCookie: false })
-    ]);
-
-    const teamNames = {};
-    const teamStats = {};
-    
-    // Build team name map
-    if (teamData.teams) {
-      teamData.teams.forEach(team => {
-        const name = team.location && team.nickname 
-          ? `${team.location} ${team.nickname}` 
-          : team.name || `Team ${team.id}`;
-        teamNames[team.id] = name;
-        
-        teamStats[team.id] = {
-          teamId: team.id,
-          teamName: name,
-          pointsFor: 0,
-          pointsAgainst: 0,
-          wins: 0,
-          losses: 0,
-          ties: 0,
-          weeklyScore: 0,
-          opponentScore: 0,
-          roster: []
-        };
-      });
-    }
-
-    // Process matchup data for this week
-    if (matchupData.schedule) {
-      matchupData.schedule.forEach(matchup => {
-        if (matchup.matchupPeriodId === weekNumber) {
-          const homeId = matchup.home?.teamId;
-          const awayId = matchup.away?.teamId;
-          const homeScore = matchup.home?.totalPoints || 0;
-          const awayScore = matchup.away?.totalPoints || 0;
-
-          if (homeId && teamStats[homeId]) {
-            teamStats[homeId].weeklyScore = homeScore;
-            teamStats[homeId].opponentScore = awayScore;
-            teamStats[homeId].pointsFor += homeScore;
-            teamStats[homeId].pointsAgainst += awayScore;
-            
-            if (homeScore > awayScore) teamStats[homeId].wins++;
-            else if (homeScore < awayScore) teamStats[homeId].losses++;
-            else teamStats[homeId].ties++;
-          }
-
-          if (awayId && teamStats[awayId]) {
-            teamStats[awayId].weeklyScore = awayScore;
-            teamStats[awayId].opponentScore = homeScore;
-            teamStats[awayId].pointsFor += awayScore;
-            teamStats[awayId].pointsAgainst += homeScore;
-            
-            if (awayScore > homeScore) teamStats[awayId].wins++;
-            else if (awayScore < homeScore) teamStats[awayId].losses++;
-            else teamStats[awayId].ties++;
-          }
-        }
-      });
-    }
-
-    // Process roster data
-    if (rosterData.teams) {
-      rosterData.teams.forEach(team => {
-        const teamId = team.id;
-        if (teamStats[teamId]) {
-          teamStats[teamId].roster = (team.roster?.entries || []).map(entry => {
-            const player = entry.playerPoolEntry?.player;
-            return {
-              playerId: player?.id,
-              playerName: player?.fullName,
-              position: player?.defaultPositionId,
-              lineupSlot: entry.lineupSlotId,
-              points: entry.playerPoolEntry?.appliedStatTotal || 0
-            };
-          });
-        }
-      });
-    }
-
-    // Create snapshot object
-    const snapshot = {
-      leagueId,
-      seasonId,
-      weekNumber,
-      capturedAt: new Date().toISOString(),
-      teams: Object.values(teamStats),
-      rawMatchupData: matchupData,
-      rawBoxscoreData: boxscoreData
-    };
-
-    // Save to database
-    if (DATABASE_URL) {
-      const client = await pool.connect();
-      
-      try {
-        // Save weekly snapshot
-        await client.query(`
-          INSERT INTO weekly_snapshots (league_id, season_id, week_number, snapshot_data)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (league_id, season_id, week_number) 
-          DO UPDATE SET snapshot_data = $4, created_at = CURRENT_TIMESTAMP
-        `, [leagueId, seasonId, weekNumber, JSON.stringify(snapshot)]);
-
-        // Save individual team stats
-        for (const team of Object.values(teamStats)) {
-          await client.query(`
-            INSERT INTO team_stats_history 
-              (league_id, season_id, week_number, team_id, team_name, 
-               points_for, points_against, wins, losses, ties, roster_data)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (league_id, season_id, week_number, team_id)
-            DO UPDATE SET 
-              points_for = $6, points_against = $7, wins = $8, 
-              losses = $9, ties = $10, roster_data = $11,
-              created_at = CURRENT_TIMESTAMP
-          `, [
-            leagueId, seasonId, weekNumber, team.teamId, team.teamName,
-            team.pointsFor, team.pointsAgainst, team.wins, team.losses, team.ties,
-            JSON.stringify(team.roster)
-          ]);
-        }
-
-        console.log(`[SNAPSHOT] Successfully saved Week ${weekNumber} snapshot to database`);
-      } finally {
-        client.release();
-      }
-    } else {
-      // Fallback to file system
-      await writeJson(`snapshot_${leagueId}_${seasonId}_week${weekNumber}.json`, snapshot);
-      console.log(`[SNAPSHOT] Successfully saved Week ${weekNumber} snapshot to file`);
-    }
-
-    return snapshot;
-
-  } catch (error) {
-    console.error(`[SNAPSHOT] Failed to capture Week ${weekNumber}:`, error);
-    throw error;
-  }
-}
-
-async function getWeeklySnapshot(leagueId, seasonId, weekNumber) {
-  if (DATABASE_URL) {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        'SELECT snapshot_data FROM weekly_snapshots WHERE league_id = $1 AND season_id = $2 AND week_number = $3',
-        [leagueId, seasonId, weekNumber]
-      );
-      client.release();
-      return result.rows.length > 0 ? result.rows[0].snapshot_data : null;
-    } catch (err) {
-      client.release();
-      throw err;
-    }
-  } else {
-    return await readJson(`snapshot_${leagueId}_${seasonId}_week${weekNumber}.json`, null);
-  }
-}
-
-async function getSeasonSnapshots(leagueId, seasonId) {
-  if (DATABASE_URL) {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        'SELECT week_number, snapshot_data FROM weekly_snapshots WHERE league_id = $1 AND season_id = $2 ORDER BY week_number',
-        [leagueId, seasonId]
-      );
-      client.release();
-      return result.rows.map(row => ({
-        week: row.week_number,
-        data: row.snapshot_data
-      }));
-    } catch (err) {
-      client.release();
-      throw err;
-    }
-  } else {
-    // File system fallback - would need directory scanning
-    return [];
-  }
-}
-
-async function getTeamHistory(leagueId, seasonId, teamId) {
-  if (DATABASE_URL) {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        'SELECT * FROM team_stats_history WHERE league_id = $1 AND season_id = $2 AND team_id = $3 ORDER BY week_number',
-        [leagueId, seasonId, teamId]
-      );
-      client.release();
-      return result.rows;
-    } catch (err) {
-      client.release();
-      throw err;
-    }
-  } else {
-    return [];
-  }
-}
-
-// DoritoStats Power Ranking Calculations
-function calculateDoritoStatsPowerRankings(seasonSnapshots, currentWeek) {
-  if (!seasonSnapshots || seasonSnapshots.length === 0) {
-    throw new Error('No historical data available for power rankings');
-  }
-
-  // Aggregate season stats from all weeks
-  const teamSeasonStats = {};
-  
-  seasonSnapshots.forEach(snapshot => {
-    if (snapshot.data && snapshot.data.teams) {
-      snapshot.data.teams.forEach(team => {
-        if (!teamSeasonStats[team.teamId]) {
-          teamSeasonStats[team.teamId] = {
-            teamId: team.teamId,
-            teamName: team.teamName,
-            weeklyScores: [],
-            weeklyOpponentScores: [],
-            totalPointsFor: 0,
-            totalPointsAgainst: 0,
-            wins: 0,
-            losses: 0,
-            ties: 0,
-            gamesPlayed: 0
-          };
-        }
-        
-        const stats = teamSeasonStats[team.teamId];
-        if (team.weeklyScore > 0) {
-          stats.weeklyScores.push(team.weeklyScore);
-          stats.weeklyOpponentScores.push(team.opponentScore || 0);
-          stats.totalPointsFor += team.weeklyScore;
-          stats.totalPointsAgainst += (team.opponentScore || 0);
-          stats.wins += team.wins || 0;
-          stats.losses += team.losses || 0;
-          stats.ties += team.ties || 0;
-          stats.gamesPlayed++;
-        }
-      });
-    }
-  });
-
-  // Calculate each component for each team
-  const rankings = Object.values(teamSeasonStats).map(team => {
-    const avgPointsFor = team.totalPointsFor / team.gamesPlayed;
-    const avgPointsAgainst = team.totalPointsAgainst / team.gamesPlayed;
-    
-    // DOMINANCE: Based on DoritoStats formula
-    // Dom = 0.18 * (2*PF + PA)
-    const dominance = 0.18 * ((2 * team.totalPointsFor) + team.totalPointsAgainst);
-    
-    // CONSISTENCY: Based on inverse of score variability
-    // Cons = 130 / (StdDev + 12)
-    const mean = avgPointsFor;
-    const variance = team.weeklyScores.reduce((sum, score) => {
-      return sum + Math.pow(score - mean, 2);
-    }, 0) / team.gamesPlayed;
-    const stdDev = Math.sqrt(variance);
-    const consistency = 130 / (stdDev + 12);
-    
-    // LUCK: All-play wins vs actual wins differential
-    // Calculate all-play record for each week
-    let allPlayWins = 0;
-    let allPlayLosses = 0;
-    
-    seasonSnapshots.forEach(snapshot => {
-      if (snapshot.data && snapshot.data.teams) {
-        const weekScores = snapshot.data.teams
-          .filter(t => t.weeklyScore > 0)
-          .map(t => ({ teamId: t.teamId, score: t.weeklyScore }));
-        
-        const thisTeamWeek = weekScores.find(t => t.teamId === team.teamId);
-        if (thisTeamWeek) {
-          // Count how many teams this team would beat
-          weekScores.forEach(opponent => {
-            if (opponent.teamId !== team.teamId) {
-              if (thisTeamWeek.score > opponent.score) {
-                allPlayWins++;
-              } else if (thisTeamWeek.score < opponent.score) {
-                allPlayLosses++;
-              }
-            }
-          });
-        }
-      }
-    });
-    
-    const allPlayWinPct = (allPlayWins + allPlayLosses) > 0 
-      ? allPlayWins / (allPlayWins + allPlayLosses) 
-      : 0;
-    const actualWinPct = team.gamesPlayed > 0 
-      ? team.wins / team.gamesPlayed 
-      : 0;
-    
-    // Luck is the difference (scaled to 0-100)
-    const luck = (actualWinPct - allPlayWinPct) * 100;
-    
-    // COMPREHENSIVE POWER SCORE: DoritoStats formula
-    // Power = (0.8 * Dom) + (0.15 * Luck) + (0.05 * Cons)
-    const comprehensivePowerScore = (0.8 * dominance) + (0.15 * luck) + (0.05 * consistency);
-    
-    // Simple power score (your original)
-    const winPct = actualWinPct;
-    const medianWins = allPlayWins; // Approximate using all-play wins
-    const medianWinPct = allPlayWinPct;
-    const simplePowerScore = (team.totalPointsFor * 2) + 
-                            (team.totalPointsFor * winPct) + 
-                            (team.totalPointsFor * medianWinPct);
-    
-    return {
-      teamId: team.teamId,
-      teamName: team.teamName,
-      comprehensivePowerScore: Math.round(comprehensivePowerScore * 100) / 100,
-      simplePowerScore: Math.round(simplePowerScore * 100) / 100,
-      dominance: Math.round(dominance * 100) / 100,
-      consistency: Math.round(consistency * 100) / 100,
-      luck: Math.round(luck * 100) / 100,
-      totalPointsFor: Math.round(team.totalPointsFor * 100) / 100,
-      totalPointsAgainst: Math.round(team.totalPointsAgainst * 100) / 100,
-      wins: team.wins,
-      losses: team.losses,
-      ties: team.ties,
-      allPlayRecord: `${allPlayWins}-${allPlayLosses}`
-    };
-  });
-  
-  // Sort by comprehensive power score
-  rankings.sort((a, b) => b.comprehensivePowerScore - a.comprehensivePowerScore);
-  
-  return rankings;
-}
-
-// DoritoStats Playoff Odds Simulation
-async function calculatePlayoffOdds({ leagueId, seasonId, currentWeek, numSimulations = 10000, req }) {
-  console.log(`[PLAYOFF ODDS] Starting ${numSimulations} simulations for week ${currentWeek}`);
-  
-  const snapshots = await getSeasonSnapshots(leagueId, seasonId);
-  if (snapshots.length === 0) {
-    throw new Error('No historical data available for playoff odds');
-  }
-  
-  // Get schedule data
-  const scheduleData = await espnFetch({ 
-    leagueId, 
-    seasonId, 
-    view: "mMatchup", 
-    req, 
-    requireCookie: false 
-  });
-  
-  const totalWeeks = 14;
-  const playoffSpots = 6;
-  
-  // Build team stats from completed weeks only
-  const teamStats = {};
-  const teamIds = [];
-  
-  snapshots.forEach(snapshot => {
-    if (snapshot.week > currentWeek) return; // Only use completed weeks
-    
-    snapshot.data.teams.forEach(team => {
-      if (!teamStats[team.teamId]) {
-        teamStats[team.teamId] = {
-          teamId: team.teamId,
-          teamName: team.teamName,
-          weeklyScores: [],
-          currentWins: 0,
-          currentLosses: 0,
-          currentTies: 0,
-          currentPointsFor: 0
-        };
-        teamIds.push(team.teamId);
-      }
-      
-      const stats = teamStats[team.teamId];
-      if (team.weeklyScore > 0) {
-        stats.weeklyScores.push(team.weeklyScore);
-        stats.currentPointsFor += team.weeklyScore;
-        stats.currentWins = team.wins || 0;
-        stats.currentLosses = team.losses || 0;
-        stats.currentTies = team.ties || 0;
-      }
-    });
-  });
-  
-  // Calculate mean and std dev for each team
-  Object.values(teamStats).forEach(team => {
-    const scores = team.weeklyScores;
-    const mean = scores.reduce((sum, s) => sum + s, 0) / scores.length;
-    const variance = scores.reduce((sum, s) => sum + Math.pow(s - mean, 2), 0) / scores.length;
-    team.avgScore = mean;
-    team.stdDev = Math.sqrt(variance);
-    
-    // Initialize simulation counters
-    team.playoffCount = 0;
-    team.positionCounts = Array(teamIds.length).fill(0);
-    team.projectedWins = 0;
-    team.projectedLosses = 0;
-    team.projectedTies = 0;
-    team.projectedPointsFor = 0;
-  });
-  
-  // Build remaining schedule
-  const remainingMatchups = [];
-  if (scheduleData.schedule) {
-    for (let week = currentWeek + 1; week <= totalWeeks; week++) {
-      const weekMatchups = scheduleData.schedule.filter(m => m.matchupPeriodId === week);
-      weekMatchups.forEach(matchup => {
-        if (matchup.home?.teamId && matchup.away?.teamId) {
-          remainingMatchups.push({
-            week,
-            homeTeamId: matchup.home.teamId,
-            awayTeamId: matchup.away.teamId
-          });
-        }
-      });
-    }
-  }
-  
-  console.log(`[PLAYOFF ODDS] Simulating ${remainingMatchups.length} remaining games across ${numSimulations} simulations`);
-  
-  // Run Monte Carlo simulations
-  for (let sim = 0; sim < numSimulations; sim++) {
-    const simStandings = {};
-    
-    // Copy current records
-    teamIds.forEach(teamId => {
-      const team = teamStats[teamId];
-      simStandings[teamId] = {
-        wins: team.currentWins,
-        losses: team.currentLosses,
-        ties: team.currentTies,
-        pointsFor: team.currentPointsFor
-      };
-    });
-    
-    // Simulate each remaining game using normal distribution
-    remainingMatchups.forEach(matchup => {
-      const homeTeam = teamStats[matchup.homeTeamId];
-      const awayTeam = teamStats[matchup.awayTeamId];
-      
-      if (homeTeam && awayTeam) {
-        // Generate scores from normal distribution (Box-Muller transform)
-        const u1 = Math.random();
-        const u2 = Math.random();
-        const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-        const z1 = Math.sqrt(-2 * Math.log(u1)) * Math.sin(2 * Math.PI * u2);
-        
-        const homeScore = homeTeam.avgScore + (z0 * homeTeam.stdDev);
-        const awayScore = awayTeam.avgScore + (z1 * awayTeam.stdDev);
-        
-        // Update standings
-        if (Math.abs(homeScore - awayScore) < 0.1) { // Tie threshold
-          simStandings[matchup.homeTeamId].ties++;
-          simStandings[matchup.awayTeamId].ties++;
-        } else if (homeScore > awayScore) {
-          simStandings[matchup.homeTeamId].wins++;
-          simStandings[matchup.awayTeamId].losses++;
-        } else {
-          simStandings[matchup.awayTeamId].wins++;
-          simStandings[matchup.homeTeamId].losses++;
-        }
-        
-        simStandings[matchup.homeTeamId].pointsFor += homeScore;
-        simStandings[matchup.awayTeamId].pointsFor += awayScore;
-      }
-    });
-    
-    // Rank teams by wins, then points
-    const finalStandings = teamIds
-      .map(teamId => ({ teamId, ...simStandings[teamId] }))
-      .sort((a, b) => {
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        return b.pointsFor - a.pointsFor;
-      });
-    
-    // Record results
-    finalStandings.forEach((standing, index) => {
-      const team = teamStats[standing.teamId];
-      
-      if (index < playoffSpots) {
-        team.playoffCount++;
-      }
-      team.positionCounts[index]++;
-      
-      // Accumulate for averages
-      team.projectedWins += standing.wins;
-      team.projectedLosses += standing.losses;
-      team.projectedTies += standing.ties;
-      team.projectedPointsFor += standing.pointsFor;
-    });
-  }
-  
-  // Calculate final percentages and averages
-  const results = teamIds.map(teamId => {
-    const team = teamStats[teamId];
-    
-    return {
-      teamName: team.teamName,
-      currentRecord: `${team.currentWins}-${team.currentLosses}${team.currentTies > 0 ? `-${team.currentTies}` : ''}`,
-      projectedWins: Math.round((team.projectedWins / numSimulations) * 10) / 10,
-      projectedLosses: Math.round((team.projectedLosses / numSimulations) * 10) / 10,
-      projectedTies: Math.round((team.projectedTies / numSimulations) * 10) / 10,
-      projectedPointsFor: Math.round((team.projectedPointsFor / numSimulations) * 10) / 10,
-      playoffOdds: Math.round((team.playoffCount / numSimulations) * 1000) / 10,
-      positions: team.positionCounts.map((count, index) => ({
-        position: index + 1,
-        probability: Math.round((count / numSimulations) * 1000) / 10
-      }))
-    };
-  });
-  
-  // Sort by playoff odds
-  results.sort((a, b) => b.playoffOdds - a.playoffOdds);
-  
-  return results;
-}
 
 // =========================
 // Enhanced Auto-refresh system - Multi-League Version
@@ -3672,143 +2456,9 @@ async function runAutoRefreshForLeague(leagueConfig) {
 
     logRefresh(`Refreshing data for league ${leagueConfig.id}, season ${seasonId}`);
 
-    // === ADD: Import Teams First ===
-    logRefresh(`Importing teams for ${leagueConfig.id}...`);
-    try {
-      // Fetch team and roster data
-      const [teamJson, rosJson, setJson] = await Promise.all([
-        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mTeam", req: { headers: {} }, requireCookie: true }),
-        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mRoster", req: { headers: {} }, requireCookie: true }),
-        espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mSettings", req: { headers: {} }, requireCookie: true }),
-      ]);
-      
-      const teams = teamJson?.teams || [];
-      if (teams.length > 0) {
-        const names = [...new Set(teams.map(t => teamName(t)))];
-        const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
-        const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
-        
-        // Build roster data
-        const rosterData = (rosJson?.teams || []).map(t => {
-          const entries = (t.roster?.entries || []).map(e => {
-  const p = e.playerPoolEntry?.player;
-  const fullName = p?.fullName || "Player";
-  const slot = slotMap[e.lineupSlotId] || "—";
-  
-// ADD THE CONSOLE.LOG HERE:
-
- let position = "";
-const slotId = e.lineupSlotId;
-
-if (slotId === 20) { // Bench
-  const eligible = p?.eligibleSlots || [];
-  
-  // RB check FIRST (slot 2)
-  if (eligible.includes(2)) {
-    position = "RB";
-  }
-  // Then check for pure TE (has slot 6 but NOT slots 3 or 4)
-  else if (eligible.includes(6) && !eligible.includes(3) && !eligible.includes(4)) {
-    position = "TE";
-  }
-  // WR check
-  else if (eligible.includes(3) || eligible.includes(4)) {
-    position = "WR";
-  }
-  // QB check
-  else if (eligible.includes(0)) {
-    position = "QB";
-  }
-  // D/ST check
-  else if (eligible.includes(16)) {
-    position = "D/ST";
-  }
-  // K check
-  else if (eligible.includes(17)) {
-    position = "K";
-  }
-  // Fallback
-  else if (p?.defaultPositionId) {
-    position = posIdToName(p.defaultPositionId);
-  }
-} else {
-  position = slot;
-}
-  
-  return { 
-    name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
-    slot, 
-    position
-  };
-});
-
-          // Sort starters and bench
-          const starters = entries.filter(e => e.slot !== "Bench");
-          const bench = entries.filter(e => e.slot === "Bench");
-          
-          const starterOrderWithCounts = [
-            { pos: "QB", max: 1 },
-            { pos: "RB", max: 2 }, 
-            { pos: "RB/WR", max: 1 },
-            { pos: "WR", max: 2 },
-            { pos: "TE", max: 1 },
-            { pos: "FLEX", max: 1 },
-            { pos: "D/ST", max: 1 },
-            { pos: "K", max: 1 }
-          ];
-
-          const sortedStarters = [];
-          starterOrderWithCounts.forEach(({ pos, max }) => {
-            const playersInPosition = starters.filter(p => p.slot === pos);
-            for (let i = 0; i < max; i++) {
-              if (playersInPosition[i]) {
-                sortedStarters.push(playersInPosition[i]);
-              }
-            }
-          });
-
-          const sortedBench = bench
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map(p => ({
-              name: p.position ? `${p.name} (${p.position})` : p.name,
-              slot: p.slot
-            }));
-          
-          const finalEntries = [
-            ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
-            ...sortedBench
-          ];
-          
-          return { 
-            teamName: teamsById[t.id] || `Team ${t.id}`, 
-            entries: finalEntries 
-          };
-        });
-        
-        // Save rosters to database/file
-        const data = await getLeagueData(leagueConfig.id);
-        data.members = names.map(name => {
-          const existing = data.members?.find(m => m.name === name);
-          return existing || { id: nid(), name };
-        });
-        
-        data.rosters = data.rosters || {};
-        data.rosters[seasonId] = {
-          rosterData,
-          lastUpdated: new Date().toISOString()
-        };
-        
-        await saveLeagueData(data, leagueConfig.id);
-        logRefresh(`Imported ${names.length} teams with rosters for ${leagueConfig.id}`);
-      }
-    } catch (importError) {
-      logRefresh(`Failed to import teams for ${leagueConfig.id}: ${importError.message}`, 'error');
-      // Don't throw - continue with report update even if import fails
-    }
-
     // Create a race condition with timeout
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Refresh timeout after 4 minutes')), 240000)
+      setTimeout(() => reject(new Error('Refresh timeout after 4 minutes')), 240000) // 4 minute timeout
     );
 
     const refreshPromise = buildOfficialReport({ 
@@ -3819,24 +2469,6 @@ if (slotId === 20) { // Bench
 
     const report = await Promise.race([refreshPromise, timeoutPromise]);
     
-// Capture weekly snapshots for completed weeks
-const now = new Date();
-const currentWeekNum = leagueWeekOf(now, seasonId).week || 0;
-
-for (let week = 1; week <= currentWeekNum; week++) {
-  try {
-    await captureWeeklySnapshot({
-      leagueId: leagueConfig.espnId,
-      seasonId,
-      weekNumber: week,
-      req: { headers: {} }
-    });
-    logRefresh(`Captured Week ${week} snapshot for ${leagueConfig.id}`);
-  } catch (snapErr) {
-    logRefresh(`Failed to capture Week ${week} snapshot: ${snapErr.message}`, 'error');
-  }
-}
-
     if (report && report.totalsRows && report.totalsRows.length > 0) {
       const snapshot = { seasonId, leagueId: leagueConfig.espnId, ...report };
       
@@ -3858,7 +2490,7 @@ for (let week = 1; week <= currentWeekNum; week++) {
           } catch (dbError) {
             logRefresh(`Database save attempt ${attempt} failed for ${leagueConfig.id}: ${dbError.message}`, 'error');
             if (attempt === 3) throw dbError;
-            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Progressive delay
           }
         }
         
@@ -3872,11 +2504,13 @@ for (let week = 1; week <= currentWeekNum; week++) {
         await writeJson(`report_${leagueConfig.id}_${seasonId}.json`, snapshot);
       } catch (fileError) {
         logRefresh(`File save failed for ${leagueConfig.id}: ${fileError.message}`, 'error');
+        // Don't throw - database save succeeded
       }
       
       const elapsed = Date.now() - startTime;
       logRefresh(`Successfully updated ${leagueConfig.id} (${elapsed}ms) - ${report.totalsRows.length} teams, ${report.rawMoves?.length || 0} transactions`);
       
+      // Reset failure counter on success
       consecutiveFailures = 0;
       return true;
     } else {
@@ -4021,6 +2655,26 @@ app.get("/api/auto-refresh/status", (req, res) => {
   });
 });
 
+// Enhanced manual refresh
+app.post("/api/auto-refresh/force", requireAdmin, async (req, res) => {
+  logRefresh('Manual refresh triggered via API');
+  try {
+    await runAutoRefresh();
+    res.json({ success: true, message: "Refresh completed" });
+  } catch (error) {
+    logRefresh(`Manual refresh failed: ${error.message}`, 'error');
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// =========================
+// Static hosting
+// =========================
+const CLIENT_DIR = path.join(__dirname, "dist");
+app.use(express.static(CLIENT_DIR));
+app.get(/^(?!\/api).*/, (_req, res) => { 
+  res.sendFile(path.join(CLIENT_DIR, "index.html")); 
+});
 
 // Start auto-refresh system
 startAutoRefresh();
@@ -4032,7 +2686,3 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`); 
   console.log(`Database: ${DATABASE_URL ? 'PostgreSQL' : 'File system'}`);
 });
-
-// Static hosting - MUST BE LAST
-const CLIENT_DIR = path.join(__dirname, "dist");
-app.use(express.static(CLIENT_DIR));

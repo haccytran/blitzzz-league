@@ -1,8 +1,6 @@
 // src/App.jsx - Complete Server-Side Version
 import React, { useEffect, useMemo, useState, useRef } from "react";
-import { LandingPage } from './components/LandingPage.jsx';
-import { useLeagueConfig } from './hooks/useLeagueConfig.js';
-import { createLeagueAPI, createLeagueStorageKey } from './utils/leagueStorage.js';
+import Logo from "./Logo.jsx";
 
 /* =========================
    Global Config
@@ -13,8 +11,7 @@ const DEFAULT_SEASON = import.meta.env.VITE_ESPN_SEASON || new Date().getFullYea
 const LEAGUE_TZ = "America/Los_Angeles";
 const WEEK_START_DAY = 4; // Thursday
 
-// This will be updated per league - keeping as fallback
-   const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
+const API = (p) => (import.meta.env.DEV ? `http://localhost:8787${p}` : p);
 
 /* ---- playful roasts for wrong commissioner password ---- */
 const ROASTS = [
@@ -80,7 +77,7 @@ function startOfLeagueWeekPT(date){
   return base;
 }
 
-function firstWednesdayOfSeptemberPT(year){
+function firstThursdayOfSeptemberPT(year){
   const d = toPT(new Date(year, 8, 1));
   const offset = (4 - d.getDay() + 7) % 7; // 4 = Thursday
   d.setDate(d.getDate() + offset);
@@ -90,7 +87,7 @@ function firstWednesdayOfSeptemberPT(year){
 
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeekPT(date);
-  const week1 = startOfLeagueWeekPT(firstWednesdayOfSeptemberPT(seasonYear));
+  const week1 = startOfLeagueWeekPT(firstThursdayOfSeptemberPT(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0;
   return { week, start, key: localDateKey(start) };
@@ -144,8 +141,27 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, auth =
   }
 }
 
-
-
+/* =========================
+   Server API helpers
+   ========================= */
+async function apiCall(endpoint, options = {}) {
+  const url = API(endpoint);
+  const config = {
+    headers: { "Content-Type": "application/json" },
+    ...options
+  };
+  
+  if (config.method && config.method !== 'GET' && !config.headers["x-admin"]) {
+    config.headers["x-admin"] = ADMIN_ENV;
+  }
+  
+  const response = await fetch(url, config);
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
 
 /* =========================
    Local storage hook for non-server data
@@ -159,99 +175,11 @@ function useStored(key, initial=""){
 /* =========================
    App Root
    ========================= */
-export default function App() {
-     const [selectedLeague, setSelectedLeague] = useState(null);
+export default function App(){ return <LeagueHub/> }
 
-     // Check URL for league parameter on startup
-     useEffect(() => {
-       const urlParams = new URLSearchParams(window.location.search);
-       const leagueFromUrl = urlParams.get('league');
-       
-  console.log('URL league param:', leagueFromUrl);
-
-       if (leagueFromUrl) {
-         // Import the config to validate the league exists
-         import('./config/leagueConfigs').then(({ leagueConfigs }) => {
-
-      console.log('Available league configs:', Object.keys(leagueConfigs));
-      console.log('Looking for config:', leagueFromUrl);
-
-           if (leagueConfigs[leagueFromUrl]) {
-        console.log('Setting selected league to:', { id: leagueFromUrl, ...leagueConfigs[leagueFromUrl] });
-             setSelectedLeague({ id: leagueFromUrl, ...leagueConfigs[leagueFromUrl] });
-
-           } else {
-        console.log('League not found, clearing URL');
-             // Invalid league in URL, remove it
-             window.history.replaceState({}, '', window.location.pathname);
-           }
-         });
-       }
-     }, []);
-
-     // Update URL when league changes
-     const handleLeagueSelect = (league) => {
-
-       setSelectedLeague(league);
-       // Add league to URL
-       const url = new URL(window.location);
-       url.searchParams.set('league', league.id);
-       window.history.pushState({}, '', url);
-     };
-
-     // Handle going back to league selection
-     const handleBackToSelection = () => {
-       setSelectedLeague(null);
-       // Remove league from URL
-       const url = new URL(window.location);
-       url.searchParams.delete('league');
-       window.history.pushState({}, '', url);
-     };
-
-     if (!selectedLeague) {
-       return <LandingPage onLeagueSelect={handleLeagueSelect} />;
-     }
-
-     return <LeagueHub selectedLeague={selectedLeague} onBackToSelection={handleBackToSelection} />;
-   }
-
-   function LeagueHub({ selectedLeague, onBackToSelection }){
+function LeagueHub(){
   useEffect(()=>{ document.title = "Blitzzz Fantasy Football League"; }, []);
    const currentYear = new Date().getFullYear();
-const config = useLeagueConfig(selectedLeague);
-
-console.log('=== LEAGUE DEBUGGING ===');
-console.log('selectedLeague object:', selectedLeague);
-console.log('config returned:', config);
-console.log('config.id:', config.id);
-console.log('URL params:', window.location.search);
-
-/* =========================
-   Server API helpers
-   ========================= */
-async function apiCallLeague(endpoint, options = {}) {
-  const leagueAPI = createLeagueAPI(config.id);
-  const url = leagueAPI.API(endpoint);
-
-  console.log('League ID:', config.id);  // ← Add this
-  console.log('Generated URL:', url);    // ← Add this
-
-  const configObj = {
-    headers: { "Content-Type": "application/json" },
-    ...options
-  };
-  
-  if (configObj.method && configObj.method !== 'GET' && !configObj.headers["x-admin"]) {
-    configObj.headers["x-admin"] = ADMIN_ENV;
-  }
-  
-  const response = await fetch(url, configObj);
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || `HTTP ${response.status}`);
-  }
-  return response.json();
-}
   const VALID_TABS = [
     "announcements","activity","weekly","waivers","dues",
      "transactions","drafts","rosters","settings","trading","polls" 
@@ -297,76 +225,44 @@ async function apiCallLeague(endpoint, options = {}) {
     loadServerData();
   }, []);
 
-async function loadServerData() {
-  try {
-    const serverData = await apiCallLeague('/data').catch(() => ({
-      announcements: [],
-      weeklyList: [],
-      members: [],
-      waivers: [],
-      buyins: {},
-      duesPayments: {}, 
-      tradeBlock: [],
-      leagueSettingsHtml: "",
-      lastUpdated: null
-    }));
-    setData(serverData);
-  } catch (error) {
-    console.error('Failed to load server data:', error);
+  async function loadServerData() {
+    try {
+      const serverData = await apiCall('/api/league-data');
+      setData(serverData);
+    } catch (error) {
+      console.error('Failed to load server data:', error);
+    }
   }
-}
+
   // Commissioner mode
-  const adminKey = createLeagueStorageKey(config.id, 'is_admin');
-   const [isAdmin,setIsAdmin] = useState(localStorage.getItem(adminKey)==="1");
+  const [isAdmin,setIsAdmin] = useState(localStorage.getItem("ffl_is_admin")==="1");
   function nextRoast(){
     const idx = Number(localStorage.getItem("ffl_roast_idx")||"0");
     const msg = ROASTS[idx % ROASTS.length];
     localStorage.setItem("ffl_roast_idx", String(idx+1));
     return msg;
   }
+  const login = ()=>{
+    const pass = prompt("Enter Commissioner Password:");
+    if(pass===ADMIN_ENV){
+      setIsAdmin(true);
+      localStorage.setItem("ffl_is_admin","1");
+      alert("Commissioner mode enabled");
+    } else {
+      alert(nextRoast());
+    }
+  };
+  const logout = ()=>{ setIsAdmin(false); localStorage.removeItem("ffl_is_admin"); };
 
-     const login = ()=>{
-     const pass = prompt("Enter Commissioner Password:");
-     const correctPassword = config.adminPassword || ADMIN_ENV; // Use league-specific password if available
-     if(pass === correctPassword){
-       setIsAdmin(true);
-       localStorage.setItem(adminKey,"1");
-       alert("Commissioner mode enabled");
-     } else {
-       alert(nextRoast());
-     }
-   };
-  const logout = ()=>{ setIsAdmin(false); localStorage.removeItem(adminKey); };
-
-const switchLeague = () => {
-     if (confirm("Are you sure you want to switch leagues? Any unsaved changes will be lost.")) {
-       onBackToSelection(); // Use the callback instead of reload
-     }
-   };
-
-// ESPN config (replace the old useState)
-
-const [espn, setEspn] = useState({ 
-  leagueId: "", 
-  seasonId: "" 
-});
-
-// Add this useEffect right after the espn useState
-useEffect(() => {
-  if (config && config.espn) {
-    setEspn({
-      leagueId: config.espn.leagueId,
-      seasonId: config.espn.defaultSeason
-    });
-  }
-}, [config]);
+// ESPN config
+const [espn, setEspn] = useState({ leagueId: DEFAULT_LEAGUE_ID, seasonId: "" });
 
 // Define loadDisplaySeason AFTER espn state exists
 
 async function loadDisplaySeason() {
   try {
     console.log('Loading display season from server...');
-    const response = await fetch(API('/api/report/default-season'));
+    const response = await apiCall('/api/report/default-season');
     console.log('Server default season response:', response);
     
     // More robust season extraction
@@ -392,13 +288,6 @@ async function loadDisplaySeason() {
   }
 }
 
-// Dynamic title and favicon
-useEffect(() => {
-  document.title = config.displayName;
-  const favicon = document.querySelector('link[rel="icon"]');
-  if (favicon) favicon.href = config.favicon;
-}, [config]);
-
 // Load default season after espn state is initialized - with debugging
 useEffect(() => {
   console.log('useEffect triggered - loading display season...');
@@ -423,15 +312,25 @@ useEffect(() => {
   const seasonYear = Number(espn.seasonId) || new Date().getFullYear();
 
   // Weeks
-const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), seasonYear));
-useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), seasonYear)); }, [seasonYear]);
+const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), currentYear));
+useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), currentYear)); }, []);
 
-const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])),[data.members]);
+  const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])),[data.members]);
+
+  // Manual waivers (count within Wed→Tue) - always use current year
+
+const weekKey = weekKeyFrom(selectedWeek);
+const waiversThisWeek = useMemo(
+  () => data.waivers.filter(w => weekKeyFrom(leagueWeekOf(new Date(w.date), currentYear)) === weekKey),
+  [data.waivers, weekKey]
+);
+const waiverCounts = useMemo(()=>{ const c={}; waiversThisWeek.forEach(w=>{ c[w.userId]=(c[w.userId]||0)+1 }); return c; }, [waiversThisWeek]);
+const waiverOwed = useMemo(()=>{ const owed={}; for(const m of data.members){ const count=waiverCounts[m.id]||0; owed[m.id]=Math.max(0,count-2)*5 } return owed; }, [data.members, waiverCounts]);
 
   // Server-side CRUD operations
   const addAnnouncement = async (html) => {
     try {
-      await apiCallLeague('/announcements', {
+      await apiCall('/api/league-data/announcements', {
         method: 'POST',
         body: JSON.stringify({ html })
       });
@@ -443,7 +342,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteAnnouncement = async (id) => {
     try {
-      await apiCallLeague('/announcements', {
+      await apiCall('/api/league-data/announcements', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -455,7 +354,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addWeekly = async (entry) => {
     try {
-      await apiCallLeague('/weekly', {
+      await apiCall('/api/league-data/weekly', {
         method: 'POST',
         body: JSON.stringify({ entry })
       });
@@ -468,7 +367,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
   const deleteWeekly = async (id) => {
     if (!confirm("Delete this challenge?")) return;
     try {
-      await apiCallLeague('/weekly', {
+      await apiCall('/api/league-data/weekly', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -478,35 +377,21 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
     }
   };
 
-   const editWeekly = async (id, updatedEntry) => {
-  try {
-    // First, delete the existing entry
-    await apiCallLeague('/weekly', {
-      method: 'DELETE',
-      body: JSON.stringify({ id })
-    });
-    
-    // Then add it back with updated data
-    const newEntry = {
-      ...updatedEntry,
-      id: Math.random().toString(36).slice(2), // New ID
-      createdAt: Date.now()
-    };
-    
-    await apiCallLeague('/weekly', {
-      method: 'POST',
-      body: JSON.stringify({ entry: newEntry })
-    });
-    
-    await loadServerData();
-  } catch (error) {
-    alert('Failed to edit weekly challenge: ' + error.message);
-  }
-};
+  const addMember = async (name) => {
+    try {
+      await apiCall('/api/league-data/members', {
+        method: 'POST',
+        body: JSON.stringify({ name })
+      });
+      await loadServerData();
+    } catch (error) {
+      alert('Failed to add member: ' + error.message);
+    }
+  };
 
   const deleteMember = async (id) => {
     try {
-      await apiCallLeague('/members', {
+      await apiCall('/api/league-data/members', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -518,7 +403,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addWaiver = async (userId, player, date) => {
     try {
-      await apiCallLeague('/waivers', {
+      await apiCall('/api/league-data/waivers', {
         method: 'POST',
         body: JSON.stringify({ userId, player, date: date || today() })
       });
@@ -530,7 +415,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteWaiver = async (id) => {
     try {
-      await apiCallLeague('/waivers', {
+      await apiCall('/api/league-data/waivers', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -542,7 +427,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const addTrade = async (trade) => {
     try {
-      await apiCallLeague('/trading', {
+      await apiCall('/api/league-data/trading', {
         method: 'POST',
         body: JSON.stringify({ trade })
       });
@@ -554,7 +439,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const updateBuyIns = async (seasonKey, updates) => {
     try {
-      await apiCallLeague('/buyins', {
+      await apiCall('/api/league-data/buyins', {
         method: 'POST',
         body: JSON.stringify({ seasonKey, updates })
       });
@@ -566,7 +451,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const deleteTrade = async (id) => {
     try {
-      await apiCallLeague('/trading', {
+      await apiCall('/api/league-data/trading', {
         method: 'DELETE',
         body: JSON.stringify({ id })
       });
@@ -578,7 +463,7 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
 
   const saveLeagueSettings = async (html) => {
     try {
-      await apiCallLeague('/settings', {
+      await apiCall('/api/league-data/settings', {
         method: 'POST',
         body: JSON.stringify({ html })
       });
@@ -606,84 +491,25 @@ const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])
     const teamsById = Object.fromEntries(teams.map(t => [t.id, teamName(t)]));
     const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
     
-    // Build roster data with proper ordering
+    // Build roster data
     const rosterData = (rosJson?.teams || []).map(t => {
       const entries = (t.roster?.entries || []).map(e => {
         const p = e.playerPoolEntry?.player;
         const fullName = p?.fullName || "Player";
         const slot = slotMap[e.lineupSlotId] || "—";
-        // Try multiple ESPN position sources for better accuracy
-let position = "";
-if (p?.defaultPositionId) {
-  position = posIdToName(p.defaultPositionId);
-}
-// Also check if there's position info in other ESPN fields
-if (!position && p?.eligibleSlots) {
-  // Use the first eligible slot that's a real position
-  const eligiblePos = p.eligibleSlots
-    .map(slotId => posIdToName(slotId))
-    .find(pos => pos && !pos.includes("FLEX") && pos !== "—");
-  if (eligiblePos) position = eligiblePos;
-}
         
-        return { 
-          name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
-          slot, 
-          position
-        };
+        const displayName = slot === "Bench" 
+          ? fullName
+          : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
+        
+        return { name: displayName, slot };
       });
+      
+      return { teamName: teamsById[t.id] || `Team ${t.id}`, entries };
+    }).sort((a, b) => a.teamName.localeCompare(b.teamName));
 
-      // Separate starters and bench
-      const starters = entries.filter(e => e.slot !== "Bench");
-      const bench = entries.filter(e => e.slot === "Bench");
-      
-      // Define exact starter order
-      const starterOrder = ["QB", "RB", "RB/WR", "WR", "TE", "FLEX", "D/ST", "K"];
-      
-      // Sort starters by the exact order you want
-const sortedStarters = [];
-const starterOrderWithCounts = [
-  { pos: "QB", max: 1 },
-  { pos: "RB", max: 2 }, 
-  { pos: "RB/WR", max: 1 },
-  { pos: "WR", max: 2 },
-  { pos: "TE", max: 1 },
-  { pos: "FLEX", max: 1 },
-  { pos: "D/ST", max: 1 },
-  { pos: "K", max: 1 }
-];
-
-starterOrderWithCounts.forEach(({ pos, max }) => {
-  const playersInPosition = starters.filter(p => p.slot === pos);
-  for (let i = 0; i < max; i++) {
-    if (playersInPosition[i]) {
-      sortedStarters.push(playersInPosition[i]);
-    }
-  }
-});
-
-      // Sort bench players and add position in parentheses
-      const sortedBench = bench
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map(p => ({
-          name: p.position ? `${p.name} (${p.position})` : p.name,
-          slot: p.slot
-        }));
-      
-      // Combine starters and bench
-      const finalEntries = [
-        ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
-        ...sortedBench
-      ];
-      
-      return { 
-        teamName: teamsById[t.id] || `Team ${t.id}`, 
-        entries: finalEntries 
-      };
-    });
-    
     // Save both member names and roster data to server
-    await apiCallLeague('/import-teams', {
+    await apiCall('/api/league-data/import-teams', {
       method: 'POST',
       body: JSON.stringify({ 
         teams: names,
@@ -695,7 +521,6 @@ starterOrderWithCounts.forEach(({ pos, max }) => {
     await loadServerData();
     alert(`Imported ${names.length} teams with rosters for season ${espn.seasonId}.`);
   } catch(e){ 
-    console.error('Import error:', e);
     alert(e.message || "ESPN fetch failed. Check League/Season."); 
   }
 };
@@ -713,7 +538,7 @@ starterOrderWithCounts.forEach(({ pos, max }) => {
 
 const updateDuesPayments = async (seasonId, updates) => {
   try {
-    await apiCallLeague('/dues-payments', {
+    await apiCall('/api/league-data/dues-payments', {
       method: 'POST',
       body: JSON.stringify({ seasonId, updates })
     });
@@ -728,7 +553,7 @@ async function loadOfficialReport(silent=false){
     if(!silent){ setSyncing(true); setSyncPct(0); setSyncMsg("Loading official snapshot…"); }
     
     // Load the snapshot for the current season
-    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}&leagueId=${config.id}`));
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     
     if (r.ok){
       const j = await r.json();
@@ -767,11 +592,11 @@ async function loadOfficialReport(silent=false){
   try{
     const r = await fetch(API(`/api/report/update?jobId=${jobId}`), {
       method: "POST",
-      headers: { "Content-Type":"application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type":"application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ 
         leagueId: espn.leagueId, 
         seasonId: espn.seasonId,
-        currentLeagueId: config.id // Add this line - passes current league ID
+        updateDefaultSeason: false // Add this flag
       })
     });
     if(!r.ok){
@@ -790,43 +615,101 @@ async function loadOfficialReport(silent=false){
 
   /* ---- Views ---- */
   const views = {
-  announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
-  weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} />, 
-  activity: <RecentActivityView espn={espn} config={config} />,
-  transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
-  drafts: <DraftsView espn={espn} />,
-  waivers: <WaiversView 
-    espnReport={espnReport}
-    isAdmin={isAdmin}
-    data={data}
-    selectedWeek={selectedWeek}
-    setSelectedWeek={setSelectedWeek}
-    seasonYear={seasonYear}
-    membersById={membersById}
-    updateOfficialSnapshot={updateOfficialSnapshot}
-    setActive={setActive}
-    loadServerData={loadServerData}
-    addWaiver={addWaiver}
-    deleteWaiver={deleteWaiver}
-    deleteMember={deleteMember}
-  />,
-  dues: <DuesView
-    report={espnReport}
-    lastSynced={lastSynced}
-    loadOfficialReport={loadOfficialReport}
-    updateOfficialSnapshot={updateOfficialSnapshot}
-    isAdmin={isAdmin}
-    data={data}
-    setData={setData}
-    seasonYear={seasonYear}
-    updateBuyIns={updateBuyIns}
-    updateDuesPayments={updateDuesPayments}
-  />,
-  rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" apiCallLeague={apiCallLeague} />,
-  settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
-  trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>,
-  polls: <PollsView {...{isAdmin, members:data.members, espn, config}}/>
-};
+    announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} />,
+    weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly}} />, // Remove seasonYear
+    activity: <RecentActivityView espn={espn} />,
+    transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} />,
+    drafts: <DraftsView espn={espn} />,
+    waivers: (
+      <Section title="Waivers & Dues" actions={
+        <div style={{display:"flex", gap:8}}>
+          {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
+          <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
+          {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
+            if(confirm("Reset waivers and announcements?")) {
+              try {
+                await apiCall('/api/league-data/reset-waivers', { method: 'POST' });
+                await loadServerData();
+              } catch (error) {
+                alert('Reset failed: ' + error.message);
+              }
+            }
+          }}>Reset Season</button>}
+        </div>
+      }>
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
+          <div className="card" style={{padding:16}}>
+            <h3>League Members</h3>
+            <ul style={{listStyle:"none",padding:0,margin:0}}>
+              {data.members.map(m=>(
+                <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
+                  <span>{m.name}</span>
+                  <span style={{fontSize:14,color:"#334155"}}>Adds (this week): {waiverCounts[m.id]||0} • Owes: ${waiverOwed[m.id]||0}</span>
+                  {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
+                </li>
+              ))}
+              {data.members.length===0 && <p style={{color:"#64748b"}}>Import teams via League Settings to populate members.</p>}
+            </ul>
+          </div>
+
+          <div className="card" style={{padding:16}}>
+            {isAdmin ? (
+              <>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <h3>Log a Pickup</h3>
+                  <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
+                </div>
+                <WaiverForm members={data.members} onAdd={addWaiver} disabled={data.members.length===0} />
+              </>
+            ) : (
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <h3>Activity (Wed→Tue)</h3>
+                <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
+              </div>
+            )}
+
+            <h4>History (selected week)</h4>
+            <ul style={{listStyle:"none",padding:0,margin:0}}>
+              {waiversThisWeek.map(w=>(
+                <li key={w.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
+                  <span><b>{membersById[w.userId]?.name||"Unknown"}</b> picked up <b>{w.player}</b> on {w.date}</span>
+                  {isAdmin && <button onClick={()=>deleteWaiver(w.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Delete</button>}
+                </li>
+              ))}
+              {waiversThisWeek.length===0 && <p style={{color:"#64748b"}}>No activity this week.</p>}
+            </ul>
+          </div>
+        </div>
+
+        {espnReport && (
+          <div className="card" style={{padding:12, marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+            <div>Official dues snapshot loaded. 
+              <div style={{fontSize:12, color:"#64748b", marginTop:4}}>
+                Last Updated: {new Date().toLocaleString()} 
+              </div>
+            </div>
+            <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
+          </div>
+        )}
+      </Section>
+    ),
+    dues: <DuesView
+      report={espnReport}
+      lastSynced={lastSynced}
+      loadOfficialReport={loadOfficialReport}
+      updateOfficialSnapshot={updateOfficialSnapshot}
+      isAdmin={isAdmin}
+      data={data}
+      setData={setData}
+      seasonYear={seasonYear}
+      updateBuyIns={updateBuyIns}
+      updateDuesPayments={updateDuesPayments}
+    />,
+    rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" />,
+    settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}}/>,
+    trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}}/>,
+    polls: <PollsView {...{isAdmin, members:data.members, espn}}/>
+  };
 
   return (
     <>
@@ -842,25 +725,9 @@ async function loadOfficialReport(silent=false){
             }}
           >
             <div className="brand">
-     <img src={config.logo} alt={`${config.name} Logo`} style={{width: 128, height: 128}} />
-     <div className="brand-title">{config.name} <span>Fantasy Football League</span></div>
-     
-     <button 
-       className="btn" 
-       onClick={switchLeague}
-       style={{
-         marginTop: 8,
-         fontSize: 12,
-         padding: "4px 12px",
-         background: "rgba(255, 255, 255, 0.1)",
-         color: "#e2e8f0",
-         border: "1px solid rgba(255, 255, 255, 0.2)",
-         borderRadius: 6
-       }}
-     >
-       ← Switch League
-     </button>
-   </div>
+              <Logo size={96}/>
+              <div className="brand-title">Blitzzz <span>Fantasy Football League</span></div>
+            </div>
             <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={setActive}/>
             <NavBtn id="weekly" label="🗓 Weekly Challenges" active={active} onClick={setActive}/>
             <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={setActive}/> 
@@ -886,18 +753,6 @@ async function loadOfficialReport(silent=false){
       <SyncOverlay open={syncing} pct={syncPct} msg={syncMsg} />
     </>
   );
-}
-
-function posIdToName(id) {
-  const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };
-  return map?.[id] || "—";
-}
-
-function slotIdToName(counts) {
-  const map = { 0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench", 21: "IR", 23: "FLEX", 24: "EDR", 25: "RDP", 26: "RDP", 27: "RDP", 28: "Head Coach" };
-  const res = {};
-  Object.keys(counts).forEach(k => res[k] = map[k] || `Slot ${k}`);
-  return res;
 }
 
 /* =========================
@@ -978,7 +833,7 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
   );
 }
 
-function RecentActivityView({ espn, config }) {
+function RecentActivityView({ espn }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activities, setActivities] = useState([]);
@@ -988,7 +843,7 @@ async function loadReport() {
   setLoading(true);
   setError("");
   try {
-    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}&leagueId=${config.id}`));
+    const r = await fetch(API(`/api/report?seasonId=${espn.seasonId}`));
     if (r.ok) {
       const reportData = await r.json();
       setReport(reportData);
@@ -1101,43 +956,30 @@ async function loadReport() {
   );
 }
 
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear }) {
-  const [editingId, setEditingId] = useState(null);
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly }) {
   const currentYear = new Date().getFullYear();
-  const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
-
-  console.log("=== WeeklyView Debug ===");
-  console.log("seasonYear:", seasonYear);
-  console.log("currentYear:", currentYear);
-  console.log("nowWeek calculated:", nowWeek);
-  console.log("Today's date:", new Date());
-
+  const nowWeek = leagueWeekOf(new Date(), currentYear).week || 0;
   const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
 
-  // Keep existing sorting logic...
   list.sort((a, b) => {
     const wa = a.week || 0, wb = b.week || 0, cur = nowWeek;
-    
-    const aIsPast = wa > 0 && wa < cur;
-    const bIsPast = wb > 0 && wb < cur;
-    const aIsCurrent = wa === cur;
-    const bIsCurrent = wb === cur;
-    const aIsFuture = wa > cur;
-    const bIsFuture = wb > cur;
-    
-    if (aIsPast && !bIsPast) return 1;
-    if (bIsPast && !aIsPast) return -1;
-    if (aIsPast && bIsPast) return wb - wa;
-    if (aIsCurrent && !bIsCurrent) return -1;
-    if (bIsCurrent && !aIsCurrent) return 1;
-    if (aIsFuture && bIsFuture) return wa - wb;
-    
+    const aIsCur = wa === cur, bIsCur = wb === cur;
+    if (aIsCur && !bIsCur) return -1;
+    if (bIsCur && !aIsCur) return 1;
+
+    const aFuture = wa > cur, bFuture = wb > cur;
+    if (aFuture && !bFuture) return -1;
+    if (bFuture && !aFuture) return 1;
+    if (aFuture && bFuture) return wa - wb;
+
+    const aPast = wa < cur, bPast = wb < cur;
+    if (aPast && bPast) return wb - wa;
     return 0;
   });
 
   return (
     <Section title="Weekly Challenges">
-      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} />}
+      {isAdmin && <WeeklyForm seasonYear={currentYear} onAdd={addWeekly} />}
       <div className="grid" style={{ gap: 12, marginTop: 12 }}>
         {list.length === 0 && (
           <div className="card" style={{ padding: 16, color: "#64748b" }}>
@@ -1146,113 +988,43 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
         )}
         {list.map(item => {
           const isPast = (item.week || 0) > 0 && (item.week || 0) < nowWeek;
-          const isEditing = editingId === item.id;
-          
           return (
             <div key={item.id} className="card" style={{ padding: 16 }}>
-              {isEditing ? (
-                <WeeklyEditForm 
-                  item={item} 
-                  onSave={(updatedEntry) => {
-                    editWeekly(item.id, updatedEntry);
-                    setEditingId(null);
-                  }}
-                  onCancel={() => setEditingId(null)}
-                />
-              ) : (
-                <>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <h3 style={{ margin: 0 }}>
-                        {item.weekLabel || "Week"}
-                        {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
-                      </h3>
-
-                    </div>
-                    {isAdmin && (
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button
-                          className="btn"
-                          style={btnSec}
-                          onClick={() => setEditingId(item.id)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn"
-                          style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }}
-                          onClick={() => deleteWeekly(item.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    )}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>
+                    {item.weekLabel || "Week"}
+                    {item.title ? <span style={{ fontWeight: 400, color: "#64748b" }}> — {item.title}</span> : null}
+                  </h3>
+                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                    Added {new Date(item.createdAt).toLocaleString()}
                   </div>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      whiteSpace: "pre-wrap",
-                      textDecoration: isPast ? "line-through" : "none",
-                      color: isPast ? "#64748b" : "#0b1220"
-                    }}
+                </div>
+                {isAdmin && (
+                  <button
+                    className="btn"
+                    style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }}
+                    onClick={() => deleteWeekly(item.id)}
                   >
-                    {item.text}
-                  </div>
-                </>
-              )}
+                    Delete
+                  </button>
+                )}
+              </div>
+              <div
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  textDecoration: isPast ? "line-through" : "none",
+                  color: isPast ? "#64748b" : "#0b1220"
+                }}
+              >
+                {item.text}
+              </div>
             </div>
           );
         })}
       </div>
     </Section>
-  );
-}
-
-function WeeklyEditForm({ item, onSave, onCancel }) {
-  const [weekLabel, setWeekLabel] = useState(item.weekLabel || "");
-  const [title, setTitle] = useState(item.title || "");
-  const [text, setText] = useState(item.text || "");
-
-  const handleSave = () => {
-    if (!weekLabel.trim()) return alert("Enter a week label");
-    if (!text.trim()) return alert("Enter a description");
-    
-    onSave({
-      weekLabel: weekLabel.trim(),
-      title: title.trim(),
-      text: text.trim(),
-      week: parseInt(String(weekLabel || "").replace(/\D/g, ""), 10) || 0
-    });
-  };
-
-  return (
-    <div>
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
-        <input
-          className="input"
-          placeholder="Week label (e.g., Week 1)"
-          value={weekLabel}
-          onChange={(e) => setWeekLabel(e.target.value)}
-        />
-        <input
-          className="input"
-          placeholder="Title of Challenge"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </div>
-      <textarea
-        className="input"
-        style={{ minHeight: 120, marginBottom: 8 }}
-        placeholder="Describe this week's challenge..."
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <button className="btn" style={btnSec} onClick={onCancel}>Cancel</button>
-        <button className="btn" style={btnPri} onClick={handleSave}>Save</button>
-      </div>
-    </div>
   );
 }
 
@@ -1358,7 +1130,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
   return (
     <div className="card" style={{ padding: 12, marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ marginTop: 0 }}>{seasonId} Waiver Dues Checklist{"\u2705"}</h3>
+        <h3 style={{ marginTop: 0 }}> {displayYear - 1} Waiver Dues Checklist{"\u2705"}</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="badge">
             ${paidAmount} / ${totalOwed} collected ({paidCount} / {report.totalsRows.length} paid)
@@ -1440,43 +1212,33 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <p style={{ marginTop: -8, color: "#64748b" }}>
   Last updated: <b>{lastSynced || "—"}</b>
   <br />
-  Rule: first two transactions per Wednesday→Tuesday week are free, then $5 each.
+  Rule: first two transactions per Thu→Wed week are free, then $5 each.
 </p>
       {!report && <p style={{ color: "#64748b" }}>No snapshot yet — Commissioner should click <b>Update Official Snapshot</b>.</p>}
 
 {report && (
-
   <div className="dues-grid dues-tight">
     <div className="dues-left">
-  <BuyInTracker
-    isAdmin={isAdmin}
-    members={data.members}
-    seasonYear={seasonYear}
-    data={data}
-    setData={setData}
-    updateBuyIns={updateBuyIns}
-  />
+     
+      {/* New Dues Payment Tracker */}
+      <DuesPaymentTracker
+        isAdmin={isAdmin}
+        data={data}
+        setData={setData}
+        seasonId={seasonYear}
+        report={report}
+        updateDuesPayments={updateDuesPayments}
+      />
 
-  {/* New Dues Payment Tracker */}
-  <DuesPaymentTracker
-    isAdmin={isAdmin}
-    data={data}
-    setData={setData}
-    seasonId={seasonYear}
-    report={report}
-    updateDuesPayments={updateDuesPayments}
-  />
-
-<PaymentSection
-  isAdmin={isAdmin}
-  data={data}
-  setData={setData}
-  updateBuyIns={updateBuyIns}
-/>
-
-</div>
-
-
+      <BuyInTracker
+        isAdmin={isAdmin}
+        members={data.members}
+        seasonYear={seasonYear}
+        data={data}
+        setData={setData}
+        updateBuyIns={updateBuyIns}
+      />
+    </div>
     
     {/* Rest of your dues view stays the same */}
     <div className="card dues-week" style={{ padding: 12, minWidth: 0 }}>
@@ -1683,60 +1445,56 @@ function DraftsView({ espn }) {
   const [draftData, setDraftData] = useState(null);
 
   const loadDraftData = async () => {
-  if (!espn.leagueId || !espn.seasonId) {
-    setError("Set League ID and Season in League Settings first.");
-    return;
-  }
-
-  setLoading(true);
-  setError("");
-  
-  try {
-    // Get team names
-    const teamJson = await fetchEspnJson({ 
-      leagueId: espn.leagueId, 
-      seasonId: espn.seasonId, 
-      view: "mTeam" 
-    });
-    const teamNames = Object.fromEntries(
-      (teamJson?.teams || []).map(t => [t.id, teamName(t)])
-    );
-
-    // Get draft data - use direct API call instead of apiCall
-    const response = await fetch(API(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`));
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    if (!espn.leagueId || !espn.seasonId) {
+      setError("Set League ID and Season in League Settings first.");
+      return;
     }
-    const data = await response.json();
-    const picks = data.picks || [];
 
-    // Group by team and add team names
-    const draftsByTeam = picks.reduce((acc, pick) => {
-      const team = teamNames[pick.teamId] || `Team ${pick.teamId}`;
-      if (!acc[team]) acc[team] = [];
-      acc[team].push({
-        round: pick.round,
-        pickNumber: pick.pickNumber,
-        player: pick.playerName || `Player #${pick.playerId}`,
-        playerId: pick.playerId
+    setLoading(true);
+    setError("");
+    
+    try {
+      // Get team names
+      const teamJson = await fetchEspnJson({ 
+        leagueId: espn.leagueId, 
+        seasonId: espn.seasonId, 
+        view: "mTeam" 
       });
-      return acc;
-    }, {});
+      const teamNames = Object.fromEntries(
+        (teamJson?.teams || []).map(t => [t.id, teamName(t)])
+      );
 
-    // Sort picks within each team by pick number
-    Object.values(draftsByTeam).forEach(teamPicks => {
-      teamPicks.sort((a, b) => (a.pickNumber || 0) - (b.pickNumber || 0));
-    });
+      // Get draft data
+      const response = await apiCall(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`);
+      const picks = response.picks || [];
 
-    setDraftData({ draftsByTeam, totalPicks: picks.length });
+      // Group by team and add team names
+      const draftsByTeam = picks.reduce((acc, pick) => {
+        const team = teamNames[pick.teamId] || `Team ${pick.teamId}`;
+        if (!acc[team]) acc[team] = [];
+        acc[team].push({
+          round: pick.round,
+          pickNumber: pick.pickNumber,
+          player: pick.playerName || `Player #${pick.playerId}`,
+          playerId: pick.playerId
+        });
+        return acc;
+      }, {});
 
-  } catch (err) {
-    console.error('Failed to load draft data:', err);
-    setError("Failed to load draft data: " + err.message);
-  }
-  
-  setLoading(false);
-};
+      // Sort picks within each team by pick number
+      Object.values(draftsByTeam).forEach(teamPicks => {
+        teamPicks.sort((a, b) => (a.pickNumber || 0) - (b.pickNumber || 0));
+      });
+
+      setDraftData({ draftsByTeam, totalPicks: picks.length });
+
+    } catch (err) {
+      console.error('Failed to load draft data:', err);
+      setError("Failed to load draft data: " + err.message);
+    }
+    
+    setLoading(false);
+  };
 
   useEffect(() => {
     loadDraftData();
@@ -1799,22 +1557,17 @@ function DraftsView({ espn }) {
   );
 }
 
-function Rosters({ leagueId, seasonId, apiCallLeague }) {
+function Rosters({ leagueId, seasonId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
 
-  const positionOrder = ["QB", "RB", "RB/WR", "WR", "TE", "FLEX", "D/ST", "K", "Bench"];
-
-const getPositionPriority = (slot) => {
-  // Handle multiple RBs and WRs by giving them same priority
-  if (slot === "RB") return 1;
-  if (slot === "WR") return 4;
-  if (slot === "Bench") return 999; // Always last
+  const positionOrder = ["QB", "RB", "RB/WR", "WR", "WR/TE", "TE", "FLEX", "OP", "D/ST", "K", "Bench"];
   
-  const index = positionOrder.findIndex(pos => slot.includes(pos));
-  return index === -1 ? 500 : index;
-};
+  const getPositionPriority = (slot) => {
+    const index = positionOrder.findIndex(pos => slot.includes(pos));
+    return index === -1 ? 999 : index;
+  };
 
   // Load roster data from server
   // In the Rosters component, update the useEffect:
@@ -1825,8 +1578,8 @@ useEffect(() => {
     setLoading(true);
     setError("");
     try {
-      // First try to load server-cached roster data using league-specific API
-      const response = await apiCallLeague(`/rosters?seasonId=${seasonId}`);
+      // First try to load server-cached roster data
+      const response = await apiCall(`/api/league-data/rosters?seasonId=${seasonId}`);
       if (response.rosterData && response.rosterData.length > 0) {
         // Use server-stored roster data
         setTeams(response.rosterData);
@@ -1838,7 +1591,6 @@ useEffect(() => {
           fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
         ]);
         
-        // Rest of the ESPN processing code stays the same...
         const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
         const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
         const items = (rosJson?.teams || []).map(t => {
@@ -1847,9 +1599,8 @@ useEffect(() => {
             const fullName = p?.fullName || "Player";
             const slot = slotMap[e.lineupSlotId] || "—";
             
-            const position = p?.defaultPositionId ? posIdToName(p.defaultPositionId) : "";
             const displayName = slot === "Bench" 
-              ? (position ? `${fullName} (${position})` : fullName)
+              ? fullName
               : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
             
             return { name: displayName, slot };
@@ -1874,6 +1625,7 @@ useEffect(() => {
     setLoading(false);
   })();
 }, [leagueId, seasonId]);
+
   return (
     <Section title="Rosters" actions={<span className="badge">Cached from Import</span>}>
       {!seasonId && <p style={{ color: "#64748b" }}>Set your ESPN Season in <b>League Settings</b>.</p>}
@@ -1884,22 +1636,8 @@ useEffect(() => {
           <div key={team.teamName} className="card" style={{ padding: 16 }}>
             <h3 style={{ marginTop: 0 }}>{team.teamName}</h3>
             <ul style={{ margin: 0, paddingLeft: 16 }}>
-  {team.entries.map((e, i) => {
-    const isFirstBench = e.slot === "Bench" && (i === 0 || team.entries[i-1]?.slot !== "Bench");
-    return (
-      <React.Fragment key={i}>
-        {isFirstBench && (
-  <li style={{ margin: "8px 0", padding: 0, listStyle: "none" }}>
-    <hr style={{ border: "none", borderTop: "2px solid #9ca3af", margin: "4px 0" }} />
-  </li>
-)}
-        <li style={{ marginBottom: 4 }}>
-          <b>{e.slot}</b> — {e.name}
-        </li>
-      </React.Fragment>
-    );
-  })}
-</ul>
+              {team.entries.map((e, i) => <li key={i}><b>{e.slot}</b> — {e.name}</li>)}
+            </ul>
           </div>
         ))}
       </div>
@@ -1986,121 +1724,43 @@ function TradingView({ isAdmin, addTrade, deleteTrade, data }) {
   );
 }
 
-function PollsView({ isAdmin, members, espn, config }) {
+function PollsView({ isAdmin, members, espn }) {
   const seasonKey = String(espn?.seasonId ?? "unknown");
   const [teamCode, setTeamCode] = useStored(`poll-teamcode:${seasonKey}`, "");
 
   const [polls, setPolls] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [voteChoice, setVoteChoice] = useState("");
-  const [activePollId, setActivePollId] = useState("");
-  useEffect(() => { if (polls.length > 0 && !activePollId) setActivePollId(polls[0].id); }, [polls, activePollId]);
-}}
 
   async function loadPolls() {
-  setLoading(true);
-  setErr("");
-  try {
-    const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}`));
-    if (!r.ok) {
-      throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    setLoading(true);
+    setErr("");
+    try {
+      const r = await fetch(API(`/api/polls?seasonId=${espn.seasonId}`));
+      const j = await r.json();
+      setPolls(j.polls || []);
+    } catch (e) {
+      setErr("Failed to load polls");
     }
-    const j = await r.json();
-    console.log('Raw API response:', j);
-    console.log('Polls array:', j.polls);
-    
-    setPolls(j.polls || []);
-    
-    // If we have polls, make sure one is selected
-    if ((j.polls || []).length > 0 && !activePollId) {
-      setActivePollId(j.polls[0].id);
-    }
-    
-  } catch (e) {
-    console.error('Failed to load polls:', e);
-    setErr("Failed to load polls: " + e.message);
+    setLoading(false);
   }
-  setLoading(false);
-}
-
   useEffect(() => { loadPolls(); }, []);
 
   const [createQ, setCreateQ] = useState("");
   const [createOpts, setCreateOpts] = useState("Yes\nNo");
-
-async function createPoll() {
-  console.log('Creating poll with:', { question: createQ, options: createOpts });
-  const opts = createOpts.split("\n").map(s => s.trim()).filter(Boolean);
-  console.log('Parsed options:', opts);
-  
-  if (!createQ || opts.length < 2) {
-    console.log('Validation failed:', { hasQuestion: !!createQ, optionsCount: opts.length });
-    return alert("Enter a question and at least two options.");
-  }
-  
-  try {
+  async function createPoll() {
+    const opts = createOpts.split("\n").map(s => s.trim()).filter(Boolean);
+    if (!createQ || opts.length < 2) return alert("Enter a question and at least two options.");
     const r = await fetch(API("/api/polls/create"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ question: createQ, options: opts })
     });
-    
-    console.log('Poll create response:', r.status, r.ok);
-    
-    if (!r.ok) {
-      const errorText = await r.text();
-      console.log('Poll create error:', errorText);
-      return alert("Create failed: " + errorText);
-    }
-    
-    // Success feedback
-    alert("Poll created successfully!");
-    
-    // Clear form
+    if (!r.ok) return alert("Create failed (commissioner only?)");
     setCreateQ("");
     setCreateOpts("Yes\nNo");
-    
-    // Force reload polls
-    console.log('Forcing poll reload...');
-    await loadPolls();
-    
-    // Small delay to ensure state updates
-    setTimeout(() => {
-      console.log('Current polls state after reload:', polls);
-    }, 100);
-    
-  } catch (error) {
-    console.error('Poll creation error:', error);
-    alert("Failed to create poll: " + error.message);
+    loadPolls();
   }
-}
-
-async function editPoll(pollId) {
-  const poll = polls.find(p => p.id === pollId);
-  if (!poll) return;
-  
-  const newQuestion = prompt("Edit question:", poll.question);
-  if (!newQuestion) return;
-  
-  const newOptionsText = prompt("Add new options (one per line):", "");
-  if (newOptionsText === null) return;
-  
-  const newOptions = newOptionsText.split("\n").map(s => s.trim()).filter(Boolean);
-  
-  try {
-    const r = await fetch(API("/api/polls/edit"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
-      body: JSON.stringify({ pollId, question: newQuestion, newOptions })
-    });
-    
-    if (!r.ok) return alert("Edit failed");
-    await loadPolls();
-  } catch (error) {
-    alert("Edit failed: " + error.message);
-  }
-}
 
   async function onIssueSeasonTeamCodes() {
     if (!isAdmin) return alert("Commissioner only.");
@@ -2119,7 +1779,7 @@ async function editPoll(pollId) {
 
       const k = await fetch(API("/api/polls/issue-team-codes"), {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+        headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
         body: JSON.stringify({ seasonId: espn.seasonId, teams })
       });
       if (!k.ok) throw new Error(await k.text());
@@ -2135,7 +1795,7 @@ async function editPoll(pollId) {
     if (!espn?.seasonId) return alert("Season not set.");
     try {
       const r = await fetch(API(`/api/polls/team-codes?seasonId=${espn.seasonId}`), {
-        headers: { "x-admin": config.adminPassword }
+        headers: { "x-admin": ADMIN_ENV }
       });
       if (!r.ok) throw new Error(await r.text());
       const { codes } = await r.json();
@@ -2156,7 +1816,7 @@ async function editPoll(pollId) {
     if (!confirm("Delete this poll? This removes its results and codes.")) return;
     const r = await fetch(API("/api/polls/delete"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ pollId })
     });
     if (!r.ok) return alert("Delete failed (commissioner only?)");
@@ -2167,14 +1827,17 @@ async function editPoll(pollId) {
   async function setClosed(pollId, closed) {
     const r = await fetch(API("/api/polls/close"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin": config.adminPassword },
+      headers: { "Content-Type": "application/json", "x-admin": ADMIN_ENV },
       body: JSON.stringify({ pollId, closed })
     });
     if (!r.ok) return alert("Failed to update poll.");
     loadPolls();
   }
 
-  
+  const [voteChoice, setVoteChoice] = useState("");
+  const [activePollId, setActivePollId] = useState("");
+  useEffect(() => { if (polls.length > 0 && !activePollId) setActivePollId(polls[0].id); }, [polls, activePollId]);
+
   async function castVote() {
     if (!activePollId) return alert("Choose a poll");
     if (!teamCode) {
@@ -2262,16 +1925,15 @@ async function editPoll(pollId) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h3 style={{ marginTop: 0 }}>{poll.question}</h3>
                   {isAdmin && (
-  <div style={{ display: "flex", gap: 8 }}>
-    {poll.closed
-      ? <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, false)}>Reopen</button>
-      : <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, true)}>Close</button>}
-    <button className="btn" style={btnSec} onClick={() => editPoll(poll.id)}>Edit</button>
-    <button className="btn" style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }} onClick={() => deletePoll(poll.id)}>
-      Delete
-    </button>
-  </div>
-)}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {poll.closed
+                        ? <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, false)}>Reopen</button>
+                        : <button className="btn" style={btnSec} onClick={() => setClosed(poll.id, true)}>Close</button>}
+                      <button className="btn" style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }} onClick={() => deletePoll(poll.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
 
 <div className="card" style={{ padding: 12, background: "#f8fafc", marginBottom: 12 }}>
@@ -2350,132 +2012,6 @@ async function editPoll(pollId) {
     </Section>
   );
 }
-
-
-function WaiversView({ 
-  espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
-  updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember 
-}) {
-  // Calculate waiver data from ESPN report if available
-  const espnWaiverData = useMemo(() => {
-    if (!espnReport?.rawMoves) return { waiversThisWeek: [], waiverCounts: {}, waiverOwed: {} };
-    
-    const weekKey = weekKeyFrom(selectedWeek);
-    
-// Filter adds from the current week using server's Wed→Tue calculation
-const waiversThisWeek = espnReport.rawMoves.filter(move => {
-  if (move.action !== "ADD" || move.week <= 0) return false;
-  // Use the server's week calculation (already stored in move.week)
-  // and compare against selected week
-  const selectedServerWeek = selectedWeek.week;
-  return move.week === selectedServerWeek;
-});
-    
-    // Count adds by team
-    const waiverCounts = {};
-    waiversThisWeek.forEach(move => {
-      waiverCounts[move.team] = (waiverCounts[move.team] || 0) + 1;
-    });
-    
-    // Calculate what each team owes
-    const waiverOwed = {};
-    Object.keys(waiverCounts).forEach(team => {
-      const count = waiverCounts[team] || 0;
-      waiverOwed[team] = Math.max(0, count - 2) * 5;
-    });
-    
-    return { waiversThisWeek, waiverCounts, waiverOwed };
-  }, [espnReport, selectedWeek, seasonYear]);
-
-  const { waiversThisWeek, waiverCounts, waiverOwed } = espnWaiverData;
-
-  return (
-    <Section title="Waivers & Dues" actions={
-      <div style={{display:"flex", gap:8}}>
-        {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-        <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-        {isAdmin && <button className="btn" style={btnSec} onClick={async ()=>{ 
-          if(confirm("Reset waivers and announcements?")) {
-            try {
-              await apiCallLeague('/reset-waivers', { method: 'POST' });
-              await loadServerData();
-            } catch (error) {
-              alert('Reset failed: ' + error.message);
-            }
-          }
-        }}>Reset Season</button>}
-      </div>
-    }>
-      <div className="grid" style={{gridTemplateColumns:"1fr 1fr"}}>
-        <div className="card" style={{padding:16}}>
-          <h3>League Members (from ESPN data)</h3>
-          <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {espnReport?.totalsRows ? (
-              espnReport.totalsRows.map(row => (
-                <li key={row.name} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-                  <span>{row.name}</span>
-                  <span style={{fontSize:14,color:"#334155"}}>
-                    Adds (this week): {waiverCounts[row.name] || 0} • Owes: ${waiverOwed[row.name] || 0}
-                  </span>
-                </li>
-              ))
-            ) : (
-              data.members.map(m => (
-                <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-                  <span>{m.name}</span>
-                  <span style={{fontSize:14,color:"#334155"}}>No ESPN data available</span>
-                  {isAdmin && <button onClick={()=>deleteMember(m.id)} style={{color:"#dc2626",background:"transparent",border:"none",cursor:"pointer"}}>Remove</button>}
-                </li>
-              ))
-            )}
-          </ul>
-        </div>
-
-        <div className="card" style={{padding:16}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <h3>Activity (Wed→Tue) - ESPN Data</h3>
-            <WeekSelector selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} seasonYear={seasonYear}/>
-          </div>
-
-          <h4>Transactions (selected week)</h4>
-          <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {waiversThisWeek.length > 0 ? waiversThisWeek.map((move, index) => (
-              <li key={index} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #e2e8f0",fontSize:14}}>
-                <span>
-                  <b>{move.team}</b> picked up <b>{move.player}</b> 
-                  <span style={{color:"#64748b", fontSize:12}}> ({move.method})</span>
-                </span>
-                <span style={{color:"#64748b"}}>{move.date}</span>
-              </li>
-            )) : (
-              <p style={{color:"#64748b"}}>No activity this week.</p>
-            )}
-          </ul>
-
-          {!espnReport && (
-            <div style={{marginTop:16, padding:12, background:"#fef3c7", borderRadius:6}}>
-              <p style={{margin:0, color:"#92400e"}}>
-                <strong>No ESPN data loaded.</strong> Click "Update Official Snapshot" to load transaction data.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {espnReport && (
-        <div className="card" style={{padding:12, marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-          <div>ESPN transaction data loaded. 
-            <div style={{fontSize:12, color:"#64748b", marginTop:4}}>
-              Last Updated: {espnReport.lastSynced} 
-            </div>
-          </div>
-          <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
-        </div>
-      )}
-    </Section>
-  );
-}
-
 
 /* =========================
    Form Components
@@ -2759,68 +2295,6 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
 
   if (cur.hidden && !isAdmin) return null;
 
-  return (
-    <div className="card" style={{ padding: 16, marginTop: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <h3 style={{ marginTop: 0 }}>${BUYIN} Buy-in Checklist ✅</h3>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span className="badge">{paidCount} / {members.length} paid</span>
-          {isAdmin && (
-            cur.hidden
-              ? <button className="btn" onClick={() => patch({ hidden: false })}>Show tracker</button>
-              : allPaid
-                ? <button className="btn" onClick={() => patch({ hidden: true })}>Hide (all paid)</button>
-                : null
-          )}
-        </div>
-      </div>
-
-      {members.length === 0 && (
-        <p style={{ color: "#64748b", marginTop: 0 }}>
-          No members yet. Import teams in <b>League Settings</b> first.
-        </p>
-      )}
-
-      {members.length > 0 && (
-        <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            {isAdmin && (
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn" onClick={markAll}>Mark all paid</button>
-                <button className="btn" onClick={resetAll}>Reset</button>
-              </div>
-            )}
-          </div>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {[...members].sort((a, b) => a.name.localeCompare(b.name)).map(m => (
-              <li key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #e2e8f0" }}>
-                <input
-                  type="checkbox"
-                  checked={!!cur.paid[m.id]}
-                  onChange={() => isAdmin && togglePaid(m.id)}
-                  disabled={!isAdmin}
-                />
-                <span style={{ textDecoration: cur.paid[m.id] ? "line-through" : "none" }}>{m.name}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
-  const seasonKey = "current";
-  const cur = (data.buyins && data.buyins[seasonKey]) || {
-    paid: {},
-    hidden: false,
-    venmoLink: "",
-    zelleEmail: "",
-    venmoQR: ""
-  };
-
   const [venmo, setVenmo] = React.useState(cur.venmoLink || "https://venmo.com/u/");
   const [zelle, setZelle] = React.useState(cur.zelleEmail || "");
   
@@ -2828,18 +2302,6 @@ function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
     setVenmo(cur.venmoLink || "https://venmo.com/u/"); 
     setZelle(cur.zelleEmail || ""); 
   }, [seasonKey, data.buyins]);
-
-  const patch = async (updates) => {
-    const newData = { ...cur, ...updates };
-    setData(d => ({ ...d, buyins: { ...(d.buyins || {}), [seasonKey]: newData } }));
-    try {
-      await updateBuyIns(seasonKey, newData);
-    } catch (error) {
-      console.error('Failed to update buy-ins:', error);
-      setData(d => ({ ...d, buyins: { ...(d.buyins || {}), [seasonKey]: cur } }));
-      alert('Failed to save buy-in changes: ' + error.message);
-    }
-  };
 
   const saveMeta = async () => {
     const venmoLink = venmo.trim();
@@ -2867,63 +2329,114 @@ function PaymentSection({ isAdmin, data, setData, updateBuyIns }) {
   };
 
   return (
-    <div className="card" style={{ padding: 12, marginTop: 16 }}>
-      <h4 style={{ marginTop: 0 }}>Pay Dues</h4>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/" && (
-          <a className="btn" style={{ background: "#3D95CE", color: "#fff", padding: "10px 12px", textAlign: "center", textDecoration: "none", borderRadius: "6px", fontWeight: "600" }} href={cur.venmoLink} target="_blank" rel="noreferrer">
-            Pay with Venmo
-          </a>
-        )}
-        {cur.zelleEmail && (
-  <button type="button" className="btn" style={{ background: "#6D1ED4", color: "#fff", padding: "10px 12px", fontWeight: "600", fontSize: "15px", border: "none", borderRadius: "6px", cursor: "pointer" }} onClick={copyZelle}>
-    Pay with Zelle
-  </button>
-)}
+    <div className="card" style={{ padding: 16, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <h3 style={{ marginTop: 0 }}>${BUYIN} Buy-in Checklist ✅</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="badge">{paidCount} / {members.length} paid</span>
+          {isAdmin && (
+            cur.hidden
+              ? <button className="btn" onClick={() => patch({ hidden: false })}>Show tracker</button>
+              : allPaid
+                ? <button className="btn" onClick={() => patch({ hidden: true })}>Hide (all paid)</button>
+                : null
+          )}
+        </div>
       </div>
 
-      {(cur.venmoQR || (cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/") || cur.zelleEmail) && (
-        <div style={{ marginTop: 8 }}>
-          
-            <a href={cur.venmoLink || (cur.zelleEmail ? `mailto:${encodeURIComponent(cur.zelleEmail)}` : "#")}
-            target="_blank"
-            rel="noreferrer"
-            title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}
-          >
-            {cur.venmoQR && (
-              <img src={cur.venmoQR} alt="Venmo QR" style={{ maxWidth: "200px", height: "auto" }} />
-            )}
-          </a>
-        </div>
+      {members.length === 0 && (
+        <p style={{ color: "#64748b", marginTop: 0 }}>
+          No members yet. Import teams in <b>League Settings</b> first.
+        </p>
       )}
 
-      {isAdmin && (
-        <>
-          <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8, marginTop: 8 }}>
-            <input 
-              className="input" 
-              placeholder="https://venmo.com/u/YourHandle" 
-              value={venmo} 
-              onChange={e => setVenmo(e.target.value)}
-            />
-            <input 
-              className="input" 
-              placeholder="Zelle email" 
-              value={zelle} 
-              onChange={e => setZelle(e.target.value)}
-            />
+      {members.length > 0 && (
+        <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 16 }}>
+          <div className="card" style={{ padding: 12, background: "#f8fafc" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              {isAdmin && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn" onClick={markAll}>Mark all paid</button>
+                  <button className="btn" onClick={resetAll}>Reset</button>
+                </div>
+              )}
+            </div>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {[...members].sort((a, b) => a.name.localeCompare(b.name)).map(m => (
+                <li key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #e2e8f0" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!cur.paid[m.id]}
+                    onChange={() => isAdmin && togglePaid(m.id)}
+                    disabled={!isAdmin}
+                  />
+                  <span style={{ textDecoration: cur.paid[m.id] ? "line-through" : "none" }}>{m.name}</span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-            <input type="file" accept="image/*" onChange={onUploadQR} />
-            {cur.venmoQR && <button className="btn" onClick={() => patch({ venmoQR: "" })}>Remove QR</button>}
-            <button className="btn primary" onClick={saveMeta}>Save links</button>
+
+          <div className="card buyin-pay" style={{ padding: 12 }}>
+            <h4 style={{ marginTop: 0 }}>Pay Dues</h4>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/" && (
+                <a className="btn primary" href={cur.venmoLink} target="_blank" rel="noreferrer">
+                  Pay with Venmo
+                </a>
+              )}
+              {cur.zelleEmail && (
+                <button type="button" className="btn" onClick={copyZelle}>
+                  Pay with Zelle
+                </button>
+              )}
+            </div>
+
+            {(cur.venmoQR || (cur.venmoLink && cur.venmoLink !== "https://venmo.com/u/") || cur.zelleEmail) && (
+              <div style={{ marginTop: 8 }}>
+                <a
+                  href={cur.venmoLink || `mailto:${encodeURIComponent(cur.zelleEmail)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={cur.venmoLink ? "Open Venmo" : "Email for Zelle"}
+                >
+                  {cur.venmoQR && (
+                    <img src={cur.venmoQR} alt="Venmo QR" style={{ maxWidth: "200px", height: "auto" }} />
+                  )}
+                </a>
+              </div>
+            )}
+
+            {isAdmin && (
+              <>
+                <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8, marginTop: 8 }}>
+                  <input 
+                    className="input" 
+                    placeholder="https://venmo.com/u/YourHandle" 
+                    value={venmo} 
+                    onChange={e => setVenmo(e.target.value)}
+                  />
+                  <input 
+                    className="input" 
+                    placeholder="Zelle email" 
+                    value={zelle} 
+                    onChange={e => setZelle(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                  <input type="file" accept="image/*" onChange={onUploadQR} />
+                  {cur.venmoQR && <button className="btn" onClick={() => patch({ venmoQR: "" })}>Remove QR</button>}
+                  <button className="btn primary" onClick={saveMeta}>Save links</button>
+                </div>
+              </>
+            )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
 }
+
 function RichEditor({ html, setHtml, readOnly }) {
   const [local, setLocal] = React.useState(html || "");
   const ref = React.useRef(null);
@@ -3050,7 +2563,7 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear }) {
     setSelectedWeek(w.week > 0 ? w : anchor);
   };
   
-  const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
+  const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Thu→Wed)` : `Preseason (Thu→Wed)`;
   
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -3075,14 +2588,27 @@ const methodLabel = (m) => {
   }
 };
 
+
+function posIdToName(id) {
+  const map = { 0: "QB", 1: "TQB", 2: "RB", 3: "RB", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 8: "DT", 9: "DE", 10: "LB", 11: "DE", 12: "DB", 13: "DB", 14: "DP", 15: "D/ST", 16: "D/ST", 17: "K" };
+  return map?.[id] || "—";
+}
+
+function slotIdToName(counts) {
+  const map = { 0: "QB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench", 21: "IR", 23: "FLEX", 24: "EDR", 25: "RDP", 26: "RDP", 27: "RDP", 28: "Head Coach" };
+  const res = {};
+  Object.keys(counts).forEach(k => res[k] = map[k] || `Slot ${k}`);
+  return res;
+}
+
 /* =========================
    Splash and Overlays
    ========================= */
 function IntroSplash() {
   const [show, setShow] = useState(true);
-  useEffect(() => { const t = setTimeout(() => setShow(false), 4000); return () => clearTimeout(t); }, []);
+  useEffect(() => { const t = setTimeout(() => setShow(false), 1600); return () => clearTimeout(t); }, []);
   if (!show) return null;
-  return <div className="splash"><img src="/Blitzzz-logo-transparent.png" alt="Blitzzz Logo" style={{width: 256, height: 256}} /></div>;
+  return <div className="splash"><Logo size={160} /></div>;
 }
 
 function SyncOverlay({ open, pct, msg }) {

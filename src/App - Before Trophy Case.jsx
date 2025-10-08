@@ -288,7 +288,7 @@ const switchLeague = () => {
 
 const VALID_TABS = [
   "announcements","hoodtrophies","activity","weekly","highestscorer","waivers","dues",
-  "transactions","drafts","rosters","powerrankings","nerddata","settings","trading","paydues","polls" 
+  "transactions","drafts","rosters","powerrankings","settings","trading","paydues","polls" 
 ];
   const initialTabFromHash = () => {
   const h = (window.location.hash || "").replace("#","").trim();
@@ -297,14 +297,15 @@ const VALID_TABS = [
 
   const [active, setActive] = useState(initialTabFromHash);
 
-    useEffect(() => {
-  const onHash = () => {
-    const h = (window.location.hash || "").replace("#","").trim();
-    setActive(VALID_TABS.includes(h) ? h : "activity");
-  };
-  window.addEventListener("hashchange", onHash);
-  return () => window.removeEventListener("hashchange", onHash);
-}, []);
+  useEffect(() => {
+    const onHash = () => {
+      const h = (window.location.hash || "").replace("#","").trim();
+      setActive(VALID_TABS.includes(h) ? h : "activity");
+    };
+    window.addEventListener("hashchange", onHash);
+    onHash();
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   useEffect(() => {
     const want = `#${active}`;
@@ -921,8 +922,7 @@ async function loadOfficialReport(silent=false){
   /* ---- Views ---- */
   const views = {
   announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
-  hoodtrophies: <TrophyCaseView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
-
+  hoodtrophies: <HoodTrophiesView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
   activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
@@ -961,7 +961,6 @@ async function loadOfficialReport(silent=false){
 />,
   rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
   powerrankings: <PowerRankingsView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
-  nerddata: <NerdDataView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}} btnPri={btnPri} btnSec={btnSec}/>,
   trading: <TradingView {...{isAdmin,addTrade,deleteTrade,data}} btnPri={btnPri} btnSec={btnSec}/>,
   polls: <PollsView {...{isAdmin, members:data.members, espn, config}} btnPri={btnPri} btnSec={btnSec}/>,
@@ -1036,7 +1035,7 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           
           {/* Navigation with mobile close functionality */}
           <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
-          <NavBtn id="hoodtrophies" label="🏆 Trophy Case" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="hoodtrophies" label="🏆 Hood Trophies" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           {config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           {config.id === 'sculpin' && <NavBtn id="highestscorer" label="👑 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> 
@@ -1046,7 +1045,6 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           <NavBtn id="drafts" label="📋 Draft Recap" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="rosters" label="📋 Rosters" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="powerrankings" label="🏋️ Power Rankings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
-          <NavBtn id="nerddata" label="🤓 Nerd Data" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="paydues" label="💰 Pay Dues" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
@@ -1060,7 +1058,6 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
         </aside>
         
         <main style={{padding: 24, paddingTop: 47}}>
-  {console.log('Active view:', active, 'View exists:', !!views[active])}
           {views[active]}
         </main>
       </div>
@@ -4238,7 +4235,7 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
   );
 }
 
-function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
+function HoodTrophiesView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
 const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21; // Bench, IR
 
@@ -4276,7 +4273,7 @@ const ht_teamProjection = (teamSideObj, week) => {
   }
   return sum;
 };
-  const [naughtyLists, setNaughtyLists] = useState({}); // Store naughty lists by week
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [weeklyTrophies, setWeeklyTrophies] = useState([]);
@@ -4342,22 +4339,6 @@ let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
         );
         
         if (!allGamesComplete) continue;
-
-// Fetch naughty list for this week
-try {
-  const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
-  const naughtyResponse = await fetch(
-    `${baseURL}/api/leagues/${config.id}/weekly-awards/${espn.seasonId}?week=${weekNum}`
-  );
-  const naughtyData = await naughtyResponse.json();
-  
-  setNaughtyLists(prev => ({
-    ...prev,
-    [weekNum]: naughtyData.naughtyList || []
-  }));
-} catch (err) {
-  console.error(`Failed to load naughty list for week ${weekNum}:`, err);
-}
  
         const weekTrophies = {
           week: weekNum,
@@ -4641,6 +4622,9 @@ if (__underT.team) {
           });
         }
 
+
+
+
         trophiesData.push(weekTrophies);
       }
 
@@ -4894,7 +4878,7 @@ setTrophyCounts(trophyCounts);
   };
 
   return (
-    <Section title="🏆 Trophy Case" actions={
+    <Section title="🏆 Hood Trophies" actions={
       <button className="btn" style={btnSec} onClick={loadTrophies} disabled={loading}>
         {loading ? "Loading..." : "Refresh"}
       </button>
@@ -5005,7 +4989,6 @@ setTrophyCounts(trophyCounts);
                   </div>
                 ))}
               </div>
-
             </div>
           )}
         </div>
@@ -5259,7 +5242,6 @@ setTrophyCounts(trophyCounts);
       <div key="wm">🤡 The <strong>Worst Manager</strong> so far is <strong>{worstMgrLeader}</strong>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
     );
   }
-
 // --- Separator before the last two meta awards ---
 rows.push(<br key="sep-br" />);
 
@@ -5337,212 +5319,8 @@ if (negLeader && negMax > 0) {
 
   </div>
 )}
-
-{/* Naughty List Section - After all weekly trophies */}
-      {Object.keys(naughtyLists).length > 0 && (
-        <div style={{ marginTop: 32 }}>
-          <h2 style={{ marginBottom: 16 }}>🎅 Naughty List (Started Inactive Players)</h2>
-          
-          {Object.entries(naughtyLists)
-            .sort(([weekA], [weekB]) => parseInt(weekB) - parseInt(weekA)) // Newest first
-            .map(([week, naughtyList], index) => {
-              const weekNum = parseInt(week);
-              const isExpanded = index === 0; // Only first (most recent) is expanded
-              
-              if (!naughtyList || naughtyList.length === 0) return null;
-              
-              return (
-                <div key={week} className="card" style={{ padding: 16, marginBottom: 16 }}>
-                  <div 
-                    style={{ 
-                      display: "flex", 
-                      justifyContent: "space-between", 
-                      alignItems: "center", 
-                      cursor: "pointer" 
-                    }}
-                    onClick={() => toggleWeek(weekNum)}
-                  >
-                    <h3 style={{ margin: 0 }}>Week {week} Naughty List</h3>
-                    <button className="btn" style={btnSec}>
-                      {expandedWeeks.has(weekNum) ? "Hide ▲" : "Show ▼"}
-                    </button>
-                  </div>
-
-                  {expandedWeeks.has(weekNum) && (
-                    <div style={{ marginTop: 16, overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                            <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
-                            <th style={{ padding: "12px 8px", textAlign: "center" }}>Inactive Count</th>
-                            <th style={{ padding: "12px 8px", textAlign: "left" }}>Players</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {naughtyList.map((team, idx) => (
-                            <tr key={idx} style={{ 
-                              borderBottom: "1px solid #f1f5f9",
-                              backgroundColor: idx === 0 ? "#fef2f2" : "transparent"
-                            }}>
-                              <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
-                              <td style={{ 
-                                padding: "12px 8px", 
-                                textAlign: "center",
-                                fontWeight: "bold",
-                                color: team.inactiveCount > 2 ? "#dc2626" : "#ea580c"
-                              }}>
-                                {team.inactiveCount}
-                              </td>
-                              <td style={{ padding: "12px 8px", fontSize: "12px", color: "#64748b" }}>
-                                {team.inactivePlayers.map(p => p.name).join(', ')}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-        </div>
-      )}
-
     </Section>
   );
-}
-
-function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
-  console.log('NerdDataView - espn:', espn);
-  console.log('NerdDataView - config:', config);
-  
-  const [loading, setLoading] = useState(false);
-  const [weeklyLuck, setWeeklyLuck] = useState({});
-  const [expandedWeeks, setExpandedWeeks] = useState(new Set([4]));
-  const [currentWeek, setCurrentWeek] = useState(4);
-
-  const toggleWeek = (week) => {
-    setExpandedWeeks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(week)) {
-        newSet.delete(week);
-      } else {
-        newSet.add(week);
-      }
-      return newSet;
-    });
-  };
-
-  useEffect(() => {
-    console.log('useEffect running - espn:', espn);
-    console.log('useEffect running - seasonId:', espn.seasonId);
-    console.log('useEffect running - leagueId:', espn.leagueId);
-    
-    if (espn.seasonId && espn.leagueId) {
-      console.log('Condition passed, calling loadLuckIndex');
-      loadLuckIndex();
-    } else {
-      console.log('Condition failed - not calling loadLuckIndex');
-    }
-  }, [espn.seasonId, espn.leagueId]);
-
-  const loadLuckIndex = async () => {
-  console.log('loadLuckIndex called!');
-  setLoading(true);
-  try {
-    const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
-    const response = await fetch(
-      `${baseURL}/api/leagues/${config.id}/luck-index/${espn.seasonId}?currentWeek=${currentWeek}`,
-      { method: 'POST' }
-    );
-    console.log('Response status:', response.status);
-    const data = await response.json();
-    console.log('Parsed data:', data);
-    console.log('weeklyLuck from data:', data.weeklyLuck);
-    setWeeklyLuck(data.weeklyLuck || {});
-    console.log('State should be updated now');
-  } catch (err) {
-    console.error('Failed to load luck index:', err);
-  }
-  setLoading(false);
-};
-
-  return (
-  <Section title="🤓 Nerd Data">
-    <div className="card" style={{ padding: 16 }}>
-      <h2 style={{ marginBottom: 16 }}>Weekly Luck Index</h2>
-      
-      {loading && <div style={{ padding: 32, textAlign: 'center' }}>Loading...</div>}
-      
-      {!loading && Object.keys(weeklyLuck).length > 0 && (
-        <div>
-          {Object.entries(weeklyLuck)
-            .sort(([a], [b]) => parseInt(b) - parseInt(a))
-            .map(([week, teams]) => (
-              <div key={week} className="card" style={{ padding: 16, marginBottom: 16 }}>
-                <div 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => toggleWeek(parseInt(week))}
-                >
-                  <h3 style={{ margin: 0 }}>Week {week}</h3>
-                  <button className="btn" style={btnSec}>
-                    {expandedWeeks.has(parseInt(week)) ? 'Hide ▲' : 'Show ▼'}
-                  </button>
-                </div>
-
-                {expandedWeeks.has(parseInt(week)) && (
-                  <div style={{ marginTop: 16, overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                          <th style={{ padding: '12px 8px', textAlign: 'left' }}>Team</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Result</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>All-Play</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Expected Win %</th>
-                          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Luck Index</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {teams
-                          .sort((a, b) => b.luckIndex - a.luckIndex)
-                          .map((team, idx) => (
-                            <tr key={team.teamId} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: '12px 8px' }}>{team.teamName}</td>
-                              <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                                {team.actualWin ? 'W' : 'L'}
-                              </td>
-                              <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                                {team.allPlayWins}-{team.allPlayLosses}
-                              </td>
-                              <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                                {team.expectedWinPct}%
-                              </td>
-                              <td style={{ 
-                                padding: '12px 8px', 
-                                textAlign: 'center',
-                                color: team.luckIndex > 0 ? '#16a34a' : team.luckIndex < 0 ? '#dc2626' : '#64748b',
-                                fontWeight: 'bold'
-                              }}>
-                                {team.luckIndex > 0 ? '+' : ''}{team.luckIndex}
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))}
-        </div>
-      )}
-    </div>
-  </Section>
-);
 }
 /* =========================
    Power Rankings

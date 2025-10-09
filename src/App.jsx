@@ -5683,7 +5683,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
       const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
       const [rankingsRes, playoffRes, sosRes] = await Promise.all([
         fetch(`${baseURL}/api/leagues/${config.id}/power-rankings/${espn.seasonId}?currentWeek=${completedWeek}`).then(r => r.json()),
-        fetch(`${baseURL}/api/leagues/${config.id}/playoff-odds/${espn.seasonId}?currentWeek=${completedWeek}&simulations=50000`).then(r => r.json()),
+        fetch(`${baseURL}/api/leagues/${config.id}/playoff-odds/${espn.seasonId}?currentWeek=${completedWeek}&simulations=10,000`).then(r => r.json()),
         fetch(`${baseURL}/api/leagues/${config.id}/strength-of-schedule/${espn.seasonId}?currentWeek=${completedWeek}`).then(r => r.json())
       ]);
 

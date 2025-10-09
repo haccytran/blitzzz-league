@@ -884,15 +884,13 @@ def get_positional_records():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
     
-@app.route('/strength-of-schedule', methods=['POST'])
-def calculate_strength_of_schedule():
+@app.route('/api/leagues/<league_id>/strength-of-schedule/<season_id>', methods=['POST', 'GET'])
+def calculate_strength_of_schedule(league_id, season_id):
     try:
-        data = request.json
-        league_id = data.get('leagueId')
-        year = data.get('year')
-        current_week = data.get('currentWeek', 1)
-        espn_s2 = data.get('espn_s2')
-        swid = data.get('swid')
+        current_week = request.args.get('currentWeek', 1, type=int)
+        espn_s2 = os.environ.get('ESPN_S2')
+        swid = os.environ.get('SWID')
+        year = season_id
         
         if not league_id or not year:
             return jsonify({"error": "leagueId and year are required"}), 400

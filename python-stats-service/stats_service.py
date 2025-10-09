@@ -890,64 +890,98 @@ def calculate_strength_of_schedule(league_id, season_id):
         current_week = request.args.get('currentWeek', 1, type=int)
         espn_s2 = os.environ.get('ESPN_S2')
         swid = os.environ.get('SWID')
-        year = season_id
         
-        print(f"Strength of Schedule - League: {league_id}, Season: {year}, Current week: {current_week}")
+        print(f"[SOS] Starting calculation - League: {league_id}, Season: {season_id}, Current week: {current_week}")
         
         if not espn_s2 or not swid:
+            print("[SOS] ERROR: ESPN credentials not configured")
             return jsonify({'error': 'ESPN credentials not configured'}), 500
             
         # Fetch league data
-        league = League(league_id=int(league_id), year=int(year), espn_s2=espn_s2, swid=swid)
+        try:
+            league = League(league_id=int(league_id), year=int(season_id), espn_s2=espn_s2, swid=swid)
+            print(f"[SOS] League loaded successfully - {len(league.teams)} teams found")
+        except Exception as e:
+            print(f"[SOS] ERROR loading league: {str(e)}")
+            return jsonify({'error': f'Failed to load league: {str(e)}'}), 500
         
-        # Get remaining schedule for each team
         sos_data = []
         
         for team in league.teams:
-            remaining_opponents = []
-            total_opp_points = 0
-            total_opp_wins = 0
-            total_opp_games = 0
-            
-            # Get matchups from current week onwards
-            for week in range(current_week + 1, 15):  # Weeks through 14
-                try:
-                    matchup = next((m for m in league.box_scores(week) if m.home_team == team or m.away_team == team), None)
-                    if matchup:
-                        opponent = matchup.away_team if matchup.home_team == team else matchup.home_team
-                        remaining_opponents.append(opponent)
-                except:
+            try:
+                remaining_opponents = []
+                
+                # Get matchups from current week onwards through week 14
+                for week in range(current_week + 1, 15):
+                    try:
+                        box_scores = league.box_scores(week)
+                        matchup = next((m for m in box_scores if m.home_team.team_id == team.team_id or m.away_team.team_id == team.team_id), None)
+                        
+                        if matchup:
+                            opponent = matchup.away_team if matchup.home_team.team_id == team.team_id else matchup.home_team
+                            remaining_opponents.append(opponent)
+                    except Exception as week_error:
+                        print(f"[SOS] Warning: Could not get week {week} matchup for {team.team_name}: {str(week_error)}")
+                        continue
+                
+                if not remaining_opponents:
+                    print(f"[SOS] Warning: No remaining opponents found for {team.team_name}")
                     continue
-            
-            # Calculate opponent stats
-            if remaining_opponents:
+                
+                # Calculate opponent stats
+                total_opp_points = 0
+                total_opp_wins = 0
+                total_opp_games = 0
+                opp_ranks = []
+                
                 for opp in remaining_opponents:
-                    # Get opponent's points for and record through current week
-                    opp_points = sum([score for score in opp.scores[:current_week] if score > 0])
-                    total_opp_points += opp_points
+                    # Get opponent's average points through current week
+                    opp_scores = [s for s in opp.scores[:current_week] if s and s > 0]
+                    if opp_scores:
+                        total_opp_points += sum(opp_scores)
+                    
                     total_opp_wins += opp.wins
                     total_opp_games += (opp.wins + opp.losses)
+                    
+                    # Get opponent's rank (position in standings)
+                    try:
+                        opp_rank = next(i for i, t in enumerate(league.teams, 1) if t.team_id == opp.team_id)
+                        opp_ranks.append(opp_rank)
+                    except:
+                        pass
                 
+                # Calculate averages
                 num_opponents = len(remaining_opponents)
-                avg_opp_ppg = round(total_opp_points / num_opponents / current_week, 1) if num_opponents > 0 else 0
+                avg_opp_ppg = round(total_opp_points / num_opponents / current_week, 1) if num_opponents > 0 and current_week > 0 else 0
                 opp_win_pct = round((total_opp_wins / total_opp_games * 100), 1) if total_opp_games > 0 else 0
-                
-                # Calculate average opponent power rank (inverse of standing)
-                opp_ranks = [league.teams.index(opp) + 1 for opp in remaining_opponents]
                 avg_opp_rank = round(sum(opp_ranks) / len(opp_ranks), 1) if opp_ranks else 0
                 
-                # Calculate overall difficulty (normalized combination of metrics)
+                # Calculate overall difficulty
                 # Normalize each metric to 0-100 scale
-                max_ppg = max([sum([s for s in t.scores[:current_week] if s > 0]) / current_week for t in league.teams])
-                min_ppg = min([sum([s for s in t.scores[:current_week] if s > 0]) / current_week for t in league.teams])
-                norm_ppg = ((avg_opp_ppg - min_ppg) / (max_ppg - min_ppg) * 100) if max_ppg > min_ppg else 50
+                try:
+                    all_team_ppgs = []
+                    for t in league.teams:
+                        t_scores = [s for s in t.scores[:current_week] if s and s > 0]
+                        if t_scores:
+                            all_team_ppgs.append(sum(t_scores) / len(t_scores))
+                    
+                    if all_team_ppgs:
+                        max_ppg = max(all_team_ppgs)
+                        min_ppg = min(all_team_ppgs)
+                        
+                        if max_ppg > min_ppg:
+                            norm_ppg = ((avg_opp_ppg - min_ppg) / (max_ppg - min_ppg) * 100)
+                        else:
+                            norm_ppg = 50
+                    else:
+                        norm_ppg = 50
+                except Exception as norm_error:
+                    print(f"[SOS] Error normalizing PPG: {str(norm_error)}")
+                    norm_ppg = 50
                 
-                norm_win_pct = opp_win_pct  # Already 0-100
-                
-                # Inverse normalize rank (lower rank = harder)
+                norm_win_pct = opp_win_pct
                 norm_rank = (1 - (avg_opp_rank - 1) / (len(league.teams) - 1)) * 100 if len(league.teams) > 1 else 50
                 
-                # Overall difficulty is average of normalized metrics
                 overall_difficulty = round((norm_ppg + norm_win_pct + norm_rank) / 3, 1)
                 
                 sos_data.append({
@@ -957,19 +991,30 @@ def calculate_strength_of_schedule(league_id, season_id):
                     'avgOpponentPowerRank': avg_opp_rank,
                     'overallDifficulty': overall_difficulty
                 })
+                
+                print(f"[SOS] Calculated SOS for {team.team_name}: {overall_difficulty}")
+                
+            except Exception as team_error:
+                print(f"[SOS] ERROR processing team {team.team_name}: {str(team_error)}")
+                import traceback
+                traceback.print_exc()
+                continue
         
         # Sort by overall difficulty (hardest first)
         sos_data.sort(key=lambda x: x['overallDifficulty'], reverse=True)
+        
+        print(f"[SOS] Successfully calculated SOS for {len(sos_data)} teams")
         
         return jsonify({
             'strengthOfSchedule': sos_data
         })
         
     except Exception as e:
-        print(f"Error calculating strength of schedule: {str(e)}")
+        print(f"[SOS] FATAL ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'strengthOfSchedule': []}), 500
+    
 # Add these routes at the bottom, before if __name__ == '__main__':
 
 @app.route('/historical/seasons', methods=['GET'])

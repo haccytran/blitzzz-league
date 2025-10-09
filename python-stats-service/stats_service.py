@@ -347,6 +347,8 @@ def calculate_playoff_odds():
         if not league_id or not year:
             return jsonify({"error": "leagueId and year are required"}), 400
         
+        print(f"[PLAYOFF ODDS] Starting calculation for league {league_id}, year {year}, current week {current_week}")
+        
         league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
         schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
         
@@ -356,8 +358,9 @@ def calculate_playoff_odds():
         playoff_spots = 6
         total_weeks = 14
         
-        random.seed(42)  # Match DoritoStats random seed
-        # Build team stats
+        random.seed(42)
+        
+        # Build team stats from ALL completed weeks
         team_stats = {}
         
         for team in teams:
@@ -370,8 +373,10 @@ def calculate_playoff_odds():
             ties = 0
             total_pf = 0
             
+            # Process ALL matchups up to current week
             for matchup in schedule:
-                if matchup.get('matchupPeriodId', 0) > current_week:
+                week = matchup.get('matchupPeriodId', 0)
+                if week > current_week or week < 1:  # Skip future weeks and invalid weeks
                     continue
                     
                 home = matchup.get('home', {})
@@ -403,21 +408,19 @@ def calculate_playoff_odds():
                         else:
                             ties += 1
             
+            print(f"[PLAYOFF ODDS] Team {team_name}: {len(scores)} games, {wins}-{losses}-{ties}, {total_pf:.1f} PF")
+            
             if scores:
-                # Calculate mean from last 6 weeks
+                # Calculate mean from last 6 weeks or all available
                 recent_scores = scores[-6:] if len(scores) >= 6 else scores
                 avg_score = mean(recent_scores)
-                
-                # Calculate std from ALL scores, then multiply by 2
-                # Use numpy.std (population std) to match DoritoStats
-                import numpy as np
-                std_score = np.std(scores) if len(scores) > 1 else 15.0  # Default to 15 if only 1 game
+                std_score = np.std(scores) if len(scores) > 1 else 15.0
                 
                 team_stats[team_id] = {
                     "teamName": team_name,
-                    "allScores": scores,  # Store all scores
+                    "allScores": scores,
                     "avgScore": avg_score,
-                    "stdDev": std_score * 2,  # Multiply by 2!
+                    "stdDev": std_score * 2,
                     "currentWins": wins,
                     "currentLosses": losses,
                     "currentTies": ties,
@@ -430,7 +433,7 @@ def calculate_playoff_odds():
                     "positionCounts": [0] * len(teams)
                 }
         
-        # Get remaining matchups
+        # Get remaining matchups (weeks AFTER current_week)
         remaining_matchups = []
         for matchup in schedule:
             week = matchup.get('matchupPeriodId', 0)
@@ -443,13 +446,13 @@ def calculate_playoff_odds():
                         "awayId": away.get('teamId')
                     })
         
-        print(f"Total remaining matchups: {len(remaining_matchups)}")
-        print(f"Current week: {current_week}, simulating weeks {current_week + 1} to {total_weeks}")
+        print(f"[PLAYOFF ODDS] Remaining matchups to simulate: {len(remaining_matchups)}")
         
         # Run simulations
-        for _ in range(num_simulations):
+        for sim in range(num_simulations):
             sim_standings = {}
             
+            # Start with current records
             for team_id, stats in team_stats.items():
                 sim_standings[team_id] = {
                     "wins": stats["currentWins"],
@@ -458,6 +461,7 @@ def calculate_playoff_odds():
                     "pf": stats["currentPF"]
                 }
             
+            # Simulate remaining games
             for matchup in remaining_matchups:
                 home_id = matchup["homeId"]
                 away_id = matchup["awayId"]
@@ -466,7 +470,6 @@ def calculate_playoff_odds():
                     home_stats = team_stats[home_id]
                     away_stats = team_stats[away_id]
                     
-                    # Generate scores using DoritoStats methodology
                     home_score = random.gauss(home_stats["avgScore"], home_stats["stdDev"])
                     away_score = random.gauss(away_stats["avgScore"], away_stats["stdDev"])
                     
@@ -483,7 +486,7 @@ def calculate_playoff_odds():
                     sim_standings[home_id]["pf"] += home_score
                     sim_standings[away_id]["pf"] += away_score
             
-            # Sort standings by wins, then points_for (DoritoStats tiebreaker)
+            # Sort by wins, then PF
             final_standings = sorted(
                 [(tid, standing) for tid, standing in sim_standings.items()],
                 key=lambda x: (x[1]["wins"], x[1]["pf"]),
@@ -500,6 +503,7 @@ def calculate_playoff_odds():
                 stats["projectedTies"] += standing["ties"]
                 stats["projectedPF"] += standing["pf"]
         
+        # Build results
         results = []
         for team_id, stats in team_stats.items():
             results.append({
@@ -519,16 +523,13 @@ def calculate_playoff_odds():
         
         results.sort(key=lambda x: x["playoffOdds"], reverse=True)
         
-        print(f"Returning {len(results)} teams")
-        if results:
-            print(f"First team: {results[0]}")
-        
+        print(f"[PLAYOFF ODDS] Completed {num_simulations} simulations")
         return jsonify({"playoffOdds": results}), 200
         
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
+    
 @app.route('/weekly-awards', methods=['GET', 'POST'])
 def get_weekly_awards():
     try:
@@ -655,12 +656,16 @@ def calculate_luck_index():
         espn_s2 = data.get('espn_s2')
         swid = data.get('swid')
         
+        print(f"[LUCK INDEX] Request: league={league_id}, year={year}, week={current_week}")  # ADD THIS
+        
         schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
         schedule = schedule_data.get('schedule', [])
         league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
         team_names = {}
         for team in league_data.get('teams', []):
             team_names[team['id']] = team.get('name', f"Team {team['id']}")
+        
+        print(f"[LUCK INDEX] Found {len(team_names)} teams")  # ADD THIS
         
         # Calculate all-play records for each week
         weekly_luck = {}
@@ -688,12 +693,14 @@ def calculate_luck_index():
                         'won': away.get('totalPoints') > home.get('totalPoints', 0)
                     })
             
+            print(f"[LUCK INDEX] Week {week}: {len(week_scores)} team scores")  # ADD THIS
+            
             # Calculate all-play for each team
             for team in week_scores:
                 all_play_wins = sum(1 for opp in week_scores if opp['teamId'] != team['teamId'] and team['score'] > opp['score'])
                 all_play_losses = sum(1 for opp in week_scores if opp['teamId'] != team['teamId'] and team['score'] < opp['score'])
                 
-                luck = 1 if team['won'] else -1  # Actual win/loss
+                luck = 1 if team['won'] else -1
                 expected = all_play_wins / (all_play_wins + all_play_losses) if (all_play_wins + all_play_losses) > 0 else 0.5
                 
                 if week not in weekly_luck:
@@ -701,19 +708,21 @@ def calculate_luck_index():
                 
                 weekly_luck[week].append({
                     'teamId': team['teamId'],
-                    'teamName': team_names.get(team['teamId'], f"Team {team['teamId']}"),  # ADD THIS LINE
+                    'teamName': team_names.get(team['teamId'], f"Team {team['teamId']}"),
                     'actualWin': team['won'],
                     'allPlayWins': all_play_wins,
                     'allPlayLosses': all_play_losses,
                     'expectedWinPct': round(expected * 100, 1),
                     'luckIndex': round((1 if team['won'] else 0) - expected, 2)
                 })
-        print(f"Returning luck data: {weekly_luck}")
+        
+        print(f"[LUCK INDEX] Returning data for {len(weekly_luck)} weeks")  # ADD THIS
         return jsonify({'weeklyLuck': weekly_luck}), 200
         
     except Exception as e:
+        print(f"[LUCK INDEX] ERROR: {str(e)}")  # ADD THIS
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500    
+        return jsonify({"error": str(e)}), 500  
     
 @app.route('/season-records', methods=['GET'])
 def get_season_records():

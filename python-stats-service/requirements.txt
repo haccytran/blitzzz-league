@@ -4,4 +4,4 @@ espn-api==0.30.0
 requests==2.31.0
 gunicorn==21.2.0
 numpy==1.26.4
-psycopg[binary]==3.2.1
+psycopg[binary]==3.2.10

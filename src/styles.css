@@ -804,25 +804,109 @@ body.blitzzz-league .sidebar .brand-title {
   }
 }
 
+/* Naughty List mobile styles */
+.naughty-table-desktop {
+  display: table;
+  width: 100%;
+}
+
+.naughty-grid-mobile {
+  display: none;
+}
+
 @media (max-width: 767px) {
-  .power-rankings-table,
-  .transactions-table {
-    display: none;
+  .naughty-table-desktop {
+    display: none !important;
   }
   
-  .power-rankings-mobile,
-  .transactions-mobile {
+  .naughty-grid-mobile {
     display: block;
   }
 }
 
-@media (min-width: 768px) {
-  .power-rankings-mobile,
-  .transactions-mobile {
-    display: none;
+/* Power Rankings mobile grid */
+.rankings-table-desktop {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rankings-grid-mobile {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .rankings-table-desktop {
+    display: none !important;
+  }
+  
+  .rankings-grid-mobile {
+    display: block;
+    font-size: 11px;
+  }
+  
+  .rankings-grid-mobile .rankings-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 0.5fr 1fr 1fr 1fr 1fr 1fr;
+    gap: 0;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 0;
+  }
+  
+  .rankings-grid-mobile .rankings-row-bg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    font-size: 10px;
+    color: #6b7280;
+    font-weight: 600;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px #9ca3af, 0 0 10px #9ca3af;
+  }
+  
+  .rankings-grid-mobile .rankings-cell {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 4px 2px;
+  }
+  
+  .rankings-grid-mobile .rankings-header {
+    display: grid;
+    grid-template-columns: 0.5fr 1fr 1fr 1fr 1fr 1fr;
+    gap: 0;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 8px 0;
+    font-weight: 600;
+    text-align: center;
+    font-size: 11px;
+  }
+  
+  .rankings-grid-mobile .rankings-header > div {
+    padding: 0 2px;
   }
 }
 
+/* Blitzzz League Power Rankings */
+body.blitzzz-league .rankings-grid-mobile .rankings-row-bg {
+  color: #0084ff !important;
+  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+}
+
+/* Sculpin League Power Rankings */
+body.sculpin-league .rankings-grid-mobile .rankings-row-bg {
+  color: #2F241D !important;
+  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
+}
 
 /* Blitzzz league weekly challenge title styling */
 body.blitzzz-league .weekly-challenge-title {
@@ -1133,6 +1217,243 @@ body.sculpin-league .trophy-grid-mobile .trophy-row-bg {
     font-weight: 600;
     text-align: center;
   }
+}
+
+/* Playoff Odds mobile grid */
+.playoff-odds-desktop {
+  display: table;
+  width: 100%;
+}
+
+.playoff-grid-mobile {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .playoff-odds-desktop {
+    display: none !important;
+  }
+  
+  .playoff-grid-mobile {
+    display: block;
+    font-size: 11px;
+  }
+  
+  .playoff-grid-mobile .playoff-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+    gap: 0;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 0;
+  }
+  
+  .playoff-grid-mobile .playoff-row-bg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    font-size: 10px;
+    color: #6b7280;
+    font-weight: 600;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px #9ca3af, 0 0 10px #9ca3af;
+  }
+  
+  .playoff-grid-mobile .playoff-cell {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 4px 2px;
+  }
+  
+  .playoff-grid-mobile .playoff-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+    gap: 0;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 8px 0;
+    font-weight: 600;
+    text-align: center;
+    font-size: 11px;
+  }
+}
+
+/* Blitzzz playoff odds */
+body.blitzzz-league .playoff-grid-mobile .playoff-row-bg {
+  color: #0084ff !important;
+  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+}
+
+/* Sculpin playoff odds */
+body.sculpin-league .playoff-grid-mobile .playoff-row-bg {
+  color: #2F241D !important;
+  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
+}
+
+/* Strength of Schedule mobile grid */
+.sos-table-desktop {
+  display: table;
+  width: 100%;
+}
+
+.sos-grid-mobile {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .sos-table-desktop {
+    display: none !important;
+  }
+  
+  .sos-grid-mobile {
+    display: block;
+    font-size: 11px;
+  }
+  
+  .sos-grid-mobile .sos-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 0.7fr;
+    gap: 0;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 0;
+  }
+  
+  .sos-grid-mobile .sos-row-bg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    font-size: 10px;
+    color: #6b7280;
+    font-weight: 600;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px #9ca3af, 0 0 10px #9ca3af;
+  }
+  
+  .sos-grid-mobile .sos-cell {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 4px 2px;
+  }
+  
+  .sos-grid-mobile .sos-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr 0.7fr;
+    gap: 0;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 8px 0;
+    font-weight: 600;
+    text-align: center;
+    font-size: 11px;
+  }
+}
+
+/* Blitzzz SOS */
+body.blitzzz-league .sos-grid-mobile .sos-row-bg {
+  color: #0084ff !important;
+  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+}
+
+/* Sculpin SOS */
+body.sculpin-league .sos-grid-mobile .sos-row-bg {
+  color: #2F241D !important;
+  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
+}
+
+/* Luck Index mobile grid */
+.luck-table-desktop {
+  display: table;
+  width: 100%;
+}
+
+.luck-grid-mobile {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .luck-table-desktop {
+    display: none !important;
+  }
+  
+  .luck-grid-mobile {
+    display: block;
+    font-size: 11px;
+  }
+  
+  .luck-grid-mobile .luck-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 0.7fr 1fr 1fr 0.7fr;
+    gap: 0;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 0;
+  }
+  
+  .luck-grid-mobile .luck-row-bg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    font-size: 10px;
+    color: #6b7280;
+    font-weight: 600;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px #9ca3af, 0 0 10px #9ca3af;
+  }
+  
+  .luck-grid-mobile .luck-cell {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 4px 2px;
+  }
+  
+  .luck-grid-mobile .luck-header {
+    display: grid;
+    grid-template-columns: 0.7fr 1fr 1fr 0.7fr;
+    gap: 0;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 8px 0;
+    font-weight: 600;
+    text-align: center;
+    font-size: 11px;
+  }
+}
+
+/* Blitzzz luck index */
+body.blitzzz-league .luck-grid-mobile .luck-row-bg {
+  color: #0084ff !important;
+  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+}
+
+/* Sculpin luck index */
+body.sculpin-league .luck-grid-mobile .luck-row-bg {
+  color: #2F241D !important;
+  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
 }
 
 /* Mobile-friendly polls */

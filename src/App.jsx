@@ -4277,6 +4277,7 @@ const ht_teamProjection = (teamSideObj, week) => {
   return sum;
 };
   const [naughtyLists, setNaughtyLists] = useState({}); // Store naughty lists by week
+  const [allNaughtyEntries, setAllNaughtyEntries] = useState([]); // Flattened list
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [weeklyTrophies, setWeeklyTrophies] = useState([]);
@@ -4355,6 +4356,17 @@ try {
     ...prev,
     [weekNum]: naughtyData.naughtyList || []
   }));
+  
+  // Add to flattened list if there are entries
+  if (naughtyData.naughtyList && naughtyData.naughtyList.length > 0) {
+    setAllNaughtyEntries(prev => [
+      ...prev,
+      ...naughtyData.naughtyList.map(entry => ({
+        ...entry,
+        week: weekNum
+      }))
+    ]);
+  }
 } catch (err) {
   console.error(`Failed to load naughty list for week ${weekNum}:`, err);
 }
@@ -5338,76 +5350,85 @@ if (negLeader && negMax > 0) {
   </div>
 )}
 
-{/* Naughty List Section - After all weekly trophies */}
-      {Object.keys(naughtyLists).length > 0 && (
+{/* Naughty List Section - Single consolidated table */}
+      {allNaughtyEntries.length > 0 && (
         <div style={{ marginTop: 32 }}>
           <h2 style={{ marginBottom: 16 }}>🎅 Naughty List (Started Inactive Players)</h2>
           
-          {Object.entries(naughtyLists)
-            .sort(([weekA], [weekB]) => parseInt(weekB) - parseInt(weekA)) // Newest first
-            .map(([week, naughtyList], index) => {
-              const weekNum = parseInt(week);
-              const isExpanded = index === 0; // Only first (most recent) is expanded
-              
-              if (!naughtyList || naughtyList.length === 0) return null;
-              
-              return (
-                <div key={week} className="card" style={{ padding: 16, marginBottom: 16 }}>
-                  <div 
-                    style={{ 
-                      display: "flex", 
-                      justifyContent: "space-between", 
-                      alignItems: "center", 
-                      cursor: "pointer" 
-                    }}
-                    onClick={() => toggleWeek(weekNum)}
-                  >
-                    <h3 style={{ margin: 0 }}>Week {week} Naughty List</h3>
-                    <button className="btn" style={btnSec}>
-                      {expandedWeeks.has(weekNum) ? "Hide ▲" : "Show ▼"}
-                    </button>
-                  </div>
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ overflowX: "auto" }}>
+              {/* Desktop table */}
+              <table className="naughty-table-desktop" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+                    <th style={{ padding: "12px 8px", textAlign: "left" }}>Week</th>
+                    <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
+                    <th style={{ padding: "12px 8px", textAlign: "center" }}>Inactive Count</th>
+                    <th style={{ padding: "12px 8px", textAlign: "left" }}>Players</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allNaughtyEntries
+                    .sort((a, b) => {
+                      // Sort by week descending, then by inactive count descending
+                      if (b.week !== a.week) return b.week - a.week;
+                      return b.inactiveCount - a.inactiveCount;
+                    })
+                    .map((entry, idx) => (
+                      <tr key={`${entry.week}-${idx}`} style={{ 
+                        borderBottom: "1px solid #f1f5f9",
+                        backgroundColor: entry.inactiveCount > 2 ? "#fef2f2" : "transparent"
+                      }}>
+                        <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{entry.week}</td>
+                        <td style={{ padding: "12px 8px" }}>{entry.teamName}</td>
+                        <td style={{ 
+                          padding: "12px 8px", 
+                          textAlign: "center",
+                          fontWeight: "bold",
+                          color: entry.inactiveCount > 2 ? "#dc2626" : "#ea580c"
+                        }}>
+                          {entry.inactiveCount}
+                        </td>
+                        <td style={{ padding: "12px 8px", fontSize: "12px", color: "#64748b" }}>
+                          {entry.inactivePlayers.map(p => p.name).join(', ')}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
 
-                  {expandedWeeks.has(weekNum) && (
-                    <div style={{ marginTop: 16, overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                            <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
-                            <th style={{ padding: "12px 8px", textAlign: "center" }}>Inactive Count</th>
-                            <th style={{ padding: "12px 8px", textAlign: "left" }}>Players</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {naughtyList.map((team, idx) => (
-                            <tr key={idx} style={{ 
-                              borderBottom: "1px solid #f1f5f9",
-                              backgroundColor: idx === 0 ? "#fef2f2" : "transparent"
-                            }}>
-                              <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
-                              <td style={{ 
-                                padding: "12px 8px", 
-                                textAlign: "center",
-                                fontWeight: "bold",
-                                color: team.inactiveCount > 2 ? "#dc2626" : "#ea580c"
-                              }}>
-                                {team.inactiveCount}
-                              </td>
-                              <td style={{ padding: "12px 8px", fontSize: "12px", color: "#64748b" }}>
-                                {team.inactivePlayers.map(p => p.name).join(', ')}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+              {/* Mobile grid */}
+              <div className="naughty-grid-mobile">
+                {allNaughtyEntries
+                  .sort((a, b) => {
+                    if (b.week !== a.week) return b.week - a.week;
+                    return b.inactiveCount - a.inactiveCount;
+                  })
+                  .map((entry, idx) => (
+                    <div key={`${entry.week}-${idx}`} className="card" style={{ 
+                      padding: 12, 
+                      marginBottom: 8,
+                      backgroundColor: entry.inactiveCount > 2 ? "#fef2f2" : "transparent"
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <div style={{ fontWeight: "bold" }}>Week {entry.week} - {entry.teamName}</div>
+                        <div style={{ 
+                          fontWeight: "bold",
+                          color: entry.inactiveCount > 2 ? "#dc2626" : "#ea580c"
+                        }}>
+                          {entry.inactiveCount} inactive
+                        </div>
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b" }}>
+                        {entry.inactivePlayers.map(p => p.name).join(', ')}
+                      </div>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  ))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
-
     </Section>
   );
 }
@@ -5517,7 +5538,8 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
 
                 {expandedWeeks.has(parseInt(week)) && (
                   <div style={{ marginTop: 16, overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    {/* Desktop table */}
+                    <table className="luck-table-desktop" style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
                         <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
                           <th style={{ padding: '12px 8px', textAlign: 'left' }}>Team</th>
@@ -5554,8 +5576,42 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
                           ))}
                       </tbody>
                     </table>
+
+                    {/* Mobile grid */}
+                    <div className="luck-grid-mobile">
+                      <div className="luck-header">
+                        <div>Res</div>
+                        <div>AP</div>
+                        <div>EW%</div>
+                        <div>LI</div>
+                      </div>
+                      
+                      {teams
+                        .sort((a, b) => b.luckIndex - a.luckIndex)
+                        .map((team, idx) => (
+                          <div key={team.teamId} className="luck-row">
+                            <div className="luck-row-bg">{team.teamName}</div>
+                            <div className="luck-cell">
+                              {team.actualWin ? 'W' : 'L'}
+                            </div>
+                            <div className="luck-cell">
+                              {team.allPlayWins}-{team.allPlayLosses}
+                            </div>
+                            <div className="luck-cell">
+                              {team.expectedWinPct}%
+                            </div>
+                            <div className="luck-cell" style={{
+                              color: team.luckIndex > 0 ? '#16a34a' : team.luckIndex < 0 ? '#dc2626' : '#64748b',
+                              fontWeight: 'bold'
+                            }}>
+                              {team.luckIndex > 0 ? '+' : ''}{team.luckIndex}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
                   </div>
                 )}
+                
               </div>
             ))}
         </div>
@@ -5687,26 +5743,27 @@ const sortedRankings = [...rankings].sort((a, b) => {
           <>
             {/* Power Rankings Table */}
             <div className="power-rankings-table" style={{ overflowX: "auto", marginBottom: 32 }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              {/* Desktop table */}
+              <table className="rankings-table-desktop">
                 <thead>
                   <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-<th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
-    <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
+                    <th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
+                    <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
                     <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('comprehensivePowerScore')}>
-  Comprehensive {sortConfig.key === 'comprehensivePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('simplePowerScore')}>
-  Simple {sortConfig.key === 'simplePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('record')}>
-  Record {sortConfig.key === 'record' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsFor')}>
-  PF {sortConfig.key === 'totalPointsFor' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
-<th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsAgainst')}>
-  PA {sortConfig.key === 'totalPointsAgainst' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
-</th>
+                      Comprehensive {sortConfig.key === 'comprehensivePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                    </th>
+                    <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('simplePowerScore')}>
+                      Simple {sortConfig.key === 'simplePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                    </th>
+                    <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('record')}>
+                      Record {sortConfig.key === 'record' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                    </th>
+                    <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsFor')}>
+                      PF {sortConfig.key === 'totalPointsFor' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                    </th>
+                    <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsAgainst')}>
+                      PA {sortConfig.key === 'totalPointsAgainst' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5725,40 +5782,56 @@ const sortedRankings = [...rankings].sort((a, b) => {
                       </td>
                       <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPointsFor}</td>
                       <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.totalPointsAgainst}</td>
-                    
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
 
-            {/* Mobile view */}
-            <div className="power-rankings-mobile" style={{ marginBottom: 32 }}>
-              {rankings.map((team, index) => (
-                <div key={team.teamName} className="card" style={{ padding: 12, marginBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <div style={{ fontWeight: "bold", fontSize: 16 }}>#{index + 1} {team.teamName}</div>
-                    <div style={{ fontWeight: "bold", color: "#16a34a" }}>{team.comprehensivePowerScore}</div>
-                  </div>
-                 
+              {/* Mobile grid */}
+              <div className="rankings-grid-mobile">
+                {/* Header row */}
+                <div className="rankings-header">
+                  <div>#</div>
+                  <div onClick={() => handleSort('comprehensivePowerScore')}>Comp</div>
+                  <div onClick={() => handleSort('simplePowerScore')}>Simp</div>
+                  <div onClick={() => handleSort('record')}>Rec</div>
+                  <div onClick={() => handleSort('totalPointsFor')}>PF</div>
+                  <div onClick={() => handleSort('totalPointsAgainst')}>PA</div>
                 </div>
-              ))}
+                
+                {/* Data rows */}
+                {sortedRankings.map((team, index) => (
+                  <div key={team.teamName} className="rankings-row">
+                    <div className="rankings-row-bg">{team.teamName}</div>
+                    <div className="rankings-cell">{index + 1}</div>
+                    <div className="rankings-cell" style={{ fontWeight: "bold", color: "#16a34a" }}>
+                      {team.comprehensivePowerScore}
+                    </div>
+                    <div className="rankings-cell">{team.simplePowerScore}</div>
+                    <div className="rankings-cell">
+                      {team.wins}-{team.losses}{team.ties > 0 ? `-${team.ties}` : ''}
+                    </div>
+                    <div className="rankings-cell">{team.totalPointsFor}</div>
+                    <div className="rankings-cell">{team.totalPointsAgainst}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Playoff Odds Table */}
             <div style={{ marginTop: 32 }}>
               <h3 style={{ marginBottom: 12 }}>Playoff Odds (prior to Week {currentWeek + 1} matchups)</h3>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                {/* Desktop table */}
+                <table className="playoff-odds-desktop" style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
                       <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
-		      <th style={{ padding: "12px 8px", textAlign: "right" }}>Playoff %</th>
+                      <th style={{ padding: "12px 8px", textAlign: "right" }}>Playoff %</th>
                       <th style={{ padding: "12px 8px", textAlign: "center" }}>Current Record</th>
                       <th style={{ padding: "12px 8px", textAlign: "center" }}>Proj. Wins</th>
                       <th style={{ padding: "12px 8px", textAlign: "center" }}>Proj. Losses</th>
                       <th style={{ padding: "12px 8px", textAlign: "right" }}>Proj. PF</th>
-                      
                     </tr>
                   </thead>
                   <tbody>
@@ -5777,11 +5850,37 @@ const sortedRankings = [...rankings].sort((a, b) => {
                         <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.projectedWins}</td>
                         <td style={{ padding: "12px 8px", textAlign: "center" }}>{team.projectedLosses}</td>
                         <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.projectedPointsFor}</td>
-                        
                       </tr>
                     ))}
                   </tbody>
                 </table>
+
+                {/* Mobile grid */}
+                <div className="playoff-grid-mobile">
+                  <div className="playoff-header">
+                    <div>%</div>
+                    <div>Rec</div>
+                    <div>PW</div>
+                    <div>PL</div>
+                    <div>PPF</div>
+                  </div>
+                  
+                  {playoffOdds.map(team => (
+                    <div key={team.teamName} className="playoff-row">
+                      <div className="playoff-row-bg">{team.teamName}</div>
+                      <div className="playoff-cell" style={{
+                        fontWeight: "bold",
+                        color: team.playoffOdds > 75 ? "#16a34a" : team.playoffOdds > 25 ? "#f59e0b" : "#dc2626"
+                      }}>
+                        {team.playoffOdds}%
+                      </div>
+                      <div className="playoff-cell">{team.currentRecord}</div>
+                      <div className="playoff-cell">{team.projectedWins}</div>
+                      <div className="playoff-cell">{team.projectedLosses}</div>
+                      <div className="playoff-cell">{team.projectedPointsFor}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -5841,7 +5940,8 @@ const sortedRankings = [...rankings].sort((a, b) => {
   <p><strong>How it works:< br/></strong> Opponent Power Rank combines each team's win record, scoring strength, and head-to-head performance.< br/> Overall Difficulty averages three factors: your upcoming opponents' scoring averages, win percentages, and power rankings—all normalized against league-wide ranges.</p></div>
 </div>
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  {/* Desktop table */}
+                  <table className="sos-table-desktop" style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
                         <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
@@ -5887,6 +5987,37 @@ const sortedRankings = [...rankings].sort((a, b) => {
                       })}
                     </tbody>
                   </table>
+
+                  {/* Mobile grid */}
+                  <div className="sos-grid-mobile">
+                    <div className="sos-header">
+                      <div>PPG</div>
+                      <div>Win%</div>
+                      <div>PR</div>
+                      <div>OD</div>
+                      <div>Diff</div>
+                    </div>
+                    
+                    {strengthOfSchedule.map((team, index) => {
+                      const difficultyLevel = index < strengthOfSchedule.length / 3 ? "H" : 
+                                             index < (2 * strengthOfSchedule.length) / 3 ? "M" : "E";
+                      const diffColor = difficultyLevel === "H" ? "#dc2626" : 
+                                       difficultyLevel === "M" ? "#f59e0b" : "#16a34a";
+                      
+                      return (
+                        <div key={team.teamName} className="sos-row">
+                          <div className="sos-row-bg">{team.teamName}</div>
+                          <div className="sos-cell">{team.avgOpponentPPG}</div>
+                          <div className="sos-cell">{team.opponentWinPct}%</div>
+                          <div className="sos-cell">{team.avgOpponentPowerRank}</div>
+                          <div className="sos-cell" style={{ fontWeight: "bold" }}>{team.overallDifficulty}</div>
+                          <div className="sos-cell" style={{ color: diffColor, fontWeight: "bold" }}>
+                            {difficultyLevel}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}

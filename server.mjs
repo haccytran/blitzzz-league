@@ -179,7 +179,12 @@ pool.on('connect', (client) => {
 // Update Node.js Server with Fallback (Python stuff)
 // =========================
 
-const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:5001';
+// Automatically detect environment
+const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 
+  (process.env.RENDER ? 'https://python-1e1g.onrender.com' : 'http://localhost:5001');
+
+console.log(`[ENVIRONMENT] Running in ${process.env.RENDER ? 'RENDER' : 'LOCAL'} mode`);
+console.log(`[ENVIRONMENT] Python service URL: ${PYTHON_SERVICE_URL}`);
 
 async function callPythonService(endpoint, data) {
   try {
@@ -2995,38 +3000,26 @@ app.get("/api/leagues/:leagueId/weekly-awards/:seasonId", async (req, res) => {
     const { leagueId, seasonId } = req.params;
     const { week } = req.query;
 
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    
-    // Get ESPN credentials
-    const espn_s2 = req.cookies?.espn_s2;
-    const swid = req.cookies?.swid;
 
-    const response = await fetch('http://localhost:5001/weekly-awards', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        leagueId: espnLeagueId,
-        year: seasonId,
-        week: parseInt(week) || 1,
-        espn_s2,
-        swid
-      })
+    const espn_s2 = req.cookies?.espn_s2 || process.env.ESPN_S2;
+    const swid = req.cookies?.swid || process.env.SWID;
+
+    const data = await callPythonService('/weekly-awards', { 
+      leagueId: espnLeagueId, 
+      year: parseInt(seasonId), 
+      week: parseInt(week) || 1, 
+      espn_s2, 
+      swid 
     });
-
-    const data = await response.json();
+    
     res.json(data);
-
-  } catch (error) {
-    console.error('Weekly awards failed:', error);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    console.error('Weekly awards failed:', err);
+    res.status(500).json({ error: err.message });
   }
 });
-
 app.post("/api/report/update", async (req, res) => {
   const adminHeader = req.header("x-admin");
 const validPasswords = [ADMIN_PASSWORD, "cocoshouse", "temporary420"];

@@ -376,6 +376,23 @@ main {
   }
 }
 
+/* Transactions table mobile toggle */
+@media (max-width: 767px) {
+  .transactions-table {
+    display: none;
+  }
+  
+  .transactions-mobile {
+    display: block;
+  }
+}
+
+@media (min-width: 768px) {
+  .transactions-mobile {
+    display: none;
+  }
+}
+
 /* ========================================
    DUES PAGE MOBILE OPTIMIZATION
    ======================================== */
@@ -788,22 +805,6 @@ body.blitzzz-league .sidebar .brand-title {
   }
 }
 
-@media (max-width: 767px) {
-  .power-rankings-table {
-    display: none;
-  }
-  
-  .power-rankings-mobile {
-    display: block;
-  }
-}
-
-@media (min-width: 768px) {
-  .power-rankings-mobile {
-    display: none;
-  }
-}
-
 /* Naughty List mobile styles */
 .naughty-table-desktop {
   display: table;
@@ -858,7 +859,7 @@ body.blitzzz-league .sidebar .brand-title {
     position: absolute;
     left: 0;
     right: 0;
-    top: 50%;
+    top: 15%;
     transform: translateY(-50%);
     text-align: center;
     font-size: 10px;
@@ -1248,11 +1249,11 @@ body.sculpin-league .trophy-grid-mobile .trophy-row-bg {
     padding: 8px 0;
   }
   
-  .playoff-grid-mobile .playoff-row-bg {
+.playoff-grid-mobile .playoff-row-bg {
     position: absolute;
     left: 0;
     right: 0;
-    top: 50%;
+    top: 15%;
     transform: translateY(-50%);
     text-align: center;
     font-size: 10px;
@@ -1265,8 +1266,7 @@ body.sculpin-league .trophy-grid-mobile .trophy-row-bg {
     white-space: nowrap;
     letter-spacing: 2px;
     text-shadow: 0 0 5px #9ca3af, 0 0 10px #9ca3af;
-  }
-  
+  }  
   .playoff-grid-mobile .playoff-cell {
     position: relative;
     z-index: 1;
@@ -1298,7 +1298,7 @@ body.sculpin-league .playoff-grid-mobile .playoff-row-bg {
   text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
 }
 
-/* Strength of Schedule mobile grid */
+/* /* Strength of Schedule mobile grid */
 .sos-table-desktop {
   display: table;
   width: 100%;
@@ -1331,7 +1331,7 @@ body.sculpin-league .playoff-grid-mobile .playoff-row-bg {
     position: absolute;
     left: 0;
     right: 0;
-    top: 50%;
+    top: 15%;
     transform: translateY(-50%);
     text-align: center;
     font-size: 10px;
@@ -1410,7 +1410,7 @@ body.sculpin-league .sos-grid-mobile .sos-row-bg {
     position: absolute;
     left: 0;
     right: 0;
-    top: 50%;
+    top: 15%;
     transform: translateY(-50%);
     text-align: center;
     font-size: 10px;
@@ -1456,6 +1456,84 @@ body.sculpin-league .luck-grid-mobile .luck-row-bg {
   text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
 }
 
+/* Final Standings Odds mobile grid */
+.final-standings-desktop {
+  display: table;
+  width: 100%;
+}
+
+.final-standings-grid-mobile {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .final-standings-desktop {
+    display: none !important;
+  }
+  
+  .final-standings-grid-mobile {
+    display: grid;
+    font-size: 10px;
+  }
+  
+  .final-standings-grid-mobile .final-standings-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 0;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 0;
+  }
+  
+.final-standings-grid-mobile .final-standings-row-bg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 15%;
+    transform: translateY(-50%);
+    text-align: center;
+    font-size: 9px;
+    color: #6b7280;
+    font-weight: 600;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 2px;
+    text-shadow: 0 0 5px #9ca3af, 0 0 10px #9ca3af;
+  }
+  
+  .final-standings-grid-mobile .final-standings-cell {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 4px 2px;
+  }
+  
+  .final-standings-grid-mobile .final-standings-header {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 0;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 8px 0;
+    font-weight: 600;
+    text-align: center;
+    font-size: 10px;
+  }
+}
+
+/* Blitzzz final standings */
+body.blitzzz-league .final-standings-grid-mobile .final-standings-row-bg {
+  color: #0084ff !important;
+  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+}
+
+/* Sculpin final standings */
+body.sculpin-league .final-standings-grid-mobile .final-standings-row-bg {
+  color: #2F241D !important;
+  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
+}
 /* Mobile-friendly polls */
 @media (max-width: 767px) {
   /* Stack the polls layout on mobile */

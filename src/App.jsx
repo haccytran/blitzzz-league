@@ -5792,8 +5792,8 @@ const sortedRankings = [...rankings].sort((a, b) => {
                 {/* Header row */}
                 <div className="rankings-header">
                   <div>#</div>
-                  <div onClick={() => handleSort('comprehensivePowerScore')}>Comp</div>
-                  <div onClick={() => handleSort('simplePowerScore')}>Simp</div>
+                  <div onClick={() => handleSort('comprehensivePowerScore')}>Comprehensive</div>
+                  <div onClick={() => handleSort('simplePowerScore')}>Simple</div>
                   <div onClick={() => handleSort('record')}>Rec</div>
                   <div onClick={() => handleSort('totalPointsFor')}>PF</div>
                   <div onClick={() => handleSort('totalPointsAgainst')}>PA</div>
@@ -5858,7 +5858,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
                 {/* Mobile grid */}
                 <div className="playoff-grid-mobile">
                   <div className="playoff-header">
-                    <div>%</div>
+                    <div>Odds %</div>
                     <div>Rec</div>
                     <div>PW</div>
                     <div>PL</div>
@@ -5888,7 +5888,8 @@ const sortedRankings = [...rankings].sort((a, b) => {
             <div style={{ marginTop: 32 }}>
               <h3 style={{ marginBottom: 12 }}>Final Standings Odds</h3>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                {/* Desktop table */}
+                <table className="final-standings-desktop" style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                   <thead>
                     <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
                       <th style={{ padding: "8px", textAlign: "left", position: "sticky", left: 0, background: "white", zIndex: 1 }}>Team</th>
@@ -5926,6 +5927,46 @@ const sortedRankings = [...rankings].sort((a, b) => {
                     ))}
                   </tbody>
                 </table>
+
+                {/* Mobile grid */}
+                <div className="final-standings-grid-mobile">
+                  {/* Header row */}
+                  <div className="final-standings-header">
+                    <div>1</div>
+                    <div>2</div>
+                    <div>3</div>
+                    <div>4</div>
+                    <div>5</div>
+                    <div>6</div>
+                    <div>7</div>
+                    <div>8</div>
+                    <div>9</div>
+                    <div>10</div>
+                  </div>
+                  
+                  {/* Data rows */}
+                  {finalStandingsOdds.map(team => (
+                    <div key={team.name} className="final-standings-row">
+                      <div className="final-standings-row-bg">{team.name}</div>
+                      {team.positions.map((pos, index) => (
+                        <div 
+                          key={index} 
+                          className="final-standings-cell"
+                          style={{
+                            backgroundColor: pos.probability > 15 
+                              ? `rgba(34, 197, 94, ${Math.min(pos.probability / 100, 0.7)})` 
+                              : pos.probability > 5
+                              ? `rgba(251, 191, 36, ${pos.probability / 100})`
+                              : 'transparent',
+                            fontWeight: pos.probability > 20 ? 'bold' : 'normal'
+                          }}
+                        >
+                          {pos.probability > 0 ? `${pos.probability}%` : '-'}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -5991,11 +6032,11 @@ const sortedRankings = [...rankings].sort((a, b) => {
                   {/* Mobile grid */}
                   <div className="sos-grid-mobile">
                     <div className="sos-header">
-                      <div>PPG</div>
-                      <div>Win%</div>
-                      <div>PR</div>
-                      <div>OD</div>
-                      <div>Diff</div>
+                      <div>Opponent PPG</div>
+                      <div>Opponent Win%</div>
+                      <div>Opponent PowerRank</div>
+                      <div>Difficulty Score</div>
+                      <div>Difficulty</div>
                     </div>
                     
                     {strengthOfSchedule.map((team, index) => {

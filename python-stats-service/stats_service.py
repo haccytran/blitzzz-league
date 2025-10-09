@@ -892,229 +892,84 @@ def calculate_strength_of_schedule(league_id, season_id):
         swid = os.environ.get('SWID')
         year = season_id
         
-        if not league_id or not year:
-            return jsonify({"error": "leagueId and year are required"}), 400
+        print(f"Strength of Schedule - League: {league_id}, Season: {year}, Current week: {current_week}")
         
-        league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
-        schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
-        
-        teams = league_data.get('teams', [])
-        schedule = schedule_data.get('schedule', [])
-        
-        total_weeks = 14
-        
-        # Build team stats
-        team_stats = {}
-        for team in teams:
-            team_id = team['id']
-            team_name = team.get('name', f"Team {team_id}")
-            scores = []
-            outcomes = []
+        if not espn_s2 or not swid:
+            return jsonify({'error': 'ESPN credentials not configured'}), 500
             
-            for matchup in schedule:
-                if matchup.get('matchupPeriodId', 0) > current_week:
+        # Fetch league data
+        league = League(league_id=int(league_id), year=int(year), espn_s2=espn_s2, swid=swid)
+        
+        # Get remaining schedule for each team
+        sos_data = []
+        
+        for team in league.teams:
+            remaining_opponents = []
+            total_opp_points = 0
+            total_opp_wins = 0
+            total_opp_games = 0
+            
+            # Get matchups from current week onwards
+            for week in range(current_week + 1, 15):  # Weeks through 14
+                try:
+                    matchup = next((m for m in league.box_scores(week) if m.home_team == team or m.away_team == team), None)
+                    if matchup:
+                        opponent = matchup.away_team if matchup.home_team == team else matchup.home_team
+                        remaining_opponents.append(opponent)
+                except:
                     continue
-                    
-                home = matchup.get('home', {})
-                away = matchup.get('away', {})
+            
+            # Calculate opponent stats
+            if remaining_opponents:
+                for opp in remaining_opponents:
+                    # Get opponent's points for and record through current week
+                    opp_points = sum([score for score in opp.scores[:current_week] if score > 0])
+                    total_opp_points += opp_points
+                    total_opp_wins += opp.wins
+                    total_opp_games += (opp.wins + opp.losses)
                 
-                if home.get('teamId') == team_id:
-                    score = home.get('totalPoints', 0)
-                    opp_score = away.get('totalPoints', 0)
-                    if score > 0:
-                        scores.append(score)
-                        if score > opp_score:
-                            outcomes.append('W')
-                        elif score < opp_score:
-                            outcomes.append('L')
-                        else:
-                            outcomes.append('T')
-                            
-                elif away.get('teamId') == team_id:
-                    score = away.get('totalPoints', 0)
-                    opp_score = home.get('totalPoints', 0)
-                    if score > 0:
-                        scores.append(score)
-                        if score > opp_score:
-                            outcomes.append('W')
-                        elif score < opp_score:
-                            outcomes.append('L')
-                        else:
-                            outcomes.append('T')
-            
-            team_stats[team_id] = {
-                "teamName": team_name,
-                "scores": scores,
-                "outcomes": outcomes,
-                "avg_score": np.mean(scores) if scores else 0,
-                "win_pct": outcomes.count('W') / len(outcomes) if outcomes else 0
-            }
-        
-        # Calculate power rankings using dominance matrix with MOV
-        teams_sorted = sorted(team_stats.items(), key=lambda x: x[0])
-
-        # First, build MOV and schedule lists for each team
-        team_mov_schedule = {}
-        for team_id, stats in teams_sorted:
-            mov_list = []
-            schedule_list = []
-            
-            for matchup in schedule:
-                week = matchup.get('matchupPeriodId', 0)
-                if week > current_week or week < 1:
-                    continue
+                num_opponents = len(remaining_opponents)
+                avg_opp_ppg = round(total_opp_points / num_opponents / current_week, 1) if num_opponents > 0 else 0
+                opp_win_pct = round((total_opp_wins / total_opp_games * 100), 1) if total_opp_games > 0 else 0
                 
-                home = matchup.get('home', {})
-                away = matchup.get('away', {})
+                # Calculate average opponent power rank (inverse of standing)
+                opp_ranks = [league.teams.index(opp) + 1 for opp in remaining_opponents]
+                avg_opp_rank = round(sum(opp_ranks) / len(opp_ranks), 1) if opp_ranks else 0
                 
-                if home.get('teamId') == team_id:
-                    my_score = home.get('totalPoints', 0)
-                    opp_score = away.get('totalPoints', 0)
-                    opp_id = away.get('teamId')
-                    if my_score > 0 and opp_id:
-                        mov_list.append(my_score - opp_score)
-                        schedule_list.append(opp_id)
-                        
-                elif away.get('teamId') == team_id:
-                    my_score = away.get('totalPoints', 0)
-                    opp_score = home.get('totalPoints', 0)
-                    opp_id = home.get('teamId')
-                    if my_score > 0 and opp_id:
-                        mov_list.append(my_score - opp_score)
-                        schedule_list.append(opp_id)
-            
-            team_mov_schedule[team_id] = {
-                'mov': mov_list,
-                'schedule': schedule_list
-            }
-
-        # Build win matrix using MOV (like espn-api does)
-        win_matrix = []
-        for team_id, stats in teams_sorted:
-            wins = [0] * len(teams_sorted)
-            mov_data = team_mov_schedule[team_id]
-            
-            for mov, opp_id in zip(mov_data['mov'], mov_data['schedule']):
-                # Find opponent index in sorted teams
-                opp_idx = next((i for i, (tid, _) in enumerate(teams_sorted) if tid == opp_id), None)
-                if opp_idx is not None and mov > 0:  # Won against this opponent
-                    wins[opp_idx] += 1
-            
-            win_matrix.append(wins)
-        
-                # Add MOV to team_stats
-        for team_id, stats in team_stats.items():
-            stats['mov'] = team_mov_schedule[team_id]['mov']
-
-        dominance_matrix = two_step_dominance(win_matrix)
-        teams_for_power = [{'teamId': tid} for tid, _ in teams_sorted]
-        power_ranks = power_points(dominance_matrix, teams_for_power, team_stats)
-        print("Power ranks debug:", sorted(power_ranks.items(), key=lambda x: x[1], reverse=True))
-        
-        # Calculate SOS
-        sos_results = []
-        
-        for team_id, stats in team_stats.items():
-            future_opponents = []
-            
-            for matchup in schedule:
-                week = matchup.get('matchupPeriodId', 0)
-                if current_week < week <= total_weeks:
-                    home = matchup.get('home', {})
-                    away = matchup.get('away', {})
-                    
-                    if home.get('teamId') == team_id and away.get('teamId'):
-                        future_opponents.append(away.get('teamId'))
-                    elif away.get('teamId') == team_id and home.get('teamId'):
-                        future_opponents.append(home.get('teamId'))
-            
-            if not future_opponents:
-                continue
-            
-            opp_scores = []
-            opp_win_pcts = []
-            opp_power_ranks = []
-            
-            for opp_id in future_opponents:
-                if opp_id in team_stats:
-                    opp_scores.extend(team_stats[opp_id]['scores'])
-                    opp_win_pcts.append(team_stats[opp_id]['win_pct'])
-                    if opp_id in power_ranks:
-                        opp_power_ranks.append(power_ranks[opp_id])
-            
-            avg_opp_score = np.mean(opp_scores) if opp_scores else 0
-            avg_opp_win_pct = np.mean(opp_win_pcts) if opp_win_pcts else 0
-            avg_opp_power_rank = np.mean(opp_power_ranks) if opp_power_ranks else 0
-
-            if team_id == 16:  # KA-ME-HA team
-                print(f"KA-ME-HA future opponents power ranks: {opp_power_ranks}")
-                print(f"KA-ME-HA avg opp power rank: {avg_opp_power_rank}")
-
-
-            sos_results.append({
-                "teamName": stats['teamName'],
-                "teamId": team_id,
-                "opp_points_for": avg_opp_score,
-                "opp_win_pct": avg_opp_win_pct,
-                "opp_power_rank": avg_opp_power_rank,
-                "remainingGames": len(future_opponents)
-            })
-        
-        # MinMaxScaler normalization
-        all_avg_scores = [t['avg_score'] for t in team_stats.values()]
-        all_win_pcts = [t['win_pct'] for t in team_stats.values()]
-        all_power_ranks = list(power_ranks.values())
-        
-        min_score, max_score = min(all_avg_scores), max(all_avg_scores)
-        min_win_pct, max_win_pct = min(all_win_pcts), max(all_win_pcts)
-        min_pr, max_pr = min(all_power_ranks), max(all_power_ranks)
-        
-        print(f"Score range: {min_score:.2f} - {max_score:.2f}")
-        print(f"Win% range: {min_win_pct:.2f} - {max_win_pct:.2f}")
-        print(f"Power rank range: {min_pr:.2f} - {max_pr:.2f}")
-        
-        print("Sample team opp values:", sos_results[0]['opp_points_for'], sos_results[0]['opp_win_pct'], sos_results[0]['opp_power_rank'])
-        for team in sos_results:
-        
-            # Instead of normalizing to 0-1, scale to actual league ranges
-            if max_score > min_score:
-                score_range = max_score - min_score
-                team['opp_points_for_index'] = (team['opp_points_for'] - min_score) / score_range
-            else:
-                team['opp_points_for_index'] = 0.5
+                # Calculate overall difficulty (normalized combination of metrics)
+                # Normalize each metric to 0-100 scale
+                max_ppg = max([sum([s for s in t.scores[:current_week] if s > 0]) / current_week for t in league.teams])
+                min_ppg = min([sum([s for s in t.scores[:current_week] if s > 0]) / current_week for t in league.teams])
+                norm_ppg = ((avg_opp_ppg - min_ppg) / (max_ppg - min_ppg) * 100) if max_ppg > min_ppg else 50
                 
-            if max_win_pct > min_win_pct:
-                team['opp_win_pct_index'] = (team['opp_win_pct'] - min_win_pct) / (max_win_pct - min_win_pct)
-            else:
-                team['opp_win_pct_index'] = 0.5
+                norm_win_pct = opp_win_pct  # Already 0-100
                 
-            if max_pr > min_pr:
-                team['opp_power_rank_index'] = (team['opp_power_rank'] - min_pr) / (max_pr - min_pr)
-            else:
-                team['opp_power_rank_index'] = 0.5
-            
-            team['overall_difficulty'] = (
-                team['opp_points_for_index'] + 
-                team['opp_win_pct_index'] + 
-                team['opp_power_rank_index']
-            ) / 3
-            
-            if team['teamId'] == 16:  # KA-ME-HA
-                print(f"KA-ME-HA indices: PF={team['opp_points_for_index']:.3f}, Win%={team['opp_win_pct_index']:.3f}, PR={team['opp_power_rank_index']:.3f}")
-                print(f"KA-ME-HA overall difficulty (before *100): {team['overall_difficulty']:.3f}")
-            team['avgOpponentPPG'] = round(team['opp_points_for'], 1)
-            team['opponentWinPct'] = round(team['opp_win_pct'] * 100, 1)
-            team['avgOpponentPowerRank'] = round(team['opp_power_rank'], 1)
-            team['overallDifficulty'] = round(team['overall_difficulty'] * 90, 1)
+                # Inverse normalize rank (lower rank = harder)
+                norm_rank = (1 - (avg_opp_rank - 1) / (len(league.teams) - 1)) * 100 if len(league.teams) > 1 else 50
+                
+                # Overall difficulty is average of normalized metrics
+                overall_difficulty = round((norm_ppg + norm_win_pct + norm_rank) / 3, 1)
+                
+                sos_data.append({
+                    'teamName': team.team_name,
+                    'avgOpponentPPG': avg_opp_ppg,
+                    'opponentWinPct': opp_win_pct,
+                    'avgOpponentPowerRank': avg_opp_rank,
+                    'overallDifficulty': overall_difficulty
+                })
         
-        sos_results.sort(key=lambda x: x['overall_difficulty'], reverse=True)
+        # Sort by overall difficulty (hardest first)
+        sos_data.sort(key=lambda x: x['overallDifficulty'], reverse=True)
         
-        return jsonify({"strengthOfSchedule": sos_results}), 200
+        return jsonify({
+            'strengthOfSchedule': sos_data
+        })
         
     except Exception as e:
+        print(f"Error calculating strength of schedule: {str(e)}")
+        import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
+        return jsonify({'error': str(e)}), 500
 # Add these routes at the bottom, before if __name__ == '__main__':
 
 @app.route('/historical/seasons', methods=['GET'])

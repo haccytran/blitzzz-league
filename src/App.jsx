@@ -5863,10 +5863,10 @@ const sortedRankings = [...rankings].sort((a, b) => {
                 <div className="playoff-grid-mobile">
                   <div className="playoff-header">
                     <div>Odds %</div>
-                    <div>Rec</div>
-                    <div>PW</div>
-                    <div>PL</div>
-                    <div>PPF</div>
+                    <div>Current Record</div>
+                    <div>Proj. Wins</div>
+                    <div>Proj. Losses</div>
+                    <div>Proj. PF</div>
                   </div>
                   
                   {playoffOdds.map(team => (

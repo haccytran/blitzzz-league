@@ -5835,7 +5835,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
                       <th style={{ padding: "12px 8px", textAlign: "center" }}>Current Record</th>
                       <th style={{ padding: "12px 8px", textAlign: "center" }}>Proj. Wins</th>
                       <th style={{ padding: "12px 8px", textAlign: "center" }}>Proj. Losses</th>
-                      <th style={{ padding: "12px 8px", textAlign: "right" }}>Proj. PF</th>
+                      <th style={{ padding: "12px 8px", textAlign: "right" }}>Proj. Points Total</th>
                     </tr>
                   </thead>
                   <tbody>

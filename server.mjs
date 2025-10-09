@@ -1319,31 +1319,36 @@ app.get("/api/leagues/:leagueId/strength-of-schedule/:seasonId", async (req, res
     const { leagueId, seasonId } = req.params;
     const currentWeek = parseInt(req.query.currentWeek) || 1;
     
-    // Map friendly league IDs to ESPN IDs
-    const leagueConfigs = {
-      'blitzzz': '226912',
-      'sculpin': '58645'
-    };
-    
+    // Use the same mapping pattern as your other routes
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
+    // Get credentials from cookies or environment variables
+    const espn_s2 = req.cookies?.espn_s2 || process.env.ESPN_S2;
+    const swid = req.cookies?.swid || process.env.SWID;
+    
     console.log(`[SOS] Calling Python service for league: ${espnLeagueId}, season: ${seasonId}, week: ${currentWeek}`);
-
-    // Call Python service for SOS calculation
+    console.log(`[SOS] Has credentials: espn_s2=${!!espn_s2}, swid=${!!swid}`);  // ADD THIS
+    
+    // Call Python service for SOS calculation with credentials
     const pythonResponse = await fetch(`http://localhost:5001/strength-of-schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         leagueId: espnLeagueId,
         seasonId: seasonId,
-        currentWeek: currentWeek
+        currentWeek: currentWeek,
+        espn_s2: espn_s2,
+        swid: swid
       })
     });
-
+    
     if (!pythonResponse.ok) {
-      throw new Error(`Python service returned ${pythonResponse.status}`);
+      const errorText = await pythonResponse.text();  // ADD THIS
+      console.error(`[SOS] Python error response:`, errorText);  // ADD THIS
+      throw new Error(`Python service returned ${pythonResponse.status}: ${errorText}`);
     }
-
+    
     const pythonData = await pythonResponse.json();
     console.log(`[SOS] Python service succeeded`);
     

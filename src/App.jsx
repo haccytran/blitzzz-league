@@ -5691,7 +5691,11 @@ const sortedRankings = [...rankings].sort((a, b) => {
         throw new Error(rankingsRes.error);
       }
 
-      setRankings(rankingsRes.rankings || []);
+      const rankedData = (rankingsRes.rankings || []).map((team, index) => ({
+        ...team,
+        rank: index + 1
+      }));
+      setRankings(rankedData);
       
       if (playoffRes.playoffOdds) {
         setPlayoffOdds(playoffRes.playoffOdds);
@@ -5747,29 +5751,29 @@ const sortedRankings = [...rankings].sort((a, b) => {
               <table className="rankings-table-desktop">
                 <thead>
                   <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                    <th style={{ padding: "12px 8px", textAlign: "left" }}>Rank</th>
+                    <th style={{ padding: "12px 8px", textAlign: "left" }}>Rank #</th>
                     <th style={{ padding: "12px 8px", textAlign: "left" }}>Team</th>
                     <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('comprehensivePowerScore')}>
-                      Comprehensive {sortConfig.key === 'comprehensivePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                      Comprehensive Score{sortConfig.key === 'comprehensivePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
                     </th>
                     <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('simplePowerScore')}>
-                      Simple {sortConfig.key === 'simplePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                      Simple Score{sortConfig.key === 'simplePowerScore' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
                     </th>
                     <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('record')}>
-                      Record {sortConfig.key === 'record' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                     Team Record {sortConfig.key === 'record' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
                     </th>
                     <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsFor')}>
-                      PF {sortConfig.key === 'totalPointsFor' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                      Points For {sortConfig.key === 'totalPointsFor' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
                     </th>
                     <th className="cursor-pointer hover:bg-gray-100" onClick={() => handleSort('totalPointsAgainst')}>
-                      PA {sortConfig.key === 'totalPointsAgainst' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
+                      Points Allowed {sortConfig.key === 'totalPointsAgainst' && (sortConfig.direction === 'desc' ? '↓' : '↑')}
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedRankings.map((team, index) => (
+                  {sortedRankings.map((team) => (
                     <tr key={team.teamName} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{index + 1}</td>
+                      <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{team.rank}</td>
                       <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
                       <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold", color: "#16a34a" }}>
                         {team.comprehensivePowerScore}
@@ -5791,19 +5795,19 @@ const sortedRankings = [...rankings].sort((a, b) => {
               <div className="rankings-grid-mobile">
                 {/* Header row */}
                 <div className="rankings-header">
-                  <div>#</div>
-                  <div onClick={() => handleSort('comprehensivePowerScore')}>Comprehensive</div>
-                  <div onClick={() => handleSort('simplePowerScore')}>Simple</div>
-                  <div onClick={() => handleSort('record')}>Rec</div>
-                  <div onClick={() => handleSort('totalPointsFor')}>PF</div>
-                  <div onClick={() => handleSort('totalPointsAgainst')}>PA</div>
+                  <div>Rank #</div>
+                  <div onClick={() => handleSort('comprehensivePowerScore')}>Comprehensive Score</div>
+                  <div onClick={() => handleSort('simplePowerScore')}>Simple Score</div>
+                  <div onClick={() => handleSort('record')}>Team Record</div>
+                  <div onClick={() => handleSort('totalPointsFor')}>Points For</div>
+                  <div onClick={() => handleSort('totalPointsAgainst')}>Points Allowed</div>
                 </div>
                 
                 {/* Data rows */}
-                {sortedRankings.map((team, index) => (
+                {sortedRankings.map((team) => (
                   <div key={team.teamName} className="rankings-row">
                     <div className="rankings-row-bg">{team.teamName}</div>
-                    <div className="rankings-cell">{index + 1}</div>
+                    <div className="rankings-cell">{team.rank}</div>
                     <div className="rankings-cell" style={{ fontWeight: "bold", color: "#16a34a" }}>
                       {team.comprehensivePowerScore}
                     </div>

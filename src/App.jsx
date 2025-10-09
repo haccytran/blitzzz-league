@@ -5866,7 +5866,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
                     <div>Current Record</div>
                     <div>Proj. Wins</div>
                     <div>Proj. Losses</div>
-                    <div>Proj. PF</div>
+                    <div>Proj. Points Total</div>
                   </div>
                   
                   {playoffOdds.map(team => (

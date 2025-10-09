@@ -894,12 +894,17 @@ def strength_of_schedule_endpoint():
             league_id = str(data.get('leagueId'))
             season_id = str(data.get('seasonId'))
             current_week = int(data.get('currentWeek', 1))
+            espn_s2 = data.get('espn_s2')
+            swid = data.get('swid')
         else:
             league_id = request.args.get('leagueId')
             season_id = request.args.get('seasonId')
             current_week = request.args.get('currentWeek', 1, type=int)
+            espn_s2 = request.args.get('espn_s2')
+            swid = request.args.get('swid')
         
         print(f"[SOS] Received: league={league_id}, season={season_id}, week={current_week}")
+        print(f"[SOS] Credentials: espn_s2={bool(espn_s2)}, swid={bool(swid)}")  # ADD THIS DEBUG LINE
                 
         # Fetch all data at once (FAST!)
         league_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mTeam")

@@ -1314,11 +1314,10 @@ app.get("/api/leagues/:leagueId/team-history/:seasonId/:teamId", async (req, res
 
 
 // Strength of schedule - PROXY TO PYTHON
-// Strength of Schedule endpoint matching the power rankings pattern
 app.get("/api/leagues/:leagueId/strength-of-schedule/:seasonId", async (req, res) => {
   try {
     const { leagueId, seasonId } = req.params;
-    const { espnS2, swid } = req.query;
+    const currentWeek = parseInt(req.query.currentWeek) || 1;
     
     // Map friendly league IDs to ESPN IDs
     const leagueConfigs = {
@@ -1328,39 +1327,30 @@ app.get("/api/leagues/:leagueId/strength-of-schedule/:seasonId", async (req, res
     
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
-    console.log(`Fetching strength of schedule for league: ${espnLeagueId}, season: ${seasonId}`);
+    console.log(`[SOS] Calling Python service for league: ${espnLeagueId}, season: ${seasonId}, week: ${currentWeek}`);
 
-    // Fetch league data with matchup and team views
-    const leagueUrl = `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${espnLeagueId}?view=mMatchup&view=mTeam`;
-    
-    const headers = {
-      'Accept': 'application/json',
-    };
+    // Call Python service for SOS calculation
+    const pythonResponse = await fetch(`http://localhost:5001/strength-of-schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leagueId: espnLeagueId,
+        seasonId: seasonId,
+        currentWeek: currentWeek
+      })
+    });
 
-    // Add cookies for private leagues
-    const cookieEspnS2 = espnS2 || process.env.ESPN_S2 || req.cookies?.espn_s2;
-    const cookieSwid = swid || process.env.SWID || req.cookies?.swid;
-    
-    if (cookieEspnS2 && cookieSwid) {
-      headers['Cookie'] = `espn_s2=${cookieEspnS2}; SWID=${cookieSwid}`;
+    if (!pythonResponse.ok) {
+      throw new Error(`Python service returned ${pythonResponse.status}`);
     }
 
-    const response = await fetch(leagueUrl, { headers });
+    const pythonData = await pythonResponse.json();
+    console.log(`[SOS] Python service succeeded`);
     
-    if (!response.ok) {
-      throw new Error(`ESPN API returned ${response.status}: ${response.statusText}`);
-    }
-
-    const leagueData = await response.json();
-    
-    // Calculate strength of schedule
-    const sosData = calculateStrengthOfSchedule(leagueData);
-    
-    console.log('SOS calculation successful');
-    res.json(sosData);
+    res.json(pythonData);
     
   } catch (error) {
-    console.error('SOS calculation failed:', error);
+    console.error('[SOS] Python service failed:', error);
     res.status(500).json({ 
       error: 'Failed to calculate strength of schedule',
       details: error.message 
@@ -1368,133 +1358,6 @@ app.get("/api/leagues/:leagueId/strength-of-schedule/:seasonId", async (req, res
   }
 });
 
-// Helper function to calculate strength of schedule
-function calculateStrengthOfSchedule(leagueData) {
-  const teams = leagueData.teams || [];
-  const schedule = leagueData.schedule || [];
-  const currentWeek = leagueData.scoringPeriodId || 1;
-  const regularSeasonCount = leagueData.settings?.scheduleSettings?.matchupPeriodCount || 14;
-
-  console.log(`Processing SOS for ${teams.length} teams, current week: ${currentWeek}`);
-
-  // Initialize team stats
-  const teamStats = {};
-  
-  teams.forEach(team => {
-    const teamId = team.id;
-    const teamName = `${team.location || ''} ${team.nickname || ''}`.trim();
-    
-    teamStats[teamId] = {
-      id: teamId,
-      name: teamName || `Team ${teamId}`,
-      totalPoints: 0,
-      gamesPlayed: 0,
-      ppg: 0,
-      remainingOpponents: [],
-      pastOpponents: []
-    };
-  });
-
-  // Process schedule
-  schedule.forEach(matchup => {
-    const week = matchup.matchupPeriodId;
-    
-    // Only process regular season games
-    if (week > regularSeasonCount) return;
-    
-    const homeTeamId = matchup.home?.teamId;
-    const awayTeamId = matchup.away?.teamId;
-    const homeScore = matchup.home?.totalPoints || 0;
-    const awayScore = matchup.away?.totalPoints || 0;
-
-    if (!homeTeamId || !awayTeamId) return;
-
-    // Games that have been played
-    if (week < currentWeek) {
-      if (teamStats[homeTeamId] && homeScore > 0) {
-        teamStats[homeTeamId].totalPoints += homeScore;
-        teamStats[homeTeamId].gamesPlayed += 1;
-        teamStats[homeTeamId].pastOpponents.push(awayTeamId);
-      }
-      
-      if (teamStats[awayTeamId] && awayScore > 0) {
-        teamStats[awayTeamId].totalPoints += awayScore;
-        teamStats[awayTeamId].gamesPlayed += 1;
-        teamStats[awayTeamId].pastOpponents.push(homeTeamId);
-      }
-    }
-    // Future games
-    else if (week >= currentWeek) {
-      if (teamStats[homeTeamId]) {
-        teamStats[homeTeamId].remainingOpponents.push(awayTeamId);
-      }
-      if (teamStats[awayTeamId]) {
-        teamStats[awayTeamId].remainingOpponents.push(homeTeamId);
-      }
-    }
-  });
-
-  // Calculate PPG for each team
-  Object.values(teamStats).forEach(team => {
-    if (team.gamesPlayed > 0) {
-      team.ppg = team.totalPoints / team.gamesPlayed;
-    }
-  });
-
-  // Calculate SOS metrics
-  const sosResults = Object.values(teamStats).map(team => {
-    let remainingSOS = 0;
-    let pastSOS = 0;
-    let totalSOS = 0;
-    
-    // Remaining SOS: average PPG of remaining opponents
-    if (team.remainingOpponents.length > 0) {
-      const remainingTotal = team.remainingOpponents.reduce((sum, oppId) => {
-        return sum + (teamStats[oppId]?.ppg || 0);
-      }, 0);
-      remainingSOS = remainingTotal / team.remainingOpponents.length;
-    }
-    
-    // Past SOS: average PPG of past opponents
-    if (team.pastOpponents.length > 0) {
-      const pastTotal = team.pastOpponents.reduce((sum, oppId) => {
-        return sum + (teamStats[oppId]?.ppg || 0);
-      }, 0);
-      pastSOS = pastTotal / team.pastOpponents.length;
-    }
-    
-    // Total SOS: average PPG of all opponents
-    const allOpponents = [...team.remainingOpponents, ...team.pastOpponents];
-    if (allOpponents.length > 0) {
-      const totalPoints = allOpponents.reduce((sum, oppId) => {
-        return sum + (teamStats[oppId]?.ppg || 0);
-      }, 0);
-      totalSOS = totalPoints / allOpponents.length;
-    }
-
-    return {
-      teamId: team.id,
-      teamName: team.name,
-      remainingSOS: Number(remainingSOS.toFixed(2)),
-      pastSOS: Number(pastSOS.toFixed(2)),
-      totalSOS: Number(totalSOS.toFixed(2)),
-      ppg: Number(team.ppg.toFixed(2)),
-      gamesPlayed: team.gamesPlayed,
-      remainingGames: team.remainingOpponents.length
-    };
-  });
-
-  // Sort by remaining SOS (highest = hardest schedule)
-  sosResults.sort((a, b) => b.remainingSOS - a.remainingSOS);
-
-  console.log(`SOS calculated for ${sosResults.length} teams`);
-
-  return {
-    currentWeek,
-    regularSeasonCount,
-    teams: sosResults
-  };
-}
 app.post("/api/league-data/reset-waivers", requireAdmin, async (req, res) => {
   try {
     const data = await getLeagueData();

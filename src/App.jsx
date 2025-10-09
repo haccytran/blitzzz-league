@@ -5580,10 +5580,10 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
                     {/* Mobile grid */}
                     <div className="luck-grid-mobile">
                       <div className="luck-header">
-                        <div>Res</div>
-                        <div>AP</div>
-                        <div>EW%</div>
-                        <div>LI</div>
+                        <div>Result</div>
+                        <div>All-Play</div>
+                        <div>Expected Win %</div>
+                        <div>Luck Index</div>
                       </div>
                       
                       {teams

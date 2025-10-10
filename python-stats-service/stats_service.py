@@ -1025,7 +1025,8 @@ def strength_of_schedule_endpoint():
             min_power = min(all_power_scores) if all_power_scores else 0
             norm_power = ((avg_opp_power - min_power) / (max_power - min_power)) * 100 if max_power > min_power else 50
             
-            overall_difficulty = (norm_ppg + norm_win_pct + norm_power) / 3
+            # Weighted formula: PPG 42.5%, Win% 15%, Power 42.5%
+            overall_difficulty = (norm_ppg * 0.425) + (norm_win_pct * 0.15) + (norm_power * 0.425)
             
             sos_results.append({
                 'teamName': team_name,

@@ -1718,7 +1718,21 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
       teamResponse.json(),
       boxscoreResponse.json()
     ]);
-    
+
+   // ========== ADD DEBUG CODE HERE ==========
+    console.log('=== PROJECTION DEBUG ===');
+    if (boxscoreData.schedule && boxscoreData.schedule[0]) {
+      const firstTeam = boxscoreData.schedule[0]?.home;
+      if (firstTeam?.rosterForCurrentScoringPeriod?.entries) {
+        const firstPlayer = firstTeam.rosterForCurrentScoringPeriod.entries[0];
+        const player = firstPlayer?.playerPoolEntry?.player;
+        console.log('Player name:', player?.fullName);
+        console.log('Full stats array:', JSON.stringify(player?.stats, null, 2));
+      }
+    }
+    console.log('=== END DEBUG ===');
+    // ========== END DEBUG CODE ==========
+   
     const teamNames = {};
     if (teamData.teams) {
       teamData.teams.forEach(team => {
@@ -1765,27 +1779,27 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
   }
 }
 
-// Week 12: Bulls-eye - closest to 130 points
+// Week 12: Bulls-eye - Team closest to their projected point total
 async function determineBullseye(weekNumber, leagueId, seasonId) {
   try {
-    const [teamResponse, matchupResponse] = await Promise.all([
+    const [teamResponse, boxscoreResponse] = await Promise.all([
       fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
         mode: 'cors',
         headers: { 'Accept': 'application/json' }
       }),
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&scoringPeriodId=${weekNumber}`, {
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
         mode: 'cors',
         headers: { 'Accept': 'application/json' }
       })
     ]);
     
-    if (!teamResponse.ok || !matchupResponse.ok) {
+    if (!teamResponse.ok || !boxscoreResponse.ok) {
       throw new Error(`ESPN API error`);
     }
     
-    const [teamData, matchupData] = await Promise.all([
+    const [teamData, boxscoreData] = await Promise.all([
       teamResponse.json(),
-      matchupResponse.json()
+      boxscoreResponse.json()
     ]);
     
     const teamNames = {};
@@ -1797,32 +1811,33 @@ async function determineBullseye(weekNumber, leagueId, seasonId) {
       });
     }
     
-    const TARGET = 130;
-    let closestTo130 = Infinity;
-    let winningTeam = null;
-    let winningScore = 0;
+    let closestToProjection = { team: "", diff: Infinity, actual: 0, proj: 0 };
     
-    if (matchupData.schedule) {
-      matchupData.schedule.forEach(matchup => {
+    if (boxscoreData.schedule) {
+      boxscoreData.schedule.forEach(matchup => {
         [matchup.home, matchup.away].forEach(team => {
           if (!team) return;
           
-          const score = team.totalPoints || 0;
-          const diff = Math.abs(score - TARGET);
+          const actual = team.totalPoints || 0;
+          const proj = ht_teamProjection(team, weekNumber);
+          const diff = Math.abs(actual - proj);
           
-          if (diff < closestTo130) {
-            closestTo130 = diff;
-            winningTeam = teamNames[team.teamId] || `Team ${team.teamId}`;
-            winningScore = score;
+          if (diff < closestToProjection.diff) {
+            closestToProjection = {
+              team: teamNames[team.teamId] || `Team ${team.teamId}`,
+              diff: diff,
+              actual: actual,
+              proj: proj
+            };
           }
         });
       });
     }
     
-    if (winningTeam) {
+    if (closestToProjection.team) {
       return {
-        teamName: winningTeam,
-        details: `Scored ${winningScore.toFixed(1)} points (${closestTo130.toFixed(1)} from 130)`
+        teamName: closestToProjection.team,
+        details: `Scored ${closestToProjection.actual.toFixed(2)} points (${closestToProjection.diff.toFixed(2)} from projection of ${closestToProjection.proj.toFixed(2)})`
       };
     }
     
@@ -4758,6 +4773,20 @@ for (const week of trophiesData) {
       view: "mBoxscore",
       scoringPeriodId: week.week
     });
+
+  // ADD DEBUG CODE HERE FOR FIRST WEEK ONLY
+  if (week.week === 1) {
+    console.log('=== PROJECTION DEBUG FOR WEEK 1 ===');
+    const firstTeam = boxResp.schedule?.[0]?.home;
+    if (firstTeam?.rosterForCurrentScoringPeriod?.entries?.[0]) {
+      const firstPlayer = firstTeam.rosterForCurrentScoringPeriod.entries[0];
+      const player = firstPlayer?.playerPoolEntry?.player;
+      console.log('Player name:', player?.fullName);
+      console.log('Full stats array:', JSON.stringify(player?.stats, null, 2));
+    }
+    console.log('=== END DEBUG ===');
+  }
+
     const rows = Array.isArray(boxResp?.schedule) ? boxResp.schedule : [];
     for (const r of rows) {
       if (r?.matchupPeriodId !== week.week) continue;
@@ -5683,7 +5712,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
       const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
       const [rankingsRes, playoffRes, sosRes] = await Promise.all([
         fetch(`${baseURL}/api/leagues/${config.id}/power-rankings/${espn.seasonId}?currentWeek=${completedWeek}`).then(r => r.json()),
-        fetch(`${baseURL}/api/leagues/${config.id}/playoff-odds/${espn.seasonId}?currentWeek=${completedWeek}&simulations=50,000`).then(r => r.json()),
+        fetch(`${baseURL}/api/leagues/${config.id}/playoff-odds/${espn.seasonId}?currentWeek=${completedWeek}&simulations=10,000`).then(r => r.json()),
         fetch(`${baseURL}/api/leagues/${config.id}/strength-of-schedule/${espn.seasonId}?currentWeek=${completedWeek}`).then(r => r.json())
       ]);
 

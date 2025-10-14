@@ -1699,6 +1699,8 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
 // Week 6: Overachiever - biggest positive difference from projection
 async function determineOverachiever(weekNumber, leagueId, seasonId) {
   try {
+    console.log(`[OVERACHIEVER DEBUG] Starting calculation for Week ${weekNumber}, League ${leagueId}, Season ${seasonId}`);
+    
     const [teamResponse, boxscoreResponse] = await Promise.all([
       fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
         mode: 'cors',
@@ -1710,8 +1712,11 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
       })
     ]);
     
+    console.log(`[OVERACHIEVER DEBUG] Team response status: ${teamResponse.ok}`);
+    console.log(`[OVERACHIEVER DEBUG] Boxscore response status: ${boxscoreResponse.ok}`);
+    
     if (!teamResponse.ok || !boxscoreResponse.ok) {
-      throw new Error(`ESPN API error`);
+      throw new Error(`ESPN API error - Team: ${teamResponse.status}, Boxscore: ${boxscoreResponse.status}`);
     }
     
     const [teamData, boxscoreData] = await Promise.all([
@@ -1719,19 +1724,83 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
       boxscoreResponse.json()
     ]);
 
-   // ========== ADD DEBUG CODE HERE ==========
-    console.log('=== PROJECTION DEBUG ===');
+    console.log('=== FULL PROJECTION DEBUG ===');
+    console.log('Has schedule:', !!boxscoreData.schedule);
+    console.log('Schedule length:', boxscoreData.schedule?.length || 0);
+    
     if (boxscoreData.schedule && boxscoreData.schedule[0]) {
-      const firstTeam = boxscoreData.schedule[0]?.home;
+      const firstMatchup = boxscoreData.schedule[0];
+      const firstTeam = firstMatchup.home;
+      
+      console.log('\n--- TEAM LEVEL DATA ---');
+      console.log('Team ID:', firstTeam?.teamId);
+      console.log('Total Points (actual):', firstTeam?.totalPoints);
+      console.log('Total Projected Points:', firstTeam?.totalProjectedPoints);
+      console.log('Total Projected Points Live:', firstTeam?.totalProjectedPointsLive);
+      
+      console.log('\n--- ROSTER DATA ---');
+      console.log('Has rosterForCurrentScoringPeriod:', !!firstTeam?.rosterForCurrentScoringPeriod);
+      console.log('Has roster:', !!firstTeam?.roster);
+      
       if (firstTeam?.rosterForCurrentScoringPeriod?.entries) {
-        const firstPlayer = firstTeam.rosterForCurrentScoringPeriod.entries[0];
+        const entries = firstTeam.rosterForCurrentScoringPeriod.entries;
+        console.log('Number of roster entries:', entries.length);
+        
+        const firstPlayer = entries[0];
         const player = firstPlayer?.playerPoolEntry?.player;
+        
+        console.log('\n--- FIRST PLAYER DETAILS ---');
         console.log('Player name:', player?.fullName);
-        console.log('Full stats array:', JSON.stringify(player?.stats, null, 2));
+        console.log('Player ID:', player?.id);
+        console.log('Lineup slot:', firstPlayer?.lineupSlotId);
+        console.log('Is bench:', ht_isBenchSlot(firstPlayer?.lineupSlotId));
+        
+        console.log('\n--- PLAYER STATS ARRAY ---');
+        if (player?.stats && Array.isArray(player.stats)) {
+          console.log('Total stats entries:', player.stats.length);
+          
+          // Show all stats for this player
+          player.stats.forEach((stat, index) => {
+            console.log(`\nStat ${index}:`);
+            console.log('  scoringPeriodId:', stat.scoringPeriodId);
+            console.log('  statSourceId:', stat.statSourceId);
+            console.log('  statSplitTypeId:', stat.statSplitTypeId);
+            console.log('  appliedTotal:', stat.appliedTotal);
+          });
+          
+          // Specifically check for Week 6 projections
+          const week6Stats = player.stats.filter(s => s.scoringPeriodId === weekNumber);
+          console.log(`\n--- WEEK ${weekNumber} STATS FOR THIS PLAYER ---`);
+          console.log('Found stats for this week:', week6Stats.length);
+          week6Stats.forEach((stat, index) => {
+            console.log(`Week ${weekNumber} Stat ${index}:`, JSON.stringify(stat, null, 2));
+          });
+          
+          // Check what ht_projectedForWeek would return
+          const projectedPoints = ht_projectedForWeek(player, weekNumber);
+          console.log(`\nht_projectedForWeek result: ${projectedPoints}`);
+        } else {
+          console.log('No stats array found or not an array');
+        }
+        
+        // Check a few more players
+        console.log('\n--- CHECKING MORE PLAYERS ---');
+        for (let i = 1; i < Math.min(3, entries.length); i++) {
+          const p = entries[i]?.playerPoolEntry?.player;
+          console.log(`\nPlayer ${i}: ${p?.fullName}`);
+          console.log('  Has stats:', !!p?.stats);
+          console.log('  Stats count:', p?.stats?.length || 0);
+          const proj = ht_projectedForWeek(p, weekNumber);
+          console.log('  Projection:', proj);
+        }
       }
+      
+      // Test ht_teamProjection
+      console.log('\n--- TEAM PROJECTION TEST ---');
+      const teamProj = ht_teamProjection(firstTeam, weekNumber);
+      console.log('ht_teamProjection result:', teamProj);
     }
-    console.log('=== END DEBUG ===');
-    // ========== END DEBUG CODE ==========
+    console.log('=== END FULL DEBUG ===\n');
    
     const teamNames = {};
     if (teamData.teams) {
@@ -1742,20 +1811,29 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
       });
     }
     
+    console.log(`[OVERACHIEVER DEBUG] Built team names for ${Object.keys(teamNames).length} teams`);
+    
     let biggestOverachieve = { team: "", delta: -Infinity, actual: 0, proj: 0 };
     
     if (boxscoreData.schedule) {
-      boxscoreData.schedule.forEach(matchup => {
-        [matchup.home, matchup.away].forEach(team => {
+      console.log(`[OVERACHIEVER DEBUG] Processing ${boxscoreData.schedule.length} matchups`);
+      
+      boxscoreData.schedule.forEach((matchup, idx) => {
+        [matchup.home, matchup.away].forEach((team, side) => {
           if (!team) return;
           
           const actual = team.totalPoints || 0;
           const proj = ht_teamProjection(team, weekNumber);
           const delta = actual - proj;
           
+          const teamName = teamNames[team.teamId] || `Team ${team.teamId}`;
+          console.log(`[OVERACHIEVER DEBUG] Matchup ${idx}, ${side === 0 ? 'Home' : 'Away'}: ${teamName}`);
+          console.log(`  Actual: ${actual.toFixed(2)}, Projected: ${proj.toFixed(2)}, Delta: ${delta.toFixed(2)}`);
+          
           if (delta > biggestOverachieve.delta) {
+            console.log(`  ^ NEW LEADER!`);
             biggestOverachieve = {
-              team: teamNames[team.teamId] || `Team ${team.teamId}`,
+              team: teamName,
               delta: delta,
               actual: actual,
               proj: proj
@@ -1765,16 +1843,20 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
       });
     }
     
-    if (biggestOverachieve.team) {
+    console.log(`[OVERACHIEVER DEBUG] Final winner: ${biggestOverachieve.team}`);
+    console.log(`[OVERACHIEVER DEBUG] Delta: ${biggestOverachieve.delta}, Actual: ${biggestOverachieve.actual}, Proj: ${biggestOverachieve.proj}`);
+    
+    if (biggestOverachieve.team && biggestOverachieve.delta > -Infinity) {
       return {
         teamName: biggestOverachieve.team,
         details: `Outperformed projection by ${biggestOverachieve.delta.toFixed(2)} points (${biggestOverachieve.actual.toFixed(2)} vs ${biggestOverachieve.proj.toFixed(2)})`
       };
     }
     
+    console.log(`[OVERACHIEVER DEBUG] No winner found - returning null`);
     return null;
   } catch (error) {
-    console.error(`Error determining Week ${weekNumber} Overachiever:`, error);
+    console.error(`[OVERACHIEVER DEBUG] Error determining Week ${weekNumber} Overachiever:`, error);
     return null;
   }
 }

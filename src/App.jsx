@@ -1695,6 +1695,49 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
   }
 }
 
+// =========================
+// Helper functions for projection-based challenges
+// =========================
+
+// Helper to check if a lineup slot is bench/IR
+const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21;
+
+// Get projected points for a specific player in a specific week
+const ht_projectedForWeek = (playerObj, week) => {
+  const stats = playerObj?.stats;
+  if (!Array.isArray(stats)) return 0;
+  const row = stats.find(
+    s => s?.scoringPeriodId === week && s?.statSourceId === 1 && s?.statSplitTypeId === 1
+  );
+  return Number(row?.appliedTotal ?? 0);
+};
+
+// Get team's total projected points (prefer team-level, fallback to sum of starters)
+const ht_teamProjection = (teamSideObj, week) => {
+  const teamLevel =
+    teamSideObj?.totalProjectedPointsLive ??
+    teamSideObj?.totalProjectedPoints ??
+    null;
+  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
+
+  const entries =
+    teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
+    teamSideObj?.roster?.entries ||
+    [];
+
+  let sum = 0;
+  for (const e of entries) {
+    if (ht_isBenchSlot(e?.lineupSlotId)) continue; // starters only
+    const player = e?.playerPoolEntry?.player;
+    sum += ht_projectedForWeek(player, week);
+  }
+  return sum;
+};
+
+// Week 6: Overachiever - biggest positive difference from projection
+async function determineOverachiever(weekNumber, leagueId, seasonId) {
+  // ... (your debug function from my previous response)
+}
 
 // Week 6: Overachiever - biggest positive difference from projection
 async function determineOverachiever(weekNumber, leagueId, seasonId) {
@@ -4337,42 +4380,15 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
 
 function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
-const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21; // Bench, IR
 
 // ESPN per-player projections live in player.stats rows where:
 //  - statSourceId === 1 (projected)
 //  - statSplitTypeId === 1 (weekly split)
 //  - scoringPeriodId === <week>
-const ht_projectedForWeek = (playerObj, week) => {
-  const stats = playerObj?.stats;
-  if (!Array.isArray(stats)) return 0;
-  const row = stats.find(
-    s => s?.scoringPeriodId === week && s?.statSourceId === 1 && s?.statSplitTypeId === 1
-  );
-  return Number(row?.appliedTotal ?? 0);
-};
+
 
 // Prefer team-level projected total if ESPN provides it; otherwise sum starters' projections
-const ht_teamProjection = (teamSideObj, week) => {
-  const teamLevel =
-    teamSideObj?.totalProjectedPointsLive ??
-    teamSideObj?.totalProjectedPoints ??
-    null;
-  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
 
-  const entries =
-    teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
-    teamSideObj?.roster?.entries ||
-    [];
-
-  let sum = 0;
-  for (const e of entries) {
-    if (ht_isBenchSlot(e?.lineupSlotId)) continue; // starters only
-    const player = e?.playerPoolEntry?.player;
-    sum += ht_projectedForWeek(player, week);
-  }
-  return sum;
-};
   const [naughtyLists, setNaughtyLists] = useState({}); // Store naughty lists by week
   const [allNaughtyEntries, setAllNaughtyEntries] = useState([]); // Flattened list
   const [loading, setLoading] = useState(false);

@@ -1,4 +1,4 @@
-// src/App.jsx - Version 3.0 with Subdomain Support
+x// src/App.jsx - Version 3.0 with Subdomain Support
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { LandingPage } from './components/LandingPage.jsx';
 import { useLeagueConfig } from './hooks/useLeagueConfig.js';
@@ -1159,6 +1159,7 @@ function getLineupSlotName(slotId) {
 }
 
 // Week 6: Overachiever
+// Week 6: Overachiever - biggest positive difference from projection
 // Week 6: Overachiever - biggest positive difference from projection
 async function determineOverachiever(weekNumber, leagueId, seasonId) {
   try {

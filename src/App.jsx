@@ -1103,7 +1103,7 @@ function slotIdToName(counts) {
   return res;
 }
 
-// ========== ADD ALL THESE FUNCTIONS HERE ==========
+========== ADD ALL THESE FUNCTIONS HERE ==========
 
 // Helper to check if a lineup slot is bench/IR
 const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21;
@@ -1159,8 +1159,12 @@ function getLineupSlotName(slotId) {
 }
 
 // Week 6: Overachiever
+// Week 6: Overachiever - biggest positive difference from projection
 async function determineOverachiever(weekNumber, leagueId, seasonId) {
   try {
+    console.log(`[OVERACHIEVER] Starting calculation for Week ${weekNumber}`);
+    
+    // Fetch both team data and boxscore data for the specific week
     const [teamResponse, boxscoreResponse] = await Promise.all([
       fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
         mode: 'cors',
@@ -1173,6 +1177,7 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
     ]);
     
     if (!teamResponse.ok || !boxscoreResponse.ok) {
+      console.error(`[OVERACHIEVER] API error - Team: ${teamResponse.status}, Boxscore: ${boxscoreResponse.status}`);
       throw new Error(`ESPN API error`);
     }
     
@@ -1180,7 +1185,11 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
       teamResponse.json(),
       boxscoreResponse.json()
     ]);
+
+    console.log(`[OVERACHIEVER] Fetched data for week ${weekNumber}`);
+    console.log(`[OVERACHIEVER] Schedule length: ${boxscoreData?.schedule?.length || 0}`);
     
+    // Build team name mapping
     const teamNames = {};
     if (teamData.teams) {
       teamData.teams.forEach(team => {
@@ -1192,18 +1201,31 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
     
     let biggestOverachieve = { team: "", delta: -Infinity, actual: 0, proj: 0 };
     
+    // Process each matchup for the specified week
     if (boxscoreData.schedule) {
-      boxscoreData.schedule.forEach(matchup => {
-        [matchup.home, matchup.away].forEach(team => {
+      boxscoreData.schedule.forEach((matchup, idx) => {
+        // Verify this matchup is for the correct week
+        if (matchup.matchupPeriodId !== weekNumber) {
+          console.warn(`[OVERACHIEVER] Skipping matchup ${idx} - wrong week (${matchup.matchupPeriodId} vs ${weekNumber})`);
+          return;
+        }
+        
+        [matchup.home, matchup.away].forEach((team, sideIdx) => {
           if (!team) return;
           
           const actual = team.totalPoints || 0;
           const proj = ht_teamProjection(team, weekNumber);
           const delta = actual - proj;
           
+          const teamName = teamNames[team.teamId] || `Team ${team.teamId}`;
+          
+          console.log(`[OVERACHIEVER] Week ${weekNumber}, Matchup ${idx}, ${sideIdx === 0 ? 'Home' : 'Away'}: ${teamName}`);
+          console.log(`  Actual: ${actual.toFixed(2)}, Projected: ${proj.toFixed(2)}, Delta: ${delta.toFixed(2)}`);
+          
           if (delta > biggestOverachieve.delta) {
+            console.log(`  ^ NEW LEADER!`);
             biggestOverachieve = {
-              team: teamNames[team.teamId] || `Team ${team.teamId}`,
+              team: teamName,
               delta: delta,
               actual: actual,
               proj: proj
@@ -1211,18 +1233,24 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
           }
         });
       });
+    } else {
+      console.error(`[OVERACHIEVER] No schedule data found for week ${weekNumber}`);
     }
     
-    if (biggestOverachieve.team) {
+    console.log(`[OVERACHIEVER] Final winner: ${biggestOverachieve.team}`);
+    console.log(`[OVERACHIEVER] Delta: ${biggestOverachieve.delta.toFixed(2)}, Actual: ${biggestOverachieve.actual.toFixed(2)}, Proj: ${biggestOverachieve.proj.toFixed(2)}`);
+    
+    if (biggestOverachieve.team && biggestOverachieve.delta > -Infinity) {
       return {
         teamName: biggestOverachieve.team,
         details: `Outperformed projection by ${biggestOverachieve.delta.toFixed(2)} points (${biggestOverachieve.actual.toFixed(2)} vs ${biggestOverachieve.proj.toFixed(2)})`
       };
     }
     
+    console.log(`[OVERACHIEVER] No valid winner found`);
     return null;
   } catch (error) {
-    console.error(`Error determining Week ${weekNumber} Overachiever:`, error);
+    console.error(`[OVERACHIEVER] Error determining Week ${weekNumber} Overachiever:`, error);
     return null;
   }
 }
@@ -6702,7 +6730,7 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear, btnPri, btnSe
 
 // put near other helpers
 const methodLabel = (m) => {
-  switch ((m || "").toUpperCase()) {xx
+  switch ((m || "").toUpperCase()) {
     case "PROCESS":
     case "WAIVER":      return "Waivers";
     case "EXECUTE":
@@ -6731,7 +6759,7 @@ function IntroSplash({ selectedLeague }) {
   const logoAlt = selectedLeague ? `${selectedLeague.name} Logo` : "Blitzzz Logo";
   
   return (
-    <div className="splash">xxf
+    <div className="splash">
       <img src={logoSrc} alt={logoAlt} />
     </div>
   );
@@ -6755,4 +6783,3 @@ function SyncOverlay({ open, pct, msg }) {
     </div>
   );
 }
- 

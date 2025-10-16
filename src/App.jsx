@@ -1,4 +1,4 @@
-x// src/App.jsx - Version 3.0 with Subdomain Support
+// src/App.jsx - Version 3.0 with Subdomain Support
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { LandingPage } from './components/LandingPage.jsx';
 import { useLeagueConfig } from './hooks/useLeagueConfig.js';
@@ -1103,8 +1103,6 @@ function slotIdToName(counts) {
   return res;
 }
 
-========== ADD ALL THESE FUNCTIONS HERE ==========
-
 // Helper to check if a lineup slot is bench/IR
 const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21;
 
@@ -1159,13 +1157,8 @@ function getLineupSlotName(slotId) {
 }
 
 // Week 6: Overachiever
-// Week 6: Overachiever - biggest positive difference from projection
-// Week 6: Overachiever - biggest positive difference from projection
 async function determineOverachiever(weekNumber, leagueId, seasonId) {
   try {
-    console.log(`[OVERACHIEVER] Starting calculation for Week ${weekNumber}`);
-    
-    // Fetch both team data and boxscore data for the specific week
     const [teamResponse, boxscoreResponse] = await Promise.all([
       fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
         mode: 'cors',
@@ -1178,7 +1171,6 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
     ]);
     
     if (!teamResponse.ok || !boxscoreResponse.ok) {
-      console.error(`[OVERACHIEVER] API error - Team: ${teamResponse.status}, Boxscore: ${boxscoreResponse.status}`);
       throw new Error(`ESPN API error`);
     }
     
@@ -1186,11 +1178,7 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
       teamResponse.json(),
       boxscoreResponse.json()
     ]);
-
-    console.log(`[OVERACHIEVER] Fetched data for week ${weekNumber}`);
-    console.log(`[OVERACHIEVER] Schedule length: ${boxscoreData?.schedule?.length || 0}`);
     
-    // Build team name mapping
     const teamNames = {};
     if (teamData.teams) {
       teamData.teams.forEach(team => {
@@ -1202,31 +1190,18 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
     
     let biggestOverachieve = { team: "", delta: -Infinity, actual: 0, proj: 0 };
     
-    // Process each matchup for the specified week
     if (boxscoreData.schedule) {
-      boxscoreData.schedule.forEach((matchup, idx) => {
-        // Verify this matchup is for the correct week
-        if (matchup.matchupPeriodId !== weekNumber) {
-          console.warn(`[OVERACHIEVER] Skipping matchup ${idx} - wrong week (${matchup.matchupPeriodId} vs ${weekNumber})`);
-          return;
-        }
-        
-        [matchup.home, matchup.away].forEach((team, sideIdx) => {
+      boxscoreData.schedule.forEach(matchup => {
+        [matchup.home, matchup.away].forEach(team => {
           if (!team) return;
           
           const actual = team.totalPoints || 0;
           const proj = ht_teamProjection(team, weekNumber);
           const delta = actual - proj;
           
-          const teamName = teamNames[team.teamId] || `Team ${team.teamId}`;
-          
-          console.log(`[OVERACHIEVER] Week ${weekNumber}, Matchup ${idx}, ${sideIdx === 0 ? 'Home' : 'Away'}: ${teamName}`);
-          console.log(`  Actual: ${actual.toFixed(2)}, Projected: ${proj.toFixed(2)}, Delta: ${delta.toFixed(2)}`);
-          
           if (delta > biggestOverachieve.delta) {
-            console.log(`  ^ NEW LEADER!`);
             biggestOverachieve = {
-              team: teamName,
+              team: teamNames[team.teamId] || `Team ${team.teamId}`,
               delta: delta,
               actual: actual,
               proj: proj
@@ -1234,24 +1209,18 @@ async function determineOverachiever(weekNumber, leagueId, seasonId) {
           }
         });
       });
-    } else {
-      console.error(`[OVERACHIEVER] No schedule data found for week ${weekNumber}`);
     }
     
-    console.log(`[OVERACHIEVER] Final winner: ${biggestOverachieve.team}`);
-    console.log(`[OVERACHIEVER] Delta: ${biggestOverachieve.delta.toFixed(2)}, Actual: ${biggestOverachieve.actual.toFixed(2)}, Proj: ${biggestOverachieve.proj.toFixed(2)}`);
-    
-    if (biggestOverachieve.team && biggestOverachieve.delta > -Infinity) {
+    if (biggestOverachieve.team) {
       return {
         teamName: biggestOverachieve.team,
         details: `Outperformed projection by ${biggestOverachieve.delta.toFixed(2)} points (${biggestOverachieve.actual.toFixed(2)} vs ${biggestOverachieve.proj.toFixed(2)})`
       };
     }
     
-    console.log(`[OVERACHIEVER] No valid winner found`);
     return null;
   } catch (error) {
-    console.error(`[OVERACHIEVER] Error determining Week ${weekNumber} Overachiever:`, error);
+    console.error(`Error determining Week ${weekNumber} Overachiever:`, error);
     return null;
   }
 }
@@ -1879,6 +1848,13 @@ function determineHighestDST(boxscoreData, teamNames, weekNumber) {
 }
 
 // ========== END OF GLOBAL FUNCTIONS ==========
+
+/* =========================
+   Components
+   ========================= */
+function NavBtn({ id, label, active, onClick }) {
+  // ... existing component code ...
+}
 
 /* =========================
    Components
@@ -4282,42 +4258,14 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
 
 function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
-const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21; // Bench, IR
 
 // ESPN per-player projections live in player.stats rows where:
 //  - statSourceId === 1 (projected)
 //  - statSplitTypeId === 1 (weekly split)
 //  - scoringPeriodId === <week>
-const ht_projectedForWeek = (playerObj, week) => {
-  const stats = playerObj?.stats;
-  if (!Array.isArray(stats)) return 0;
-  const row = stats.find(
-    s => s?.scoringPeriodId === week && s?.statSourceId === 1 && s?.statSplitTypeId === 1
-  );
-  return Number(row?.appliedTotal ?? 0);
-};
 
 // Prefer team-level projected total if ESPN provides it; otherwise sum starters' projections
-const ht_teamProjection = (teamSideObj, week) => {
-  const teamLevel =
-    teamSideObj?.totalProjectedPointsLive ??
-    teamSideObj?.totalProjectedPoints ??
-    null;
-  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
 
-  const entries =
-    teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
-    teamSideObj?.roster?.entries ||
-    [];
-
-  let sum = 0;
-  for (const e of entries) {
-    if (ht_isBenchSlot(e?.lineupSlotId)) continue; // starters only
-    const player = e?.playerPoolEntry?.player;
-    sum += ht_projectedForWeek(player, week);
-  }
-  return sum;
-};
   const [naughtyLists, setNaughtyLists] = useState({}); // Store naughty lists by week
   const [allNaughtyEntries, setAllNaughtyEntries] = useState([]); // Flattened list
   const [loading, setLoading] = useState(false);

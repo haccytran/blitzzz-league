@@ -1853,13 +1853,6 @@ function determineHighestDST(boxscoreData, teamNames, weekNumber) {
    Components
    ========================= */
 function NavBtn({ id, label, active, onClick }) {
-  // ... existing component code ...
-}
-
-/* =========================
-   Components
-   ========================= */
-function NavBtn({ id, label, active, onClick }) {
   const is = active === id;
   return (
     <a

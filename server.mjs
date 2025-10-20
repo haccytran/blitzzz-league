@@ -34,9 +34,12 @@ let pool = null;
 
 if (DATABASE_URL) {
   pool = new Pool({
-    connectionString: DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  });
+  connectionString: DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 5,                      // Add this - maximum 5 connections
+  idleTimeoutMillis: 30000,    // Add this - close idle connections after 30 seconds  
+  connectionTimeoutMillis: 2000 // Add this - timeout if can't connect in 2 seconds
+});
 
 // after: const pool = new Pool({ connectionString: DATABASE_URL, ssl: ... })
 pool.on('connect', (client) => {
@@ -161,7 +164,6 @@ pool.on('connect', (client) => {
         await client.query('INSERT INTO polls_data (polls, votes, team_codes) VALUES ($1, $2, $3)', 
           ['{}', '{}', '{}']);
       }
-
 
 
       console.log('Database initialized successfully');
@@ -1811,7 +1813,10 @@ function weekRangeLabelDisplay(start){
   return `${short(wed)}—${short(tue)} (cutoff Tue 11:59 PM PT)`; // Fixed: Use proper em dash
 }
 
+//  STEP 3 - EXTRACT MOVES
 // Enhanced method inference with better classification
+//  Converts ESPN format to internal format (Classifies as PROCESS/EXECUTE/CANCEL)
+
 function enhancedInferMethod(typeStr, typeNum, transaction, item) {
   const s = String(typeStr ?? "").toUpperCase();
   
@@ -1883,8 +1888,8 @@ const isOwnerAtSomeSP = (series, pid, teamId, sp) => {
   return candidates.some(s => series.roster?.[s]?.[teamId]?.has(pid));
 };
 
-// Replace your validateTransactions function with this ChatGPT-inspired approach:
-
+//  STEP 4 - VALIDATE TRANSACTIONS
+//  ✅ FILTERS OUT FAILED WAIVER BIDS
 async function validateTransactions(transactions, series, draftPicks, seasonYear, { leagueId, seasonId, req }) {
   console.log(`[DEBUG] Starting roster-verified validation of ${transactions.length} raw transactions`);
   
@@ -2167,6 +2172,10 @@ function inferMethod(typeStr, typeNum, t, it){
 const pickPlayerId = (it) => it?.playerId ?? it?.playerPoolEntry?.player?.id ?? it?.entityId ?? null;
 const pickPlayerName = (it,t) => it?.playerPoolEntry?.player?.fullName || it?.player?.fullName || t?.playerPoolEntry?.player?.fullName || t?.player?.fullName || null;
 
+
+//  STEP 2 - EXTRACT MOVES
+//  Converts ESPN format to internal format
+
 function extractMoves(json, src="tx"){
   console.log(`[DEBUG] extractMoves called with src="${src}", data keys:`, Object.keys(json || {}));
   console.log(`[DEBUG] Transaction count:`, json?.transactions?.length || 0);
@@ -2384,6 +2393,9 @@ function dedupeMoves(events){
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+//  STEP 1.
+//  ESPN Fetch - Gets ALL transactions from ESPN
+
 async function fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp=25, onProgress }){
   const all = [];
   for (let sp=1; sp<=maxSp; sp++){
@@ -2568,6 +2580,9 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
   console.log(`[DEBUG] Resolved ${Object.keys(map).length} player names`);
   return map;
 }
+
+//  STEP 5 - BUILD OFFICIAL REPORT
+//  Uses validated transactions for dues
 
 async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
@@ -3948,3 +3963,13 @@ app.listen(PORT, () => {
 // Static hosting - MUST BE LAST
 const CLIENT_DIR = path.join(__dirname, "dist");
 app.use(express.static(CLIENT_DIR));
+
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, closing pool...');
+  if (pool) {
+    await pool.end();
+  }
+  process.exit(0);
+});

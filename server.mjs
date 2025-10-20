@@ -3554,7 +3554,14 @@ let isRefreshing = false;
 let lastRefreshAttempt = 0;
 let consecutiveFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 3;
-const BASE_REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes
+const BASE_REFRESH_INTERVAL = 60 * 60 * 1000; // 60 minutes
+
+// Only refresh between 9 AM and 2 AM
+const hour = new Date().getHours();
+if (hour >= 9 && hour <= 2) {
+  await runAutoRefresh();
+}
+
 
 // Define both leagues to refresh
 const LEAGUES_TO_REFRESH = [
@@ -3947,6 +3954,7 @@ app.get("/api/auto-refresh/status", (req, res) => {
     leagues: LEAGUES_TO_REFRESH.length
   });
 });
+
 
 
 // Start auto-refresh system

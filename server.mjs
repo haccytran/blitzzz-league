@@ -1957,17 +1957,15 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
       continue;
     }
     
-    // === WAIVER VALIDATION LOGIC ===
+    // === WAIVER VALIDATION LOGIC (episode-aware) ===
 if (rec.method === "PROCESS" && rec.add) {
   const playerId = rec.add;
   const teamId = rec.teamId;
   const waiverTimestamp = rec.ts;
   const waiverSp = rec.sp || weekBucket(new Date(waiverTimestamp), seasonId).week;
-  
-  // Check roster to verify if player was actually added (±1 week window)
+
+  // 1) Primary roster check (±1 SP window)
   const onRoster = isOwnerAtSomeSP(series, playerId, teamId, waiverSp);
-  
-  // If player WAS on roster for this waiver, it's valid - skip later add check
   if (onRoster) {
     kept.push(rec);
     processWinners++;
@@ -1976,52 +1974,55 @@ if (rec.method === "PROCESS" && rec.add) {
     }
     continue;
   }
-  
-  // Player NOT on roster - check if there was a LATER valid add
-  // If so, this earlier waiver must have failed
-  const laterValidAdd = txPairs.some(laterTx => {
-    if (laterTx.teamId !== teamId || laterTx.add !== playerId) return false;
-    if (laterTx.ts <= waiverTimestamp) return false;
-    if (laterTx.method !== "PROCESS" && laterTx.method !== "EXECUTE") return false;
-    
-    const laterSp = laterTx.sp || weekBucket(new Date(laterTx.ts), seasonId).week;
-    const laterWasValid = isOwnerAtSomeSP(series, playerId, teamId, laterSp);
-    return laterWasValid;
-  });
-  
-  // If there was a later valid add (and player NOT on roster for this waiver), this waiver FAILED
-  if (laterValidAdd) {
-    processLosers++;
-    console.log(`[DEBUG] Failed waiver bid: Team ${teamId} bid for player ${playerId} but later successfully added them in a different transaction`);
+
+  // Precompute later drops/adds by this team for this player
+  const dropsForPlayer = allDrops.get(playerId) || [];
+  const laterDrops = dropsForPlayer.filter(d => d.teamId === teamId && d.ts > waiverTimestamp);
+
+  const laterAdds = txPairs.filter(t =>
+    t.teamId === teamId &&
+    t.add === playerId &&
+    t.ts > waiverTimestamp &&
+    (t.method === "PROCESS" || t.method === "EXECUTE")
+  ).sort((a,b) => a.ts - b.ts);
+
+  // 2) Intervening drop validates this waiver (ends the same ownership episode)
+  // If there is ANY drop after the waiver and before any later add, that's proof this waiver succeeded.
+  const firstLaterAddTs = laterAdds.length ? laterAdds[0].ts : Infinity;
+  const hasInterveningDrop = laterDrops.some(d => d.ts < firstLaterAddTs);
+
+  if (hasInterveningDrop) {
+    kept.push(rec);
+    processWinners++;
+    if (rec.bidAmount !== null && rec.bidAmount !== undefined) {
+      console.log(`[DEBUG] Waiver winner (validated by later drop): Team ${teamId} gets player ${playerId}`);
+    }
     continue;
   }
-  
-  // Player not on roster AND no later valid add - check if dropped later
-  const laterDropped = allDrops.get(playerId)?.some(drop => 
-    drop.teamId === teamId && drop.ts > waiverTimestamp
-  ) || false;
-  
-  // For waiver claims with bid amounts
+
+  // 3) No validating drop → check if there is a later valid add in the SAME ownership run
+  const laterValidAdd = laterAdds.some(laterTx => {
+    const laterSp = laterTx.sp || weekBucket(new Date(laterTx.ts), seasonId).week;
+    return isOwnerAtSomeSP(series, playerId, teamId, laterSp);
+  });
+
+  if (laterValidAdd) {
+    processLosers++;
+    console.log(`[DEBUG] Failed waiver bid: Team ${teamId} bid for ${playerId} but later successfully added them (no intervening drop)`);
+    continue;
+  }
+
+  // 4) No roster match, no validating drop, no later valid add → loser
   if (rec.bidAmount !== null && rec.bidAmount !== undefined) {
-    if (laterDropped) {
-      kept.push(rec);
-      processWinners++;
-      console.log(`[DEBUG] Waiver winner (bid $${rec.bidAmount}): Team ${teamId} gets player ${playerId} (validated by later drop)`);
-    } else {
-      processLosers++;
-      console.log(`[DEBUG] Failed waiver bid: Team ${teamId} bid $${rec.bidAmount} for ${playerId} but didn't get them`);
-    }
+    processLosers++;
+    console.log(`[DEBUG] Failed waiver bid: Team ${teamId} bid $${rec.bidAmount} for ${playerId} but didn't get them`);
   } else {
-    if (laterDropped) {
-      kept.push(rec);
-      processWinners++;
-    } else {
-      processLosers++;
-      console.log(`[DEBUG] No roster match for PROCESS add pid=${playerId}, team=${teamId}, sp=${waiverSp}`);
-    }
+    processLosers++;
+    console.log(`[DEBUG] No roster match for PROCESS add pid=${playerId}, team=${teamId}, sp=${waiverSp}`);
   }
   continue;
 }
+
     
     // Keep any other transactions
     kept.push(rec);

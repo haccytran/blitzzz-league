@@ -1103,779 +1103,6 @@ function slotIdToName(counts) {
   return res;
 }
 
-// Helper to check if a lineup slot is bench/IR
-const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21;
-
-// Get projected points for a specific player in a specific week
-const ht_projectedForWeek = (playerObj, week) => {
-  const stats = playerObj?.stats;
-  if (!Array.isArray(stats)) return 0;
-  const row = stats.find(
-    s => s?.scoringPeriodId === week && s?.statSourceId === 1 && s?.statSplitTypeId === 1
-  );
-  return Number(row?.appliedTotal ?? 0);
-};
-
-// Get team's total projected points
-const ht_teamProjection = (teamSideObj, week) => {
-  const teamLevel =
-    teamSideObj?.totalProjectedPointsLive ??
-    teamSideObj?.totalProjectedPoints ??
-    null;
-  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
-
-  const entries =
-    teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
-    teamSideObj?.roster?.entries ||
-    [];
-
-  let sum = 0;
-  for (const e of entries) {
-    if (ht_isBenchSlot(e?.lineupSlotId)) continue;
-    const player = e?.playerPoolEntry?.player;
-    sum += ht_projectedForWeek(player, week);
-  }
-  return sum;
-};
-
-// Helper function to get player position name
-function getPositionName(positionId) {
-  const positions = {
-    0: "QB", 1: "TQB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 
-    6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench"
-  };
-  return positions[positionId] || "Unknown";
-}
-
-// Helper function to get lineup slot name
-function getLineupSlotName(slotId) {
-  const slots = {
-    0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "D/ST", 17: "K",
-    20: "Bench", 21: "IR", 23: "FLEX"
-  };
-  return slots[slotId] || "Unknown";
-}
-
-// Week 6: Overachiever - biggest positive difference from projection
-async function determineOverachiever(weekNumber, leagueId, seasonId) {
-  try {
-    console.log(`[OVERACHIEVER] Starting calculation for Week ${weekNumber}`);
-    
-    // Fetch both team data and boxscore data for the specific week
-    const [teamResponse, boxscoreResponse] = await Promise.all([
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      }),
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      })
-    ]);
-    
-    if (!teamResponse.ok || !boxscoreResponse.ok) {
-      console.error(`[OVERACHIEVER] API error - Team: ${teamResponse.status}, Boxscore: ${boxscoreResponse.status}`);
-      throw new Error(`ESPN API error`);
-    }
-    
-    const [teamData, boxscoreData] = await Promise.all([
-      teamResponse.json(),
-      boxscoreResponse.json()
-    ]);
-
-    console.log(`[OVERACHIEVER] Fetched data for week ${weekNumber}`);
-    console.log(`[OVERACHIEVER] Schedule length: ${boxscoreData?.schedule?.length || 0}`);
-    
-    // Build team name mapping
-    const teamNames = {};
-    if (teamData.teams) {
-      teamData.teams.forEach(team => {
-        teamNames[team.id] = team.location && team.nickname 
-          ? `${team.location} ${team.nickname}` 
-          : team.name || `Team ${team.id}`;
-      });
-    }
-    
-    let biggestOverachieve = { team: "", delta: -Infinity, actual: 0, proj: 0 };
-    
-    // Process each matchup for the specified week
-    if (boxscoreData.schedule) {
-      boxscoreData.schedule.forEach((matchup, idx) => {
-        // Verify this matchup is for the correct week
-        if (matchup.matchupPeriodId !== weekNumber) {
-          console.warn(`[OVERACHIEVER] Skipping matchup ${idx} - wrong week (${matchup.matchupPeriodId} vs ${weekNumber})`);
-          return;
-        }
-        
-        [matchup.home, matchup.away].forEach((team, sideIdx) => {
-          if (!team) return;
-          
-          const actual = team.totalPoints || 0;
-          const proj = ht_teamProjection(team, weekNumber);
-          const delta = actual - proj;
-          
-          const teamName = teamNames[team.teamId] || `Team ${team.teamId}`;
-          
-          console.log(`[OVERACHIEVER] Week ${weekNumber}, Matchup ${idx}, ${sideIdx === 0 ? 'Home' : 'Away'}: ${teamName}`);
-          console.log(`  Actual: ${actual.toFixed(2)}, Projected: ${proj.toFixed(2)}, Delta: ${delta.toFixed(2)}`);
-          
-          if (delta > biggestOverachieve.delta) {
-            console.log(`  ^ NEW LEADER!`);
-            biggestOverachieve = {
-              team: teamName,
-              delta: delta,
-              actual: actual,
-              proj: proj
-            };
-          }
-        });
-      });
-    } else {
-      console.error(`[OVERACHIEVER] No schedule data found for week ${weekNumber}`);
-    }
-    
-    console.log(`[OVERACHIEVER] Final winner: ${biggestOverachieve.team}`);
-    console.log(`[OVERACHIEVER] Delta: ${biggestOverachieve.delta.toFixed(2)}, Actual: ${biggestOverachieve.actual.toFixed(2)}, Proj: ${biggestOverachieve.proj.toFixed(2)}`);
-    
-    if (biggestOverachieve.team && biggestOverachieve.delta > -Infinity) {
-      return {
-        teamName: biggestOverachieve.team,
-        details: `Outperformed projection by ${biggestOverachieve.delta.toFixed(2)} points (${biggestOverachieve.actual.toFixed(2)} vs ${biggestOverachieve.proj.toFixed(2)})`
-      };
-    }
-    
-    console.log(`[OVERACHIEVER] No valid winner found`);
-    return null;
-  } catch (error) {
-    console.error(`[OVERACHIEVER] Error determining Week ${weekNumber} Overachiever:`, error);
-    return null;
-  }
-}
-
-// Week 12: Bulls-eye
-async function determineBullseye(weekNumber, leagueId, seasonId) {
-  try {
-    const [teamResponse, boxscoreResponse] = await Promise.all([
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      }),
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      })
-    ]);
-    
-    if (!teamResponse.ok || !boxscoreResponse.ok) {
-      throw new Error(`ESPN API error`);
-    }
-    
-    const [teamData, boxscoreData] = await Promise.all([
-      teamResponse.json(),
-      boxscoreResponse.json()
-    ]);
-    
-    const teamNames = {};
-    if (teamData.teams) {
-      teamData.teams.forEach(team => {
-        teamNames[team.id] = team.location && team.nickname 
-          ? `${team.location} ${team.nickname}` 
-          : team.name || `Team ${team.id}`;
-      });
-    }
-    
-    let closestToProjection = { team: "", diff: Infinity, actual: 0, proj: 0 };
-    
-    if (boxscoreData.schedule) {
-      boxscoreData.schedule.forEach(matchup => {
-        [matchup.home, matchup.away].forEach(team => {
-          if (!team) return;
-          
-          const actual = team.totalPoints || 0;
-          const proj = ht_teamProjection(team, weekNumber);
-          const diff = Math.abs(actual - proj);
-          
-          if (diff < closestToProjection.diff) {
-            closestToProjection = {
-              team: teamNames[team.teamId] || `Team ${team.teamId}`,
-              diff: diff,
-              actual: actual,
-              proj: proj
-            };
-          }
-        });
-      });
-    }
-    
-    if (closestToProjection.team) {
-      return {
-        teamName: closestToProjection.team,
-        details: `Scored ${closestToProjection.actual.toFixed(2)} points (${closestToProjection.diff.toFixed(2)} from projection of ${closestToProjection.proj.toFixed(2)})`
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error(`Error determining Week ${weekNumber} Bulls-eye:`, error);
-    return null;
-  }
-}
-
-// DETERMINE WEEKLY WINNER
-async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
-  try {
-    const teamResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!teamResponse.ok) {
-      throw new Error(`Team data fetch failed: ${teamResponse.status}`);
-    }
-    
-    const teamData = await teamResponse.json();
-    
-    const teamNames = {};
-    if (teamData.teams) {
-      teamData.teams.forEach(team => {
-        let name = "";
-        if (team.location && team.nickname) {
-          name = `${team.location} ${team.nickname}`;
-        } else if (team.name) {
-          name = team.name;
-        } else if (team.abbrev) {
-          name = team.abbrev;
-        } else {
-          name = `Team ${team.id}`;
-        }
-        teamNames[team.id] = name;
-      });
-    }
-
-    const matchupResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    const matchupData = await matchupResponse.json();
-
-    const boxscoreResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mBoxscore&scoringPeriodId=${weekNumber}`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    const boxscoreData = await boxscoreResponse.json();
-
-    switch (weekNumber) {
-      case 1:
-        return determineHighestScoringTeam(matchupData, teamNames, weekNumber);
-      case 2:
-        return determineClosestMargin(matchupData, teamNames, weekNumber);
-      case 3:
-        return determineLargestMargin(matchupData, teamNames, weekNumber);
-      case 4:
-        return determineDirty30(boxscoreData, teamNames, weekNumber);
-      case 5:
-        return determineHighestWRRB(boxscoreData, teamNames, weekNumber);
-      case 7:
-        return determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId);
-      case 8:
-        return determineHighestTE(boxscoreData, teamNames, weekNumber);
-      case 9:
-        return determineMVP(boxscoreData, teamNames, weekNumber);
-      case 10:
-        return determineBestLoser(matchupData, teamNames, weekNumber);
-      case 11:
-        return determineBenchWarmer(boxscoreData, teamNames, weekNumber);
-      case 13:
-        return determineHighestDST(boxscoreData, teamNames, weekNumber);
-      case 6:
-      case 12:
-        return null;
-      default:
-        return null;
-    }
-  } catch (error) {
-    console.error(`Error determining Week ${weekNumber} winner:`, error);
-    return null;
-  }
-}
-
-// Week 1: Highest overall team score
-function determineHighestScoringTeam(matchupData, teamNames, weekNumber) {
-  let highestScore = 0;
-  let winningTeam = null;
-  
-  if (matchupData.schedule) {
-    matchupData.schedule.forEach(matchup => {
-      if (matchup.matchupPeriodId === weekNumber) {
-        const homeScore = matchup.home?.totalPoints || 0;
-        const awayScore = matchup.away?.totalPoints || 0;
-        
-        if (homeScore > highestScore) {
-          highestScore = homeScore;
-          winningTeam = matchup.home.teamId;
-        }
-        if (awayScore > highestScore) {
-          highestScore = awayScore;
-          winningTeam = matchup.away.teamId;
-        }
-      }
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `Scored ${highestScore.toFixed(1)} points`
-    };
-  }
-  return null;
-}
-
-// Week 2: Closest margin of victory
-function determineClosestMargin(matchupData, teamNames, weekNumber) {
-  let closestMargin = Infinity;
-  let winningTeam = null;
-  
-  if (matchupData.schedule) {
-    matchupData.schedule.forEach(matchup => {
-      if (matchup.matchupPeriodId === weekNumber) {
-        const homeScore = matchup.home?.totalPoints || 0;
-        const awayScore = matchup.away?.totalPoints || 0;
-        const margin = Math.abs(homeScore - awayScore);
-        
-        if (margin < closestMargin && margin > 0) {
-          closestMargin = margin;
-          winningTeam = homeScore > awayScore ? matchup.home.teamId : matchup.away.teamId;
-        }
-      }
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `Won by ${closestMargin.toFixed(1)} points`
-    };
-  }
-  return null;
-}
-
-// Week 3: Largest margin of victory
-function determineLargestMargin(matchupData, teamNames, weekNumber) {
-  let largestMargin = 0;
-  let winningTeam = null;
-  
-  if (matchupData.schedule) {
-    matchupData.schedule.forEach(matchup => {
-      if (matchup.matchupPeriodId === weekNumber) {
-        const homeScore = matchup.home?.totalPoints || 0;
-        const awayScore = matchup.away?.totalPoints || 0;
-        const margin = Math.abs(homeScore - awayScore);
-        
-        if (margin > largestMargin) {
-          largestMargin = margin;
-          winningTeam = homeScore > awayScore ? matchup.home.teamId : matchup.away.teamId;
-        }
-      }
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `Won by ${largestMargin.toFixed(1)} points`
-    };
-  }
-  return null;
-}
-
-// Week 4: Player closest to 30 points
-function determineDirty30(boxscoreData, teamNames, weekNumber) {
-  let closestTo30 = Infinity;
-  let winningTeam = null;
-  let playerName = "";
-  let playerScore = 0;
-  
-  if (boxscoreData.schedule) {
-    boxscoreData.schedule.forEach(matchup => {
-      [matchup.home, matchup.away].forEach(team => {
-        if (team?.rosterForCurrentScoringPeriod?.entries) {
-          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) {
-              const player = entry.playerPoolEntry?.player;
-              const stats = player?.stats;
-              
-              if (stats && Array.isArray(stats)) {
-                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
-                if (weekStats?.appliedTotal) {
-                  const score = weekStats.appliedTotal;
-                  const diff = Math.abs(score - 30);
-                  
-                  if (diff < closestTo30) {
-                    closestTo30 = diff;
-                    winningTeam = team.teamId;
-                    playerName = player.fullName || "Unknown Player";
-                    playerScore = score;
-                  }
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `${playerName} scored ${playerScore.toFixed(1)} points (${closestTo30.toFixed(1)} from 30)`
-    };
-  }
-  return null;
-}
-
-// Week 5: Highest Scoring WR/RB
-function determineHighestWRRB(boxscoreData, teamNames, weekNumber) {
-  let highestScore = 0;
-  let winningTeam = null;
-  let playerName = "";
-  let position = "";
-  
-  if (boxscoreData.schedule) {
-    boxscoreData.schedule.forEach(matchup => {
-      [matchup.home, matchup.away].forEach(team => {
-        if (team?.rosterForCurrentScoringPeriod?.entries) {
-          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) {
-              const player = entry.playerPoolEntry?.player;
-              const stats = player?.stats;
-              const playerPos = player?.defaultPositionId;
-              
-              if (playerPos === 2 || playerPos === 4) {
-                if (stats && Array.isArray(stats)) {
-                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
-                  if (weekStats?.appliedTotal) {
-                    const score = weekStats.appliedTotal;
-                    
-                    if (score > highestScore) {
-                      highestScore = score;
-                      winningTeam = team.teamId;
-                      playerName = player.fullName || "Unknown Player";
-                      position = getPositionName(playerPos);
-                    }
-                  }
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points`
-    };
-  }
-  return null;
-}
-
-// Week 7: Hero to Zero
-async function determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId) {
-  try {
-    const week6Response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    const week6Data = await week6Response.json();
-    
-    const week6Scores = {};
-    if (week6Data.schedule) {
-      week6Data.schedule.forEach(matchup => {
-        if (matchup.matchupPeriodId === 6) {
-          const homeScore = matchup.home?.totalPoints || 0;
-          const awayScore = matchup.away?.totalPoints || 0;
-          
-          if (matchup.home?.teamId) week6Scores[matchup.home.teamId] = homeScore;
-          if (matchup.away?.teamId) week6Scores[matchup.away.teamId] = awayScore;
-        }
-      });
-    }
-    
-    let biggestDrop = 0;
-    let winningTeam = null;
-    let week6Score = 0;
-    let week7Score = 0;
-    
-    if (matchupData.schedule) {
-      matchupData.schedule.forEach(matchup => {
-        if (matchup.matchupPeriodId === 7) {
-          [matchup.home, matchup.away].forEach(team => {
-            const teamId = team.teamId;
-            const week7TeamScore = team.totalPoints || 0;
-            const week6TeamScore = week6Scores[teamId] || 0;
-            
-            if (week7TeamScore < week6TeamScore) {
-              const drop = week6TeamScore - week7TeamScore;
-              
-              if (drop > biggestDrop) {
-                biggestDrop = drop;
-                winningTeam = teamId;
-                week6Score = week6TeamScore;
-                week7Score = week7TeamScore;
-              }
-            }
-          });
-        }
-      });
-    }
-    
-    if (winningTeam) {
-      return {
-        teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-        details: `Dropped ${biggestDrop.toFixed(1)} points (${week6Score.toFixed(1)} to ${week7Score.toFixed(1)})`
-      };
-    }
-    return null;
-  } catch (error) {
-    console.error('Error in Hero to Zero calculation:', error);
-    return null;
-  }
-}
-
-// Week 8: Highest Scoring TE
-function determineHighestTE(boxscoreData, teamNames, weekNumber) {
-  let highestScore = 0;
-  let winningTeam = null;
-  let playerName = "";
-  
-  if (boxscoreData.schedule) {
-    boxscoreData.schedule.forEach(matchup => {
-      [matchup.home, matchup.away].forEach(team => {
-        if (team?.rosterForCurrentScoringPeriod?.entries) {
-          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) {
-              const player = entry.playerPoolEntry?.player;
-              const stats = player?.stats;
-              const playerPos = player?.defaultPositionId;
-              
-              if (playerPos === 6) {
-                if (stats && Array.isArray(stats)) {
-                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
-                  if (weekStats?.appliedTotal) {
-                    const score = weekStats.appliedTotal;
-                    
-                    if (score > highestScore) {
-                      highestScore = score;
-                      winningTeam = team.teamId;
-                      playerName = player.fullName || "Unknown Player";
-                    }
-                  }
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `${playerName} (TE) scored ${highestScore.toFixed(1)} points`
-    };
-  }
-  return null;
-}
-
-// Week 9: MVP
-function determineMVP(boxscoreData, teamNames, weekNumber) {
-  let highestScore = 0;
-  let winningTeam = null;
-  let playerName = "";
-  let position = "";
-  
-  if (boxscoreData.schedule) {
-    boxscoreData.schedule.forEach(matchup => {
-      [matchup.home, matchup.away].forEach(team => {
-        if (team?.rosterForCurrentScoringPeriod?.entries) {
-          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) {
-              const player = entry.playerPoolEntry?.player;
-              const stats = player?.stats;
-              
-              if (stats && Array.isArray(stats)) {
-                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
-                if (weekStats?.appliedTotal) {
-                  const score = weekStats.appliedTotal;
-                  
-                  if (score > highestScore) {
-                    highestScore = score;
-                    winningTeam = team.teamId;
-                    playerName = player.fullName || "Unknown Player";
-                    position = getPositionName(player.defaultPositionId);
-                  }
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points`
-    };
-  }
-  return null;
-}
-
-// Week 10: Best Loser
-function determineBestLoser(matchupData, teamNames, weekNumber) {
-  let highestLosingScore = 0;
-  let winningTeam = null;
-  
-  if (matchupData.schedule) {
-    matchupData.schedule.forEach(matchup => {
-      if (matchup.matchupPeriodId === weekNumber) {
-        const homeScore = matchup.home?.totalPoints || 0;
-        const awayScore = matchup.away?.totalPoints || 0;
-        
-        if (homeScore < awayScore && homeScore > highestLosingScore) {
-          highestLosingScore = homeScore;
-          winningTeam = matchup.home.teamId;
-        } else if (awayScore < homeScore && awayScore > highestLosingScore) {
-          highestLosingScore = awayScore;
-          winningTeam = matchup.away.teamId;
-        }
-      }
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `Scored ${highestLosingScore.toFixed(1)} points in a loss`
-    };
-  }
-  return null;
-}
-
-// Week 11: Bench Warmer
-function determineBenchWarmer(boxscoreData, teamNames, weekNumber) {
-  let highestScore = 0;
-  let winningTeam = null;
-  let playerName = "";
-  let position = "";
-  
-  if (boxscoreData.schedule) {
-    boxscoreData.schedule.forEach(matchup => {
-      [matchup.home, matchup.away].forEach(team => {
-        if (team?.rosterForCurrentScoringPeriod?.entries) {
-          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId === 20) {
-              const player = entry.playerPoolEntry?.player;
-              const stats = player?.stats;
-              
-              if (stats && Array.isArray(stats)) {
-                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
-                if (weekStats?.appliedTotal) {
-                  const score = weekStats.appliedTotal;
-                  
-                  if (score > highestScore) {
-                    highestScore = score;
-                    winningTeam = team.teamId;
-                    playerName = player.fullName || "Unknown Player";
-                    position = getPositionName(player.defaultPositionId);
-                  }
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points on bench`
-    };
-  }
-  return null;
-}
-
-// Week 13: Highest Scoring D/ST
-function determineHighestDST(boxscoreData, teamNames, weekNumber) {
-  let highestScore = 0;
-  let winningTeam = null;
-  let defenseTeam = "";
-  
-  if (boxscoreData.schedule) {
-    boxscoreData.schedule.forEach(matchup => {
-      [matchup.home, matchup.away].forEach(team => {
-        if (team?.rosterForCurrentScoringPeriod?.entries) {
-          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) {
-              const player = entry.playerPoolEntry?.player;
-              const stats = player?.stats;
-              const playerPos = player?.defaultPositionId;
-              
-              if (playerPos === 16) {
-                if (stats && Array.isArray(stats)) {
-                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
-                  if (weekStats?.appliedTotal) {
-                    const score = weekStats.appliedTotal;
-                    
-                    if (score > highestScore) {
-                      highestScore = score;
-                      winningTeam = team.teamId;
-                      defenseTeam = player.fullName || "Unknown Defense";
-                    }
-                  }
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-  }
-  
-  if (winningTeam) {
-    return {
-      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-      details: `${defenseTeam} scored ${highestScore.toFixed(1)} points`
-    };
-  }
-  return null;
-}
-
-// ========== END OF GLOBAL FUNCTIONS ==========
-
 /* =========================
    Components
    ========================= */
@@ -2359,7 +1586,760 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
   );
 }
 
+// DETERMINE WEEKLY WINNER
+async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
+  try {
+    // Get team names with better error handling and data structure
+    const teamResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    if (!teamResponse.ok) {
+      throw new Error(`Team data fetch failed: ${teamResponse.status}`);
+    }
+    
+    const teamData = await teamResponse.json();
+    console.log('Team data for weekly challenges:', teamData); // Debug log
+    
+    const teamNames = {};
+    if (teamData.teams) {
+      teamData.teams.forEach(team => {
+        let name = "";
+        if (team.location && team.nickname) {
+          name = `${team.location} ${team.nickname}`;
+        } else if (team.name) {
+          name = team.name;
+        } else if (team.abbrev) {
+          name = team.abbrev;
+        } else {
+          name = `Team ${team.id}`;
+        }
+        teamNames[team.id] = name;
+        console.log(`Weekly challenge team mapping: ${team.id} -> ${name}`); // Debug log
+      });
+    }
 
+    console.log('Final team names mapping:', teamNames); // Debug log
+
+    // Get matchup data for team-level challenges
+    const matchupResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const matchupData = await matchupResponse.json();
+
+    // Get detailed player data for player-level challenges
+    const boxscoreResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mBoxscore&scoringPeriodId=${weekNumber}`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const boxscoreData = await boxscoreResponse.json();
+
+    // Determine winner based on week number
+    switch (weekNumber) {
+      case 1: // Hot Start - Highest overall team score (starters)
+        return determineHighestScoringTeam(matchupData, teamNames, weekNumber);
+        
+      case 2: // Photo Finish - Closest margin of victory
+        return determineClosestMargin(matchupData, teamNames, weekNumber);
+        
+      case 3: // Biggest Blow out - Largest margin of victory
+        return determineLargestMargin(matchupData, teamNames, weekNumber);
+        
+      case 4: // Dirty 30 - Player closest to 30 points
+        return determineDirty30(boxscoreData, teamNames, weekNumber);
+        
+      case 5: // Highest Scoring WR/RB
+        return determineHighestWRRB(boxscoreData, teamNames, weekNumber);
+        
+      case 7: // Hero to Zero - Biggest point drop from Week 6 to Week 7
+        return determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId);
+        
+      case 8: // Highest Scoring TE
+        return determineHighestTE(boxscoreData, teamNames, weekNumber);
+        
+      case 9: // MVP - Highest scoring individual player
+        return determineMVP(boxscoreData, teamNames, weekNumber);
+        
+      case 10: // Best Loser - Highest scoring losing team
+        return determineBestLoser(matchupData, teamNames, weekNumber);
+        
+      case 11: // Bench Warmer - Highest scoring bench player
+        return determineBenchWarmer(boxscoreData, teamNames, weekNumber);
+        
+      case 13: // Highest Scoring D/ST
+        return determineHighestDST(boxscoreData, teamNames, weekNumber);
+        
+      case 6: // Over-Achiever - Manual selection required
+      case 12: // Bulls-Eye - Manual selection required
+        return null;
+        
+      default:
+        return null;
+    }
+  } catch (error) {
+    console.error(`Error determining Week ${weekNumber} winner:`, error);
+    return null;
+  }
+}
+
+
+// Week 6: Overachiever - biggest positive difference from projection
+async function determineOverachiever(weekNumber, leagueId, seasonId) {
+  try {
+    const [teamResponse, boxscoreResponse] = await Promise.all([
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      }),
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      })
+    ]);
+    
+    if (!teamResponse.ok || !boxscoreResponse.ok) {
+      throw new Error(`ESPN API error`);
+    }
+    
+    const [teamData, boxscoreData] = await Promise.all([
+      teamResponse.json(),
+      boxscoreResponse.json()
+    ]);
+
+   // ========== ADD DEBUG CODE HERE ==========
+    console.log('=== PROJECTION DEBUG ===');
+    if (boxscoreData.schedule && boxscoreData.schedule[0]) {
+      const firstTeam = boxscoreData.schedule[0]?.home;
+      if (firstTeam?.rosterForCurrentScoringPeriod?.entries) {
+        const firstPlayer = firstTeam.rosterForCurrentScoringPeriod.entries[0];
+        const player = firstPlayer?.playerPoolEntry?.player;
+        console.log('Player name:', player?.fullName);
+        console.log('Full stats array:', JSON.stringify(player?.stats, null, 2));
+      }
+    }
+    console.log('=== END DEBUG ===');
+    // ========== END DEBUG CODE ==========
+   
+    const teamNames = {};
+    if (teamData.teams) {
+      teamData.teams.forEach(team => {
+        teamNames[team.id] = team.location && team.nickname 
+          ? `${team.location} ${team.nickname}` 
+          : team.name || `Team ${team.id}`;
+      });
+    }
+    
+    let biggestOverachieve = { team: "", delta: -Infinity, actual: 0, proj: 0 };
+    
+    if (boxscoreData.schedule) {
+      boxscoreData.schedule.forEach(matchup => {
+        [matchup.home, matchup.away].forEach(team => {
+          if (!team) return;
+          
+          const actual = team.totalPoints || 0;
+          const proj = ht_teamProjection(team, weekNumber);
+          const delta = actual - proj;
+          
+          if (delta > biggestOverachieve.delta) {
+            biggestOverachieve = {
+              team: teamNames[team.teamId] || `Team ${team.teamId}`,
+              delta: delta,
+              actual: actual,
+              proj: proj
+            };
+          }
+        });
+      });
+    }
+    
+    if (biggestOverachieve.team) {
+      return {
+        teamName: biggestOverachieve.team,
+        details: `Outperformed projection by ${biggestOverachieve.delta.toFixed(2)} points (${biggestOverachieve.actual.toFixed(2)} vs ${biggestOverachieve.proj.toFixed(2)})`
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error determining Week ${weekNumber} Overachiever:`, error);
+    return null;
+  }
+}
+
+// Week 12: Bulls-eye - Team closest to their projected point total
+async function determineBullseye(weekNumber, leagueId, seasonId) {
+  try {
+    const [teamResponse, boxscoreResponse] = await Promise.all([
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      }),
+      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      })
+    ]);
+    
+    if (!teamResponse.ok || !boxscoreResponse.ok) {
+      throw new Error(`ESPN API error`);
+    }
+    
+    const [teamData, boxscoreData] = await Promise.all([
+      teamResponse.json(),
+      boxscoreResponse.json()
+    ]);
+    
+    const teamNames = {};
+    if (teamData.teams) {
+      teamData.teams.forEach(team => {
+        teamNames[team.id] = team.location && team.nickname 
+          ? `${team.location} ${team.nickname}` 
+          : team.name || `Team ${team.id}`;
+      });
+    }
+    
+    let closestToProjection = { team: "", diff: Infinity, actual: 0, proj: 0 };
+    
+    if (boxscoreData.schedule) {
+      boxscoreData.schedule.forEach(matchup => {
+        [matchup.home, matchup.away].forEach(team => {
+          if (!team) return;
+          
+          const actual = team.totalPoints || 0;
+          const proj = ht_teamProjection(team, weekNumber);
+          const diff = Math.abs(actual - proj);
+          
+          if (diff < closestToProjection.diff) {
+            closestToProjection = {
+              team: teamNames[team.teamId] || `Team ${team.teamId}`,
+              diff: diff,
+              actual: actual,
+              proj: proj
+            };
+          }
+        });
+      });
+    }
+    
+    if (closestToProjection.team) {
+      return {
+        teamName: closestToProjection.team,
+        details: `Scored ${closestToProjection.actual.toFixed(2)} points (${closestToProjection.diff.toFixed(2)} from projection of ${closestToProjection.proj.toFixed(2)})`
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error determining Week ${weekNumber} Bulls-eye:`, error);
+    return null;
+  }
+}
+
+// Helper function to get player position name
+function getPositionName(positionId) {
+  const positions = {
+    0: "QB", 1: "TQB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 
+    6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench"
+  };
+  return positions[positionId] || "Unknown";
+}
+
+// Helper function to get lineup slot name
+function getLineupSlotName(slotId) {
+  const slots = {
+    0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "D/ST", 17: "K",
+    20: "Bench", 21: "IR", 23: "FLEX"
+  };
+  return slots[slotId] || "Unknown";
+}
+
+// Week 1: Highest overall team score (starters)
+function determineHighestScoringTeam(matchupData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        
+        if (homeScore > highestScore) {
+          highestScore = homeScore;
+          winningTeam = matchup.home.teamId;
+        }
+        if (awayScore > highestScore) {
+          highestScore = awayScore;
+          winningTeam = matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 2: Closest margin of victory
+function determineClosestMargin(matchupData, teamNames, weekNumber) {
+  let closestMargin = Infinity;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        const margin = Math.abs(homeScore - awayScore);
+        
+        if (margin < closestMargin && margin > 0) {
+          closestMargin = margin;
+          winningTeam = homeScore > awayScore ? matchup.home.teamId : matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Won by ${closestMargin.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 3: Largest margin of victory
+function determineLargestMargin(matchupData, teamNames, weekNumber) {
+  let largestMargin = 0;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        const margin = Math.abs(homeScore - awayScore);
+        
+        if (margin > largestMargin) {
+          largestMargin = margin;
+          winningTeam = homeScore > awayScore ? matchup.home.teamId : matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Won by ${largestMargin.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 4: Player closest to 30 points
+function determineDirty30(boxscoreData, teamNames, weekNumber) {
+  let closestTo30 = Infinity;
+  let winningTeam = null;
+  let playerName = "";
+  let playerScore = 0;
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              
+              if (stats && Array.isArray(stats)) {
+                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                if (weekStats?.appliedTotal) {
+                  const score = weekStats.appliedTotal;
+                  const diff = Math.abs(score - 30);
+                  
+                  if (diff < closestTo30) {
+                    closestTo30 = diff;
+                    winningTeam = team.teamId;
+                    playerName = player.fullName || "Unknown Player";
+                    playerScore = score;
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} scored ${playerScore.toFixed(1)} points (${closestTo30.toFixed(1)} from 30)`
+    };
+  }
+  return null;
+}
+
+// Week 5: Highest Scoring WR/RB
+function determineHighestWRRB(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  let position = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              const playerPos = player?.defaultPositionId;
+              
+              // Check if WR (4) or RB (2)
+              if (playerPos === 2 || playerPos === 4) {
+                if (stats && Array.isArray(stats)) {
+                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                  if (weekStats?.appliedTotal) {
+                    const score = weekStats.appliedTotal;
+                    
+                    if (score > highestScore) {
+                      highestScore = score;
+                      winningTeam = team.teamId;
+                      playerName = player.fullName || "Unknown Player";
+                      position = getPositionName(playerPos);
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 7: Hero to Zero - Biggest point drop from Week 6 to Week 7
+async function determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId) {
+  try {
+    // Get Week 6 scores
+    const week6Response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
+      mode: 'cors',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const week6Data = await week6Response.json();
+    
+    // Build Week 6 scores by team
+    const week6Scores = {};
+    if (week6Data.schedule) {
+      week6Data.schedule.forEach(matchup => {
+        if (matchup.matchupPeriodId === 6) {
+          const homeScore = matchup.home?.totalPoints || 0;
+          const awayScore = matchup.away?.totalPoints || 0;
+          
+          if (matchup.home?.teamId) week6Scores[matchup.home.teamId] = homeScore;
+          if (matchup.away?.teamId) week6Scores[matchup.away.teamId] = awayScore;
+        }
+      });
+    }
+    
+    // Build Week 7 scores and find biggest drop
+    let biggestDrop = 0;
+    let winningTeam = null;
+    let week6Score = 0;
+    let week7Score = 0;
+    
+    if (matchupData.schedule) {
+      matchupData.schedule.forEach(matchup => {
+        if (matchup.matchupPeriodId === 7) {
+          [matchup.home, matchup.away].forEach(team => {
+            const teamId = team.teamId;
+            const week7TeamScore = team.totalPoints || 0;
+            const week6TeamScore = week6Scores[teamId] || 0;
+            
+            // Only count if they scored LESS in Week 7
+            if (week7TeamScore < week6TeamScore) {
+              const drop = week6TeamScore - week7TeamScore;
+              
+              if (drop > biggestDrop) {
+                biggestDrop = drop;
+                winningTeam = teamId;
+                week6Score = week6TeamScore;
+                week7Score = week7TeamScore;
+              }
+            }
+          });
+        }
+      });
+    }
+    
+    if (winningTeam) {
+      return {
+        teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+        details: `Dropped ${biggestDrop.toFixed(1)} points (${week6Score.toFixed(1)} to ${week7Score.toFixed(1)})`
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error in Hero to Zero calculation:', error);
+    return null;
+  }
+}
+
+// Week 8: Highest Scoring TE
+function determineHighestTE(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            // CHECK THE LINEUP SLOT - Slot 6 is the TE position
+            if (entry.lineupSlotId === 6) {
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              
+              if (stats && Array.isArray(stats)) {
+                // Find ACTUAL stats (statSourceId: 0), not projections (statSourceId: 1)
+                const weekStats = stats.find(s => 
+                  s.scoringPeriodId === weekNumber && 
+                  s.statSourceId === 0 &&  // ← ACTUAL STATS
+                  s.statSplitTypeId === 1  // ← GAME STATS (not season totals)
+                );
+                
+                if (weekStats?.appliedTotal) {
+                  const score = weekStats.appliedTotal;
+                  
+                  if (score > highestScore) {
+                    highestScore = score;
+                    winningTeam = team.teamId;
+                    playerName = player.fullName || "Unknown Player";
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (TE) scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 9: MVP - Highest scoring individual player
+function determineMVP(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  let position = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              
+              if (stats && Array.isArray(stats)) {
+                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                if (weekStats?.appliedTotal) {
+                  const score = weekStats.appliedTotal;
+                  
+                  if (score > highestScore) {
+                    highestScore = score;
+                    winningTeam = team.teamId;
+                    playerName = player.fullName || "Unknown Player";
+                    position = getPositionName(player.defaultPositionId);
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
+
+// Week 10: Best Loser - Highest scoring losing team
+function determineBestLoser(matchupData, teamNames, weekNumber) {
+  let highestLosingScore = 0;
+  let winningTeam = null;
+  
+  if (matchupData.schedule) {
+    matchupData.schedule.forEach(matchup => {
+      if (matchup.matchupPeriodId === weekNumber) {
+        const homeScore = matchup.home?.totalPoints || 0;
+        const awayScore = matchup.away?.totalPoints || 0;
+        
+        // Determine loser and check if they have highest losing score
+        if (homeScore < awayScore && homeScore > highestLosingScore) {
+          highestLosingScore = homeScore;
+          winningTeam = matchup.home.teamId;
+        } else if (awayScore < homeScore && awayScore > highestLosingScore) {
+          highestLosingScore = awayScore;
+          winningTeam = matchup.away.teamId;
+        }
+      }
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `Scored ${highestLosingScore.toFixed(1)} points in a loss`
+    };
+  }
+  return null;
+}
+
+// Week 11: Bench Warmer - Highest scoring bench player
+function determineBenchWarmer(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let playerName = "";
+  let position = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId === 20) { // Bench only
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              
+              if (stats && Array.isArray(stats)) {
+                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                if (weekStats?.appliedTotal) {
+                  const score = weekStats.appliedTotal;
+                  
+                  if (score > highestScore) {
+                    highestScore = score;
+                    winningTeam = team.teamId;
+                    playerName = player.fullName || "Unknown Player";
+                    position = getPositionName(player.defaultPositionId);
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${playerName} (${position}) scored ${highestScore.toFixed(1)} points on bench`
+    };
+  }
+  return null;
+}
+
+// Week 13: Highest Scoring D/ST
+function determineHighestDST(boxscoreData, teamNames, weekNumber) {
+  let highestScore = 0;
+  let winningTeam = null;
+  let defenseTeam = "";
+  
+  if (boxscoreData.schedule) {
+    boxscoreData.schedule.forEach(matchup => {
+      [matchup.home, matchup.away].forEach(team => {
+        if (team?.rosterForCurrentScoringPeriod?.entries) {
+          team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
+            if (entry.lineupSlotId !== 20) { // Not bench
+              const player = entry.playerPoolEntry?.player;
+              const stats = player?.stats;
+              const playerPos = player?.defaultPositionId;
+              
+              // Check if D/ST (16)
+              if (playerPos === 16) {
+                if (stats && Array.isArray(stats)) {
+                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                  if (weekStats?.appliedTotal) {
+                    const score = weekStats.appliedTotal;
+                    
+                    if (score > highestScore) {
+                      highestScore = score;
+                      winningTeam = team.teamId;
+                      defenseTeam = player.fullName || "Unknown Defense";
+                    }
+                  }
+                }
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+  
+  if (winningTeam) {
+    return {
+      teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
+      details: `${defenseTeam} scored ${highestScore.toFixed(1)} points`
+    };
+  }
+  return null;
+}
 
 function WeeklyEditForm({ item, onSave, onCancel, btnPri, btnSec }) {
   const [weekLabel, setWeekLabel] = useState(item.weekLabel || "");
@@ -4278,14 +4258,42 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
 
 function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
+const ht_isBenchSlot = (slotId) => slotId === 20 || slotId === 21; // Bench, IR
 
 // ESPN per-player projections live in player.stats rows where:
 //  - statSourceId === 1 (projected)
 //  - statSplitTypeId === 1 (weekly split)
 //  - scoringPeriodId === <week>
+const ht_projectedForWeek = (playerObj, week) => {
+  const stats = playerObj?.stats;
+  if (!Array.isArray(stats)) return 0;
+  const row = stats.find(
+    s => s?.scoringPeriodId === week && s?.statSourceId === 1 && s?.statSplitTypeId === 1
+  );
+  return Number(row?.appliedTotal ?? 0);
+};
 
 // Prefer team-level projected total if ESPN provides it; otherwise sum starters' projections
+const ht_teamProjection = (teamSideObj, week) => {
+  const teamLevel =
+    teamSideObj?.totalProjectedPointsLive ??
+    teamSideObj?.totalProjectedPoints ??
+    null;
+  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
 
+  const entries =
+    teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
+    teamSideObj?.roster?.entries ||
+    [];
+
+  let sum = 0;
+  for (const e of entries) {
+    if (ht_isBenchSlot(e?.lineupSlotId)) continue; // starters only
+    const player = e?.playerPoolEntry?.player;
+    sum += ht_projectedForWeek(player, week);
+  }
+  return sum;
+};
   const [naughtyLists, setNaughtyLists] = useState({}); // Store naughty lists by week
   const [allNaughtyEntries, setAllNaughtyEntries] = useState([]); // Flattened list
   const [loading, setLoading] = useState(false);
@@ -5465,6 +5473,8 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
   const [weeklyLuck, setWeeklyLuck] = useState({});
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
   const [currentWeek, setCurrentWeek] = useState(4);
+  const [seasonRecords, setSeasonRecords] = useState(null);
+  const [positionalRecords, setPositionalRecords] = useState(null);
 
   const toggleWeek = (week) => {
     setExpandedWeeks(prev => {
@@ -5479,17 +5489,12 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
   };
 
   useEffect(() => {
-    console.log('useEffect running - espn:', espn);
-    console.log('useEffect running - seasonId:', espn.seasonId);
-    console.log('useEffect running - leagueId:', espn.leagueId);
-    
-    if (espn.seasonId && espn.leagueId) {
-      console.log('Condition passed, calling loadLuckIndex');
-      loadLuckIndex();
-    } else {
-      console.log('Condition failed - not calling loadLuckIndex');
-    }
-  }, [espn.seasonId, espn.leagueId]);
+  if (espn.seasonId && espn.leagueId) {
+    loadLuckIndex();
+    loadSeasonRecords();
+    loadPositionalRecords();
+  }
+}, [espn.seasonId, espn.leagueId]);
 
   const loadLuckIndex = async () => {
   console.log('loadLuckIndex called!');
@@ -5530,6 +5535,32 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
     console.error('Failed to load luck index:', err);
   }
   setLoading(false);
+};
+
+const loadSeasonRecords = async () => {
+  try {
+    const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+    const response = await fetch(
+      `${baseURL}/api/leagues/${config.id}/season-records/${espn.seasonId}`
+    );
+    const data = await response.json();
+    setSeasonRecords(data.seasonRecords || null);
+  } catch (err) {
+    console.error('Failed to load season records:', err);
+  }
+};
+
+const loadPositionalRecords = async () => {
+  try {
+    const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+    const response = await fetch(
+      `${baseURL}/api/leagues/${config.id}/positional-records/${espn.seasonId}`
+    );
+    const data = await response.json();
+    setPositionalRecords(data.positionalRecords || null);
+  } catch (err) {
+    console.error('Failed to load positional records:', err);
+  }
 };
 
   return (
@@ -5641,6 +5672,73 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
         </div>
       )}
     </div>
+
+{/* Season Team Records Table */}
+{seasonRecords && (
+  <div className="card" style={{ padding: 16, marginTop: 24 }}>
+    <h2 style={{ marginBottom: 16 }}>Season Team Records</h2>
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead>
+        <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+          <th style={{ padding: '12px 8px', textAlign: 'left' }}>Record</th>
+          <th style={{ padding: '12px 8px', textAlign: 'left' }}>Team</th>
+          <th style={{ padding: '12px 8px', textAlign: 'right' }}>Value</th>
+          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Year</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+          <td style={{ padding: '12px 8px' }}>Most Wins</td>
+          <td style={{ padding: '12px 8px' }}>{seasonRecords.mostWins?.teamName || 'N/A'}</td>
+          <td style={{ padding: '12px 8px', textAlign: 'right' }}>{seasonRecords.mostWins?.wins || 0}</td>
+          <td style={{ padding: '12px 8px', textAlign: 'center' }}>{seasonRecords.mostWins?.year || 'N/A'}</td>
+        </tr>
+        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+          <td style={{ padding: '12px 8px' }}>Highest Score</td>
+          <td style={{ padding: '12px 8px' }}>{seasonRecords.highestScore?.teamName || 'N/A'}</td>
+          <td style={{ padding: '12px 8px', textAlign: 'right' }}>{seasonRecords.highestScore?.score?.toFixed(2) || 0}</td>
+          <td style={{ padding: '12px 8px', textAlign: 'center' }}>{seasonRecords.highestScore?.year || 'N/A'} (Week {seasonRecords.highestScore?.week || 'N/A'})</td>
+        </tr>
+        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+          <td style={{ padding: '12px 8px' }}>Most Points For (Season)</td>
+          <td style={{ padding: '12px 8px' }}>{seasonRecords.mostPointsFor?.teamName || 'N/A'}</td>
+          <td style={{ padding: '12px 8px', textAlign: 'right' }}>{seasonRecords.mostPointsFor?.points?.toFixed(2) || 0}</td>
+          <td style={{ padding: '12px 8px', textAlign: 'center' }}>{seasonRecords.mostPointsFor?.year || 'N/A'}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+)}
+
+{/* Season Positional Records Table */}
+{positionalRecords && (
+  <div className="card" style={{ padding: 16, marginTop: 24 }}>
+    <h2 style={{ marginBottom: 16 }}>Season Positional Records</h2>
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead>
+        <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+          <th style={{ padding: '12px 8px', textAlign: 'left' }}>Position</th>
+          <th style={{ padding: '12px 8px', textAlign: 'left' }}>Player</th>
+          <th style={{ padding: '12px 8px', textAlign: 'right' }}>Points</th>
+          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Year</th>
+          <th style={{ padding: '12px 8px', textAlign: 'center' }}>Week</th>
+        </tr>
+      </thead>
+      <tbody>
+        {['QB', 'RB', 'WR', 'TE', 'K', 'D/ST'].map(pos => (
+          <tr key={pos} style={{ borderBottom: '1px solid #f3f4f6' }}>
+            <td style={{ padding: '12px 8px', fontWeight: 'bold' }}>{pos}</td>
+            <td style={{ padding: '12px 8px' }}>{positionalRecords[pos]?.player || 'N/A'}</td>
+            <td style={{ padding: '12px 8px', textAlign: 'right' }}>{positionalRecords[pos]?.points?.toFixed(2) || 0}</td>
+            <td style={{ padding: '12px 8px', textAlign: 'center' }}>{positionalRecords[pos]?.year || 'N/A'}</td>
+            <td style={{ padding: '12px 8px', textAlign: 'center' }}>{positionalRecords[pos]?.week || 'N/A'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+)}
+
   </Section>
 );
 }

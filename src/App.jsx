@@ -4406,8 +4406,8 @@ try {
         let lowScore = { team: "", score: Infinity };
         let biggestBlowout = { winner: "", loser: "", margin: 0 };
         let closestWin = { winner: "", loser: "", margin: Infinity };
-        let bestManager = { team: "", percentage: 0 };
-        let worstManager = { team: "", percentage: 100, benchPoints: 0 };
+	let bestManager = { teams: [], percentage: -1 };  // ← Changed from { team: "", percentage: 0 }
+	let worstManager = { teams: [], percentage: 100, benchPoints: 0 };  // ← Changed from { team: "", ... }
         let luckiestWin = null;
         let unluckyLoss = null;
 
@@ -4502,22 +4502,33 @@ if (awayDelta < __underT.delta) {
           }
 
           // Best/Worst Manager calculations
-          [
-            { team: homeTeam, actual: homeScore, optimal: homeOptimal },
-            { team: awayTeam, actual: awayScore, optimal: awayOptimal }
-          ].forEach(({ team, actual, optimal }) => {
-            if (optimal > 0) {
-              const percentage = (actual / optimal) * 100;
-              const benchPoints = optimal - actual;
-              
-              if (percentage > bestManager.percentage || bestManager.percentage === 0) {
-                bestManager = { team, percentage };
-              }
-              if ((percentage < worstManager.percentage && benchPoints > 0) || worstManager.percentage === 100) {
-                worstManager = { team, percentage, benchPoints };
-              }
-            }
-          });
+[
+  { team: homeTeam, actual: homeScore, optimal: homeOptimal },
+  { team: awayTeam, actual: awayScore, optimal: awayOptimal }
+].forEach(({ team, actual, optimal }) => {
+  if (optimal > 0) {
+    const percentage = (actual / optimal) * 100;
+    const benchPoints = optimal - actual;
+    
+    // Best Manager - handle ties with tolerance for floating point errors
+    const TOLERANCE = 0.01; // Within 0.01% is considered a tie
+    
+    if (bestManager.teams.length === 0 || percentage > bestManager.percentage + TOLERANCE) {
+      // New leader
+      bestManager = { teams: [team], percentage };
+    } else if (Math.abs(percentage - bestManager.percentage) <= TOLERANCE) {
+      // Tied (within tolerance)
+      bestManager.teams.push(team);
+    }
+    
+    // Worst Manager - handle ties with tolerance
+    if ((percentage < worstManager.percentage - TOLERANCE && benchPoints > 0) || worstManager.percentage === 100) {
+      worstManager = { teams: [team], percentage, benchPoints };
+    } else if (Math.abs(percentage - worstManager.percentage) <= TOLERANCE && worstManager.percentage < 100 && benchPoints > 0) {
+      worstManager.teams.push(team);
+    }
+  }
+});
         });
 
         // Lucky/Unlucky calculation with edge cases
@@ -4661,21 +4672,33 @@ if (__underT.team) {
 }
 
 
-        if (bestManager.percentage > 0 && bestManager.team) {
-          weekTrophies.trophies.push({
-            emoji: "🤖",
-            title: "Best Manager",
-            value: `${bestManager.team} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
-          });
-        }
+        if (bestManager.percentage > 0 && bestManager.teams.length > 0) {
+  const teamList = bestManager.teams.length === 1 
+    ? bestManager.teams[0]
+    : bestManager.teams.slice(0, -1).join(', ') + ' and ' + bestManager.teams[bestManager.teams.length - 1];
+  
+  weekTrophies.trophies.push({
+    emoji: "🤖",
+    title: "Best Manager",
+    value: `${teamList} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
+  });
+}
 
-        if (worstManager.benchPoints > 0 && worstManager.team) {
-          weekTrophies.trophies.push({
-            emoji: "🤡",
-            title: "Worst Manager",
-            value: `${worstManager.team} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
-          });
-        }
+if (worstManager.benchPoints > 0 && worstManager.teams.length > 0) {
+  const teamList = worstManager.teams.length === 1 
+    ? worstManager.teams[0]
+    : worstManager.teams.slice(0, -1).join(', ') + ' and ' + worstManager.teams[worstManager.teams.length - 1];
+  
+  weekTrophies.trophies.push({
+    emoji: "🤡",
+    title: "Worst Manager",
+    value: `${teamList} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
+  });
+}
+
+        // ADD THIS DEBUG LINE RIGHT HERE ↓↓↓
+        console.log('[WEEK', weekNum, 'BEST MANAGER FINAL]', bestManager);
+        console.log('[WEEK', weekNum, 'WORST MANAGER FINAL]', worstManager);
 
         trophiesData.push(weekTrophies);
       }

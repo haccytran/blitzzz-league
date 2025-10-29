@@ -2172,7 +2172,7 @@ function determineHighestTE(boxscoreData, teamNames, weekNumber) {
   return null;
 }
 
-// Week 9: MVP - Highest scoring individual player
+// Week 9: MVP
 function determineMVP(boxscoreData, teamNames, weekNumber) {
   let highestScore = 0;
   let winningTeam = null;
@@ -2184,12 +2184,18 @@ function determineMVP(boxscoreData, teamNames, weekNumber) {
       [matchup.home, matchup.away].forEach(team => {
         if (team?.rosterForCurrentScoringPeriod?.entries) {
           team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) { // Not bench
+            if (entry.lineupSlotId !== 20) {  // Exclude bench
               const player = entry.playerPoolEntry?.player;
               const stats = player?.stats;
               
               if (stats && Array.isArray(stats)) {
-                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                // Find ACTUAL stats (statSourceId: 0), not projections (statSourceId: 1)
+                const weekStats = stats.find(s => 
+                  s.scoringPeriodId === weekNumber && 
+                  s.statSourceId === 0 &&  // ← ACTUAL STATS
+                  s.statSplitTypeId === 1  // ← GAME STATS
+                );
+                
                 if (weekStats?.appliedTotal) {
                   const score = weekStats.appliedTotal;
                   

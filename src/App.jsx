@@ -1482,10 +1482,11 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
         if (week === 6) {
   winner = await determineOverachiever(week, espn.leagueId, espn.seasonId, ht_projectedForWeek, ht_teamProjection);
         }
+
         // Week 12 (Bulls-eye) - use projection API  
-        else if (week === 12) {
-          winner = await determineBullseye(week, espn.leagueId, espn.seasonId);
-        }
+else if (week === 12) {
+  winner = await determineBullseye(week, espn.leagueId, espn.seasonId, ht_projectedForWeek, ht_teamProjection);
+}
         // Other weeks use existing logic
         else {
           winner = await determineWeeklyWinner(week, espn.leagueId, espn.seasonId);
@@ -1828,8 +1829,10 @@ async function determineOverachiever(weekNumber, leagueId, seasonId, ht_projecte
 }
 
 // Week 12: Bulls-eye - Team closest to their projected point total
-async function determineBullseye(weekNumber, leagueId, seasonId) {
+async function determineBullseye(weekNumber, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection) {
   try {
+    console.log(`[BULLS-EYE] Starting calculation for Week ${weekNumber}`);
+    
     const [teamResponse, boxscoreResponse] = await Promise.all([
       fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
         mode: 'cors',
@@ -1842,6 +1845,7 @@ async function determineBullseye(weekNumber, leagueId, seasonId) {
     ]);
     
     if (!teamResponse.ok || !boxscoreResponse.ok) {
+      console.error(`[BULLS-EYE] API error - Team: ${teamResponse.status}, Boxscore: ${boxscoreResponse.status}`);
       throw new Error(`ESPN API error`);
     }
     
@@ -1849,6 +1853,9 @@ async function determineBullseye(weekNumber, leagueId, seasonId) {
       teamResponse.json(),
       boxscoreResponse.json()
     ]);
+    
+    console.log(`[BULLS-EYE] Fetched data for week ${weekNumber}`);
+    console.log(`[BULLS-EYE] Schedule length: ${boxscoreData?.schedule?.length || 0}`);
     
     const teamNames = {};
     if (teamData.teams) {
@@ -1862,17 +1869,29 @@ async function determineBullseye(weekNumber, leagueId, seasonId) {
     let closestToProjection = { team: "", diff: Infinity, actual: 0, proj: 0 };
     
     if (boxscoreData.schedule) {
-      boxscoreData.schedule.forEach(matchup => {
-        [matchup.home, matchup.away].forEach(team => {
+      boxscoreData.schedule.forEach((matchup, idx) => {
+        // Verify this matchup is for the correct week
+        if (matchup.matchupPeriodId !== weekNumber) {
+          console.warn(`[BULLS-EYE] Skipping matchup ${idx} - wrong week (${matchup.matchupPeriodId} vs ${weekNumber})`);
+          return;
+        }
+        
+        [matchup.home, matchup.away].forEach((team, sideIdx) => {
           if (!team) return;
           
           const actual = team.totalPoints || 0;
           const proj = ht_teamProjection(team, weekNumber);
           const diff = Math.abs(actual - proj);
           
+          const teamName = teamNames[team.teamId] || `Team ${team.teamId}`;
+          
+          console.log(`[BULLS-EYE] Week ${weekNumber}, Matchup ${idx}, ${sideIdx === 0 ? 'Home' : 'Away'}: ${teamName}`);
+          console.log(`  Actual: ${actual.toFixed(2)}, Projected: ${proj.toFixed(2)}, Diff: ${diff.toFixed(2)}`);
+          
           if (diff < closestToProjection.diff) {
+            console.log(`  ^ NEW LEADER!`);
             closestToProjection = {
-              team: teamNames[team.teamId] || `Team ${team.teamId}`,
+              team: teamName,
               diff: diff,
               actual: actual,
               proj: proj
@@ -1882,7 +1901,10 @@ async function determineBullseye(weekNumber, leagueId, seasonId) {
       });
     }
     
-    if (closestToProjection.team) {
+    console.log(`[BULLS-EYE] Final winner: ${closestToProjection.team}`);
+    console.log(`[BULLS-EYE] Diff: ${closestToProjection.diff.toFixed(2)}, Actual: ${closestToProjection.actual.toFixed(2)}, Proj: ${closestToProjection.proj.toFixed(2)}`);
+    
+    if (closestToProjection.team && closestToProjection.diff < Infinity) {
       return {
         teamName: closestToProjection.team,
         details: `Scored ${closestToProjection.actual.toFixed(2)} points (${closestToProjection.diff.toFixed(2)} from projection of ${closestToProjection.proj.toFixed(2)})`

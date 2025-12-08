@@ -2389,7 +2389,13 @@ function determineHighestDST(boxscoreData, teamNames, weekNumber) {
               // Check if D/ST (16)
               if (playerPos === 16) {
                 if (stats && Array.isArray(stats)) {
-                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                  // Find ACTUAL stats (statSourceId: 0), not projections (statSourceId: 1)
+                  const weekStats = stats.find(s => 
+                    s.scoringPeriodId === weekNumber && 
+                    s.statSourceId === 0 &&  // ← ACTUAL STATS
+                    s.statSplitTypeId === 1  // ← GAME STATS (not season totals)
+                  );
+                  
                   if (weekStats?.appliedTotal) {
                     const score = weekStats.appliedTotal;
                     

@@ -773,6 +773,54 @@ app.post('/api/leagues/:leagueId/luck-index/:seasonId', async (req, res) => {
   }
 });
 
+// Streaming Analysis
+app.get("/api/leagues/:leagueId/streaming-analysis/:seasonId", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+    const leagueConfigs = { 'blitzzz': '226912', 'sculpin': '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+    
+    const response = await fetch(`http://localhost:5001/streaming-analysis?leagueId=${espnLeagueId}&year=${seasonId}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Streaming analysis failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Season Records
+app.get("/api/leagues/:leagueId/season-records/:seasonId", async (req, res) => {
+  try {
+    const { leagueId } = req.params;
+    const leagueConfigs = { 'blitzzz': '226912', 'sculpin': '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+    
+    const response = await fetch(`http://localhost:5001/season-records?leagueId=${espnLeagueId}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Season records failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Positional Records
+app.get("/api/leagues/:leagueId/positional-records/:seasonId", async (req, res) => {
+  try {
+    const { leagueId } = req.params;
+    const leagueConfigs = { 'blitzzz': '226912', 'sculpin': '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+    
+    const response = await fetch(`http://localhost:5001/positional-records?leagueId=${espnLeagueId}`);
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Positional records failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // League-specific members
 app.delete("/api/leagues/:leagueId/members", requireAdmin, async (req, res) => {
   try {
@@ -3586,13 +3634,23 @@ let isRefreshing = false;
 let lastRefreshAttempt = 0;
 let consecutiveFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 3;
-const BASE_REFRESH_INTERVAL = 60 * 60 * 1000; // 60 minutes
 
-// Only refresh between 9 AM and 2 AM
-const hour = new Date().getHours();
-if (hour >= 9 && hour <= 2) {
-  await runAutoRefresh();
+// Determine refresh interval based on time of year
+function getSeasonAwareInterval() {
+  const month = new Date().getMonth(); // 0-11
+  
+// September - January: In-season (more frequent)
+  if (month >= 8 || month <= 0) {
+    return 3 * 60 * 60 * 1000; // 3 hours during season
+  }
+  
+// February - August: Off-season (less frequent)
+  return 12 * 60 * 60 * 1000; // 12 hours off-season
 }
+
+const BASE_REFRESH_INTERVAL = getSeasonAwareInterval();
+
+
 
 
 // Define both leagues to refresh
@@ -3858,6 +3916,13 @@ for (let week = 1; week <= currentWeekNum; week++) {
 }
 
 async function runAutoRefresh() {
+  // Add time-of-day check here
+  const hour = new Date().getHours();
+  if (hour < 6 || hour >= 24) {
+    logRefresh('Skipping refresh - outside active hours (6 AM - midnight)');
+    return;
+  }
+
   if (isRefreshing) {
     logRefresh('Refresh already in progress, skipping this cycle');
     return;
@@ -3979,7 +4044,7 @@ app.get("/api/auto-refresh/status", (req, res) => {
     status: "running", 
     interval: autoRefreshInterval ? "active" : "inactive",
     timestamp: new Date().toISOString(),
-    nextRun: "Every 10 minutes",
+    nextRun: `Every ${BASE_REFRESH_INTERVAL / (60 * 1000)} minutes`,  // Dynamic based on season
     isRefreshing: isRefreshing,
     lastRefreshAttempt: lastRefreshAttempt ? new Date(lastRefreshAttempt).toISOString() : null,
     consecutiveFailures: consecutiveFailures,

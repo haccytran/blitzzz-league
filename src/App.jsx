@@ -2723,31 +2723,40 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
       <h3 style={{ marginTop: 0 }}>Weekly Adds Log</h3>
       {report.weekRows
   .sort((a, b) => b.week - a.week)
-  .map(w => (
-        <div key={w.week} style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} - {w.range.split(' (')[0].replace(/—/g, '→')} (Wednesday→Tuesday)</div>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={th}>Team</th>
-                <th style={th}>Adds</th>
-<th style={th}>Owes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {w.entries
-  .sort((a, b) => b.count - a.count)
-  .map(e => (
-  <tr key={e.name}>
-    <td style={{ ...td, whiteSpace: "normal" }}>{e.name}</td>
-    <td style={{...td, color: e.count >= 3 ? "#dc2626" : "#000000", fontWeight: e.count >= 3 ? "bold" : "normal"}}>{e.count}</td>
-<td style={{...td, color: e.owes > 0 ? "#16a34a" : "#000000", fontWeight: e.owes > 0 ? "bold" : "normal"}}>${e.owes}</td>
-  </tr>
-))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+  .map(w => {
+    // Playoff weeks (15, 16, 17) are free
+    const playoffWeeks = [15, 16, 17];
+    const isPlayoffWeek = playoffWeeks.includes(w.week);
+    
+    return (
+      <div key={w.week} style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} - {w.range.split(' (')[0].replace(/—/g, '→')} (Wednesday→Tuesday)</div>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={th}>Team</th>
+              <th style={th}>Adds</th>
+              <th style={th}>Owes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {w.entries
+              .sort((a, b) => b.count - a.count)
+              .map(e => {
+                const displayOwes = isPlayoffWeek ? 0 : e.owes;
+                return (
+                  <tr key={e.name}>
+                    <td style={{ ...td, whiteSpace: "normal" }}>{e.name}</td>
+                    <td style={{...td, color: e.count >= 3 ? "#dc2626" : "#000000", fontWeight: e.count >= 3 ? "bold" : "normal"}}>{e.count}</td>
+                    <td style={{...td, color: displayOwes > 0 ? "#16a34a" : "#000000", fontWeight: displayOwes > 0 ? "bold" : "normal"}}>${displayOwes}</td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
+    );
+  })}
     </div>
   </div>
 )}
@@ -4035,17 +4044,22 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
 </div>
 </div>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
-            {espnReport?.totalsRows ? (
-  espnReport.totalsRows
-    .sort((a, b) => (waiverCounts[b.name] || 0) - (waiverCounts[a.name] || 0))
-    .map(row => (
-    <li key={row.name} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
-      <span className="weekly-adds-team" style={{whiteSpace: "nowrap", fontSize: "13px"}}>{row.name}</span>
-      <span style={{fontSize:14,color:"#334155", whiteSpace: "nowrap"}}>
-  <b>Adds:</b> <span style={{color: (waiverCounts[row.name] || 0) >= 3 ? "#dc2626" : "#000000"}}>{waiverCounts[row.name] || 0}</span> • <b>Owes:</b> <span style={{color: (waiverOwed[row.name] || 0) >= 5 ? "#16a34a" : "#000000"}}>${waiverOwed[row.name] || 0}</span>
-</span>
-    </li>
-  ))
+  {espnReport?.totalsRows ? (
+    espnReport.totalsRows
+      .sort((a, b) => (waiverCounts[b.name] || 0) - (waiverCounts[a.name] || 0))
+      .map(row => {
+        // Playoff weeks (15, 16, 17) are free
+        const playoffWeeks = [15, 16, 17];
+        const displayOwes = playoffWeeks.includes(selectedWeek.week) ? 0 : (waiverOwed[row.name] || 0);
+        return (
+          <li key={row.name} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>
+            <span className="weekly-adds-team" style={{whiteSpace: "nowrap", fontSize: "13px"}}>{row.name}</span>
+            <span style={{fontSize:14,color:"#334155", whiteSpace: "nowrap"}}>
+              <b>Adds:</b> <span style={{color: (waiverCounts[row.name] || 0) >= 3 ? "#dc2626" : "#000000"}}>{waiverCounts[row.name] || 0}</span> • <b>Owes:</b> <span style={{color: displayOwes >= 5 ? "#16a34a" : "#000000"}}>${displayOwes}</span>
+            </span>
+          </li>
+        );
+      })
             ) : (
               data.members.map(m => (
                 <li key={m.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"8px 0",borderBottom:"1px solid #e2e8f0"}}>

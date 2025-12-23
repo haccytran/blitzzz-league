@@ -2833,27 +2833,31 @@ if (displayMethod === "Waivers" && isFAABLeague) {
   
   console.log(`[DEBUG] Final transaction counts after all processing: ${rawMoves.filter(r => r.action === "ADD").length} adds, ${rawMoves.filter(r => r.action === "DROP").length} drops`);
   
-  const perWeek = new Map();
-  for (const r of rawMoves) {
-    if (r.action !== "ADD" || r.week <= 0) continue;     if (!perWeek.has(r.week)) perWeek.set(r.week, new Map());
-    const m = perWeek.get(r.week);
-    m.set(r.team, (m.get(r.team) || 0) + 1);
-  }
-  
-  const weekRows = [];
-  const totals = new Map();
-  const rangeByWeek = {};
-  for (const r of rawMoves) {
-    if (r.week > 0 && !rangeByWeek[r.week]) rangeByWeek[r.week] = r.range;
-  }
-  
-  for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
-    const entries = [];
-    const m = perWeek.get(w);
-    for (const [team, count] of m.entries()) {
-      const owes = Math.max(0, count - 2) * 5;
-      entries.push({ name: team, count, owes });
-      const t = totals.get(team) || { adds:0, owes:0 };
+// Playoff weeks are free (weeks 15, 16, 17)
+const playoffWeeks = [15, 16, 17];
+
+const perWeek = new Map();
+for (const r of rawMoves) {
+  if (r.action !== "ADD" || r.week <= 0) continue;
+  if (!perWeek.has(r.week)) perWeek.set(r.week, new Map());
+  const m = perWeek.get(r.week);
+  m.set(r.team, (m.get(r.team) || 0) + 1);
+}
+
+const weekRows = [];
+const totals = new Map();
+const rangeByWeek = {};
+for (const r of rawMoves) {
+  if (r.week > 0 && !rangeByWeek[r.week]) rangeByWeek[r.week] = r.range;
+}
+
+for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
+  const entries = [];
+  const m = perWeek.get(w);
+  for (const [team, count] of m.entries()) {
+    // If it's a playoff week, no charges apply
+    const owes = playoffWeeks.includes(w) ? 0 : Math.max(0, count - 2) * 5;
+    entries.push({ name: team, count, owes });      const t = totals.get(team) || { adds:0, owes:0 };
       t.adds += count; 
       t.owes += owes; 
       totals.set(team, t);

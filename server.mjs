@@ -1837,14 +1837,23 @@ function firstWednesdayOfSeptember(year){
 const DAY = 24*60*60*1000;
 function weekBucket(date, seasonYear) {
   const z = new Date(date);
-  const w1 = firstWednesdayOfSeptember(Number(seasonYear)); // Updated to use Thursday
-  const diff = z.getTime() - w1.getTime();
+  const w1 = firstWednesdayOfSeptember(Number(seasonYear));
+  
+  // Calculate week number using UTC to avoid DST issues
+  const zUTC = Date.UTC(z.getFullYear(), z.getMonth(), z.getDate());
+  const w1UTC = Date.UTC(w1.getFullYear(), w1.getMonth(), w1.getDate());
+  const diff = zUTC - w1UTC;
   let week = Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1;
-if (week < 1) week = 0; // Pre-season
-  const start = new Date(w1.getTime() + (week - 1) * 7 * 24 * 60 * 60 * 1000);
+  
+  if (week < 1) week = 0;
+  
+  // Calculate start date by adding days, not milliseconds, to avoid DST issues
+  const start = new Date(w1.getTime());
+  start.setDate(w1.getDate() + (week - 1) * 7);
+  start.setHours(0, 0, 0, 0);
+  
   return { week, start };
 }
-
 
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeek(date);
@@ -1855,10 +1864,19 @@ function leagueWeekOf(date, seasonYear){
 }
 
 function weekRangeLabelDisplay(start){
-  const wed = new Date(start); wed.setHours(0,0,0,0);
-  const tue = new Date(wed); tue.setDate(tue.getDate()+6); tue.setHours(23,59,0,0);
-  const short = (d)=> new Date(d).toLocaleDateString(undefined,{month:"short", day:"numeric"});
-  return `${short(wed)}—${short(tue)} (cutoff Tue 11:59 PM PT)`; // Fixed: Use proper em dash
+  const wed = new Date(start); 
+  wed.setHours(0,0,0,0);
+  
+  const tue = new Date(wed.getTime()); // Use getTime() to avoid reference issues
+  tue.setDate(wed.getDate() + 6); 
+  tue.setHours(23,59,59,999); // Set to end of day
+  
+  const short = (d) => {
+    const date = new Date(d);
+    return date.toLocaleDateString(undefined, {month:"short", day:"numeric", timeZone: "America/Los_Angeles"});
+  };
+  
+  return `${short(wed)}—${short(tue)} (cutoff Tue 11:59 PM PT)`;
 }
 
 //  STEP 3 - EXTRACT MOVES
@@ -1867,6 +1885,13 @@ function weekRangeLabelDisplay(start){
 
 function enhancedInferMethod(typeStr, typeNum, transaction, item) {
   const s = String(typeStr ?? "").toUpperCase();
+  
+  // Check for failed waiver indicators first
+  if (transaction?.statusType === "ROSTER_UPDATE_FAILED" || 
+      transaction?.statusType === "FAILED" ||
+      (transaction?.status && String(transaction.status).includes("FAILED"))) {
+    return "CANCEL";
+  }
   
   // Handle ESPN's execution types directly
   if (transaction?.executionType) {
@@ -2007,6 +2032,14 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
     
     // === WAIVER VALIDATION LOGIC (episode-aware) ===
 if (rec.method === "PROCESS" && rec.add) {
+  // Check for explicit failure status
+  if (rec.originalTransaction?.statusType === "ROSTER_UPDATE_FAILED" ||
+      rec.originalTransaction?.statusType === "FAILED" ||
+      (rec.originalTransaction?.status && String(rec.originalTransaction.status).includes("FAILED"))) {
+    console.log(`[DEBUG] Waiver explicitly marked as failed: Team ${rec.teamId} tried to add player ${rec.add}`);
+    continue;
+  }
+  
   const playerId = rec.add;
   const teamId = rec.teamId;
   const waiverTimestamp = rec.ts;
@@ -2383,7 +2416,9 @@ playerName: it?.playerPoolEntry?.player?.fullName ||
            t?.player?.fullName || null,
 executionType: t?.executionType,
 bidAmount: t?.bidAmount,
-waiverProcessDate: t?.waiverProcessDate || it?.waiverProcessDate
+waiverProcessDate: t?.waiverProcessDate || it?.waiverProcessDate,
+statusType: t?.statusType || it?.statusType,
+status: t?.status || it?.status
           });
         }
       }

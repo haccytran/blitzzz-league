@@ -1,0 +1,14 @@
+[33m89f6541[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{0}: commit: Fix strength of schedule with better error handling
+[33mefcbabd[m HEAD@{1}: commit: Fix strength of schedule API route to match new URL pattern
+[33m4556d22[m HEAD@{2}: commit: Improve mobile responsiveness for Power Rankings and Nerd Data - consolidated Naughty List, applied Trophy Leaderboard mobile styling to all tables
+[33m96888b6[m HEAD@{3}: commit: Improve mobile responsiveness for Power Rankings and Nerd Data - consolidated Naughty List, applied Trophy Leaderboard mobile styling to all tables
+[33mf3d5c14[m HEAD@{4}: commit: Improve mobile responsiveness for Power Rankings and Nerd Data - consolidated Naughty List, applied Trophy Leaderboard mobile styling to all tables
+[33me6b43ac[m HEAD@{5}: commit: Improve mobile responsiveness for Power Rankings and Nerd Data - consolidated Naughty List, applied Trophy Leaderboard mobile styling to all tables
+[33m3ab42b0[m HEAD@{6}: commit: Restore all today's fixes: Python 3, luck index, season/positional records
+[33m1322777[m HEAD@{7}: commit: Remove backup files
+[33m66c46d8[m HEAD@{8}: commit: Restore from backup - all fixes included
+[33mbcbe09b[m HEAD@{9}: commit: Add python-stats-service (Flask microservice)
+[33m7353c95[m HEAD@{10}: commit: chore: regenerate lockfile after adding pg
+[33m2cfb729[m[33m ([m[1;33mtag: [m[1;33mv3.5[m[33m)[m HEAD@{11}: Branch: renamed refs/heads/main to refs/heads/main
+[33m2cfb729[m[33m ([m[1;33mtag: [m[1;33mv3.5[m[33m)[m HEAD@{13}: Branch: renamed refs/heads/master to refs/heads/main
+[33m2cfb729[m[33m ([m[1;33mtag: [m[1;33mv3.5[m[33m)[m HEAD@{15}: commit (initial): v3.5: app + server

@@ -15,45 +15,7 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-DB_URL = os.getenv('DATABASE_URL')
-if not DB_URL:
-    raise RuntimeError(
-        "DATABASE_URL environment variable is not set. "
-        "Set it in your .env file (local) or in your hosting provider's "
-        "environment variables (production) before starting this service."
-    )
-
-def init_transactions_table():
-    """Create transactions table if it doesn't exist"""
-    try:
-        conn = psycopg.connect(DB_URL)
-        cur = conn.cursor()
-        
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id SERIAL PRIMARY KEY,
-                league_id VARCHAR(20) NOT NULL,
-                league_year INT NOT NULL,
-                transaction_id VARCHAR(100),
-                team_id INT NOT NULL,
-                transaction_type VARCHAR(20),
-                player_id INT,
-                player_name VARCHAR(255),
-                position VARCHAR(10),
-                week INT,
-                transaction_date BIGINT,
-                UNIQUE(league_id, league_year, transaction_id, player_id)
-            )
-        """)
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("Transactions table created successfully")
-        
-    except Exception as e:
-        print(f"Error creating transactions table: {e}")
-        traceback.print_exc()
+DB_URL = "postgresql://neondb_owner:npg_2RpxLi7PZYAH@ep-summer-grass-afx8wu4n.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
 
 def two_step_dominance(win_matrix):
     """Calculate two-step dominance matrix"""
@@ -767,7 +729,7 @@ def get_season_records():
     try:
         league_id = request.args.get('leagueId', '226912')
         
-        conn = psycopg.connect(DB_URL)
+        conn = psycopg.connect(os.environ["DATABASE_URL"])
         cur = conn.cursor(row_factory=dict_row)
         
         # Most wins in a season
@@ -885,7 +847,7 @@ def get_positional_records():
     try:
         league_id = request.args.get('leagueId', '226912')
         
-        conn = psycopg.connect(DB_URL)
+        conn = psycopg.connect(os.environ["DATABASE_URL"])
         cur = conn.cursor(row_factory=dict_row)
         
         positions = ['QB', 'RB', 'WR', 'TE', 'K', 'D/ST']
@@ -932,18 +894,16 @@ def strength_of_schedule_endpoint():
             league_id = str(data.get('leagueId'))
             season_id = str(data.get('seasonId'))
             current_week = int(data.get('currentWeek', 1))
-            espn_s2 = data.get('espn_s2')
-            swid = data.get('swid')
         else:
             league_id = request.args.get('leagueId')
             season_id = request.args.get('seasonId')
             current_week = request.args.get('currentWeek', 1, type=int)
-            espn_s2 = request.args.get('espn_s2')
-            swid = request.args.get('swid')
         
         print(f"[SOS] Received: league={league_id}, season={season_id}, week={current_week}")
-        print(f"[SOS] Credentials: espn_s2={bool(espn_s2)}, swid={bool(swid)}")  # ADD THIS DEBUG LINE
-                
+        
+        espn_s2 = unquote("AEBajs7sNZne74Zi%2FchVZW4UjLd7tIss%2FnGhSx3ZCF2fXy6%2BSf0YPn%2FvAjHYWCw3dI778IewOM0XsaKZRm9h6a0VV2yN2KOTTHYBJfMlUBCyj0U5%2Fuykvvch%2BHnvbulqbwm5DBb%2FWrt1sQJlQus1ZVKwSfA%2F2xnvnap%2BwXSwQ9Sdel%2FBpO0c%2BH4o%2F6sdgmpClUR%2Baym6ApwEREbu%2FU%2B%2BCtJsWojQL6VolllCwTkOFZrcZArIufJC3mqfiSQj0cSVgtmujwEQrGYBiX5Pqah60Hiw")
+        swid = "{24083333-3B45-4857-8833-333B455857BD}"
+        
         # Fetch all data at once (FAST!)
         league_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mTeam")
         schedule_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mMatchup")
@@ -1063,8 +1023,7 @@ def strength_of_schedule_endpoint():
             min_power = min(all_power_scores) if all_power_scores else 0
             norm_power = ((avg_opp_power - min_power) / (max_power - min_power)) * 100 if max_power > min_power else 50
             
-            # Weighted formula: PPG 42.5%, Win% 15%, Power 42.5%
-            overall_difficulty = (norm_ppg * 0.425) + (norm_win_pct * 0.15) + (norm_power * 0.425)
+            overall_difficulty = (norm_ppg + norm_win_pct + norm_power) / 3
             
             sos_results.append({
                 'teamName': team_name,
@@ -1083,305 +1042,6 @@ def strength_of_schedule_endpoint():
         print(f"[SOS] ERROR: {str(e)}")
         traceback.print_exc()
         return jsonify({'error': str(e), 'strengthOfSchedule': []}), 500
-
-@app.route('/streaming-analysis', methods=['GET'])
-def get_streaming_analysis():
-    try:
-        league_id = request.args.get('leagueId', '226912')
-        year = int(request.args.get('year', 2025))
-        
-        conn = psycopg.connect(DB_URL, row_factory=dict_row)
-        cur = conn.cursor()
-        
-        # Get all transactions for QB, K, D/ST positions
-        streaming_positions = ['QB', 'K', 'D/ST']
-        
-        # Count adds/drops per team per position
-        cur.execute("""
-            SELECT team_id, position, COUNT(*) as transaction_count,
-                   ARRAY_AGG(player_name ORDER BY week) as players,
-                   ARRAY_AGG(week ORDER BY week) as weeks
-            FROM transactions
-            WHERE league_id = %s 
-              AND league_year = %s 
-              AND transaction_type = 'ADD'
-              AND position IN ('QB', 'K', 'D/ST')
-            GROUP BY team_id, position
-            HAVING COUNT(*) >= 4
-        """, (league_id, year))
-        
-        streaming_data = cur.fetchall()
-        
-        # Get team names
-        cur.execute("""
-            SELECT DISTINCT team_id, team_name
-            FROM teams
-            WHERE league_id = %s AND league_year = %s
-        """, (league_id, year))
-        
-        team_names = {row['team_id']: row['team_name'] for row in cur.fetchall()}
-        
-        # Calculate streaming success for each team/position
-        streamers = []
-        
-        for stream in streaming_data:
-            team_id = stream['team_id']
-            position = stream['position']
-            
-            # Get points scored by streamed players
-            cur.execute("""
-                SELECT ps.week, ps.player_name, ps.points
-                FROM player_stats ps
-                WHERE ps.league_id = %s 
-                  AND ps.league_year = %s
-                  AND ps.team_id = %s
-                  AND ps.position = %s
-                  AND ps.slot != 'Bench'
-                ORDER BY ps.week
-            """, (league_id, year, team_id, position))
-            
-            weekly_scores = cur.fetchall()
-            
-            # Calculate average points from streaming
-            if weekly_scores:
-                avg_points = sum(s['points'] for s in weekly_scores) / len(weekly_scores)
-                
-                # Get league average for this position
-                cur.execute("""
-                    SELECT AVG(points) as league_avg
-                    FROM player_stats
-                    WHERE league_id = %s 
-                      AND league_year = %s
-                      AND position = %s
-                      AND slot != 'Bench'
-                """, (league_id, year, position))
-                
-                league_avg = cur.fetchone()['league_avg'] or 0
-                
-                # Calculate streaming score (how much better than league average)
-                streaming_score = avg_points - league_avg
-                
-                streamers.append({
-                    'teamId': team_id,
-                    'teamName': team_names.get(team_id, f'Team {team_id}'),
-                    'position': position,
-                    'transactionCount': stream['transaction_count'],
-                    'avgPoints': round(avg_points, 2),
-                    'leagueAvg': round(league_avg, 2),
-                    'streamingScore': round(streaming_score, 2),
-                    'players': stream['players']
-                })
-        
-        # Sort by streaming score (best streamers first)
-        streamers.sort(key=lambda x: x['streamingScore'], reverse=True)
-        
-        cur.close()
-        conn.close()
-        
-        return jsonify({'streamers': streamers}), 200
-        
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/test-tables', methods=['GET'])
-def test_tables():
-    try:
-        conn = psycopg.connect(DB_URL, row_factory=dict_row)
-        cur = conn.cursor()
-        
-        # Get all table names
-        cur.execute("""
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public'
-            ORDER BY table_name
-        """)
-        
-        tables = [row['table_name'] for row in cur.fetchall()]
-        
-        cur.close()
-        conn.close()
-        
-        return jsonify({'tables': tables}), 200
-        
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/test-transactions', methods=['GET'])
-def test_transactions():
-    try:
-        league_id = '226912'
-        year = 2025
-        
-        # Try to fetch transactions from ESPN API
-        url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{league_id}"
-        
-        ESPN_S2 = os.getenv('ESPN_S2', '')
-        SWID = os.getenv('SWID', '')
-        
-        cookies = {"espn_s2": ESPN_S2, "SWID": SWID}
-        params = {"view": "mTransactions2"}
-        
-        response = requests.get(url, cookies=cookies, params=params)
-        
-        if response.status_code != 200:
-            return jsonify({"error": f"ESPN API returned {response.status_code}"}), 500
-        
-        data = response.json()
-        
-        # Check if transactions exist
-        transactions = data.get('transactions', [])
-        
-        return jsonify({
-            'transactionCount': len(transactions),
-            'sampleTransaction': transactions[0] if transactions else None,
-            'availableKeys': list(data.keys())
-        }), 200
-        
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/import-transactions', methods=['POST'])
-def import_transactions():
-    try:
-        data = request.json
-        league_id = data.get('leagueId', '226912')
-        year = int(data.get('year', 2025))
-        
-        # Fetch transactions from ESPN
-        url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{league_id}"
-        
-        ESPN_S2 = os.getenv('ESPN_S2', data.get('espn_s2', ''))
-        SWID = os.getenv('SWID', data.get('swid', ''))
-        
-        cookies = {"espn_s2": ESPN_S2, "SWID": SWID}
-        
-        # Get transactions
-        params = {"view": "mTransactions2"}
-        response = requests.get(url, cookies=cookies, params=params)
-        
-        if response.status_code != 200:
-            return jsonify({"error": f"ESPN API returned {response.status_code}"}), 500
-        
-        api_data = response.json()
-        transactions = api_data.get('transactions', [])
-        
-        # Get player names from kona_player_info
-        params = {"view": "kona_player_info"}
-        player_response = requests.get(url, cookies=cookies, params=params)
-        player_data = player_response.json() if player_response.status_code == 200 else {}
-        
-        # Build player info map
-        player_info_map = {}
-        if 'players' in player_data:
-            for p in player_data['players']:
-                player = p.get('player', {})
-                player_id = player.get('id')
-                if player_id:
-                    position_map = {0: 'QB', 2: 'RB', 4: 'WR', 6: 'TE', 16: 'D/ST', 17: 'K'}
-                    player_info_map[player_id] = {
-                        'name': player.get('fullName', f'Player {player_id}'),
-                        'position': position_map.get(player.get('defaultPositionId'), 'UNKNOWN')
-                    }
-        
-        conn = psycopg.connect(DB_URL)
-        cur = conn.cursor()
-        
-        imported = 0
-        skipped = 0
-        
-        for txn in transactions:
-            txn_id = txn.get('id')
-            team_id = txn.get('teamId', 0)
-            week = txn.get('scoringPeriodId', 1)
-            txn_date = txn.get('proposedDate', 0)
-            txn_type = txn.get('type', '')
-            
-            # DEBUG: Print first transaction to see structure
-            if imported == 0 and skipped == 0:
-                print(f"\n=== DEBUG: First Transaction ===")
-                print(f"Type: {txn_type}")
-                print(f"Team ID: {team_id}")
-                print(f"Items: {txn.get('items', [])}")
-                print(f"================================\n")
-            
-            # Skip non-waiver/FA transactions
-            if txn_type not in ['WAIVER', 'FREEAGENT']:
-                print(f"Skipping transaction type: {txn_type}")
-                continue
-            
-            for item in txn.get('items', []):
-                player_id = item.get('playerId')
-                from_team = item.get('fromTeamId', 0)
-                to_team = item.get('toTeamId', 0)
-                item_type = item.get('type', '')
-                
-                print(f"Processing item - Player: {player_id}, Type: {item_type}, From: {from_team}, To: {to_team}")
-                
-                if not player_id:
-                    print("  -> Skipped: No player ID")
-                    continue
-                
-                # Determine if this is an ADD or DROP
-                action = None
-                if from_team == 0 and to_team == team_id:
-                    action = 'ADD'
-                elif from_team == team_id and to_team == 0:
-                    action = 'DROP'
-                
-                if not action:
-                    print(f"  -> Skipped: No action determined (from={from_team}, to={to_team}, team={team_id})")
-                    continue
-                
-                # Get player info
-                info = player_info_map.get(player_id, {'name': f'Player {player_id}', 'position': 'UNKNOWN'})
-                position = info['position']
-                player_name = info['name']
-                
-                print(f"  -> Action: {action}, Position: {position}, Name: {player_name}")
-                
-                # Only track streaming positions: QB, K, D/ST
-                if position not in ['QB', 'K', 'D/ST']:
-                    print(f"  -> Skipped: Not a streaming position")
-                    continue
-                
-                try:
-                    cur.execute("""
-                        INSERT INTO transactions 
-                        (league_id, league_year, transaction_id, team_id, transaction_type, 
-                         player_id, player_name, position, week, transaction_date)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (league_id, league_year, transaction_id, player_id) DO NOTHING
-                    """, (league_id, year, txn_id, team_id, action, player_id, 
-                          player_name, position, week, txn_date))
-                    
-                    print(f"  -> ✓ IMPORTED")
-                    imported += 1
-                except Exception as e:
-                    skipped += 1
-                    print(f"  -> Error: {e}")
-                    continue
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        return jsonify({
-            'success': True,
-            'totalTransactions': len(transactions),
-            'imported': imported,
-            'skipped': skipped
-        }), 200
-        
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-# Initialize transactions table on startup
-init_transactions_table()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))

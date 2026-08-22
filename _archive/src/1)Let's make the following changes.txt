@@ -1,0 +1,52 @@
+1)Let's make the following changes to my Power Rankings page:
+-rename my power score column to Simple Power Score.
+-Next to my Simple Power Score should be the Comprehensive Power score. Should it be named "Comprehensive Power Score?" Name it to what makes most practical sense. And put what you think is the more meaningful score to the left between the two. 
+-Underneath the power rankings table add the Playoff Odds table. No need to include the Owner of the teams like the doritostats website does, just the Team names is fine.
+-Underneath the Playoff odds table should be the "Final Position Distribution Odds (Prior to week matchups)" table. Rename the title to "Final Standings Odds"
+-Underneath the Final Standings Odds table should be the "Remaining Strength of Schedule for <Remaining Weeks>"
+2) Let's rename my "Hood Trophies" page to "Trophy Case" and make the following changes to that page:
+-Underneath each week's Worst manager trophy Make a Naughty List (Teams that started inactive players)
+3) I want to implement historical statistics that keeps track of league history stats and has the ability to compare to current season stats. The league has only been public for two years so i'm not sure if we can access more than two years of historical data? If we can track the years that the season was private too let's try to do that by me providing my current cookies data and save all those seasons' data to server to reference since my ESPN_S2 cookie seems to change daily?
+4) Let's create a new page called "🤓 Nerd Data" and the put the navbtn link underneath Power Rankings navbtn.
+-Put weekly luck index at the top of Nerd Data with the most recent week table expanded and the older weeks tables' not expanded
+-Underneath the Luck Index tables should be Season Team Records (table that shows most wins, highest game score, most points for, etc" and instead of showing the Team Owner's name show the Team Name.
+-Underneath that should be Season Positional Records (table that shows Most QB points, most rb points, etc)
+-Make sure the Season Team Records and Positional Records tables includes all data from the Season Statistics Analysis screenshot (https://github.com/DesiPilla/espn-api-v3?tab=readme-ov-file#season-statistics-analysis)
+-Next put a Weekly Statics Analysis table(https://github.com/DesiPilla/espn-api-v3?tab=readme-ov-file#weekly-statistics-analysis) that shows if any records were broken during a given week. Have the most recent week at the top. I believe this is where historical statistics comes into play?
+-Add Optimal Lineup tracking over time to where it fits most appropriately.
+-Add Advanced Visualizations (interactive time-series charts) and Historical Trends (Multi-week performance tracking with charts) to nerd data where it fits most appropriately
+
+-Make sure all this data is updated on Monday at 11:59pm every week during the football season (It can stop fetching this data in January). I expect to see a new weekly table created and any other data updated on Monday at 11:59pm
+
+
+
+
+curl -X POST http://localhost:8787/api/leagues/blitzzz/snapshot \
+  -H "Content-Type: application/json" \
+  -H "x-admin: temporary420" \
+  -d '{"seasonId":"2025","weekNumber":4}'
+
+
+
+
+
+
+After that, let's continue working on the rest of the implentations i wanted to implement that was inspired by doiritostats..
+
+implement historical statistics that keeps track of league history stats and has the ability to compare to current season stats. The league has only been public for two years so i'm not sure if we can access more than two years of historical data? If we can track the years that the season was private too let's try to do that by me providing my current cookies data and save all those seasons' data to server to reference since my ESPN_S2 cookie seems to change daily?
+
+-Underneath the Luck Index tables should be Season Team Records (table that shows most wins, highest game score, most points for, etc" and instead of showing the Team Owner's name show the Team Name.
+
+-Underneath that should be Season Positional Records (table that shows Most QB points, most rb points, etc)
+
+-Make sure the Season Team Records and Positional Records tables includes all data from the Season Statistics Analysis screenshot (https://github.com/DesiPilla/espn-api-v3?tab=readme-ov-file#season-statistics-analysis)
+
+-Next put a Weekly Statics Analysis table(https://github.com/DesiPilla/espn-api-v3?tab=readme-ov-file#weekly-statistics-analysis) that shows if any records were broken during a given week. Have the most recent week at the top. I believe this is where historical statistics comes into play?
+
+-Add Optimal Lineup tracking over time to where it fits most appropriately.
+
+-Add Advanced Visualizations (interactive time-series charts) and Historical Trends (Multi-week performance tracking with charts) to nerd data where it fits most appropriately
+
+-Make sure all this data is updated on Monday at 11:59pm every week during the football season (It can stop fetching this data in January). I expect to see a new weekly table created and any other data updated on Monday at 11:59pm
+
+ 

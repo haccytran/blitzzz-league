@@ -1,5 +1,6 @@
 import traceback
 import sys
+from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from urllib.parse import unquote
@@ -11,6 +12,12 @@ import psycopg
 from psycopg.rows import dict_row
 from statistics import mean, stdev
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from the project's .env file (one folder up from
+# this script) so this works the same way locally as it does on Render, where
+# the hosting platform sets these variables directly instead of via a .env file.
+load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
 app = Flask(__name__)
 CORS(app)
@@ -580,8 +587,8 @@ def get_weekly_awards():
         year = int(data.get('year'))
         week = int(data.get('week', 1))
         
-        ESPN_S2 = unquote("AEBajs7sNZne74Zi%2FchVZW4UjLd7tIss%2FnGhSx3ZCF2fXy6%2BSf0YPn%2FvAjHYWCw3dI778IewOM0XsaKZRm9h6a0VV2yN2KOTTHYBJfMlUBCyj0U5%2Fuykvvch%2BHnvbulqbwm5DBb%2FWrt1sQJlQus1ZVKwSfA%2F2xnvnap%2BwXSwQ9Sdel%2FBpO0c%2BH4o%2F6sdgmpClUR%2Baym6ApwEREbu%2FU%2B%2BCtJsWojQL6VolllCwTkOFZrcZArIufJC3mqfiSQj0cSVgtmujwEQrGYBiX5Pqah60Hiw")
-        SWID = "{24083333-3B45-4857-8833-333B455857BD}"
+        ESPN_S2 = unquote(os.getenv('ESPN_S2', ''))
+        SWID = os.getenv('SWID', '')
         
         url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{league_id}"
         cookies = {"espn_s2": ESPN_S2, "SWID": SWID}

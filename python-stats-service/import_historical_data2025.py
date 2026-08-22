@@ -1,7 +1,11 @@
 import os
+from pathlib import Path
 import psycopg2
 from espn_api.football import League
 from urllib.parse import unquote
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
 # ESPN credentials - read from environment instead of being hardcoded
 ESPN_S2 = unquote(os.getenv('ESPN_S2', ''))

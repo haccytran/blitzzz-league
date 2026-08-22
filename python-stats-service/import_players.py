@@ -1,8 +1,12 @@
 import os
+from pathlib import Path
 import psycopg2
 import requests
 from urllib.parse import unquote
 import time
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / '.env')
 
 DB_URL = os.getenv('DATABASE_URL')
 if not DB_URL:

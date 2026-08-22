@@ -639,63 +639,11 @@ app.delete("/api/leagues/:leagueId/announcements", requireAdmin, async (req, res
 // League-Specific API Routes (Multi-League System)
 // =========================
 
-// League-specific data endpoint
-app.get("/api/leagues/:leagueId/data", async (req, res) => {
-  try {
-    // For now, all leagues share the same data structure
-    // You could later implement league-specific data storage by using req.params.leagueId
-    const data = await getLeagueData();
-    res.json(data);
-  } catch (error) {
-    console.error(`Failed to load league data for ${req.params.leagueId}:`, error);
-    res.status(500).json({ error: "Failed to load league data" });
-  }
-});
-
-// League-specific announcements
-app.post("/api/leagues/:leagueId/announcements", requireAdmin, async (req, res) => {
-  try {
-    const { html } = req.body;
-    if (!html || !html.trim()) {
-      return res.status(400).json({ error: "HTML content required" });
-    }
-
-    const data = await getLeagueData();
-    const newAnnouncement = {
-      id: nid(),
-      html: html.trim(),
-      createdAt: Date.now(),
-      leagueId: req.params.leagueId
-    };
-    
-    data.announcements = data.announcements || [];
-    data.announcements.unshift(newAnnouncement);
-    await saveLeagueData(data);
-
-    res.json({ success: true, announcement: newAnnouncement });
-  } catch (error) {
-    console.error('Failed to create announcement:', error);
-    res.status(500).json({ error: "Failed to create announcement" });
-  }
-});
-
-app.delete("/api/leagues/:leagueId/announcements", requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.body;
-    if (!id) {
-      return res.status(400).json({ error: "Announcement ID required" });
-    }
-
-    const data = await getLeagueData();
-    data.announcements = (data.announcements || []).filter(a => a.id !== id);
-    await saveLeagueData(data);
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Failed to delete announcement:', error);
-    res.status(500).json({ error: "Failed to delete announcement" });
-  }
-});
+// NOTE (2026-08-22): this section used to redefine GET /api/leagues/:leagueId/data,
+// POST /api/leagues/:leagueId/announcements, and DELETE /api/leagues/:leagueId/announcements
+// a second time. Express only ever runs the FIRST handler registered for a given route,
+// so these copies never actually ran - the real, live versions are earlier in this file
+// (and are correctly league-scoped; these dead copies were not). Removed as dead code.
 
 // League-specific weekly challenges
 app.post("/api/leagues/:leagueId/weekly", requireAdmin, async (req, res) => {

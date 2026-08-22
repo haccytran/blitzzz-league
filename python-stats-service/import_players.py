@@ -1,13 +1,16 @@
+import os
 import psycopg2
 import requests
 from urllib.parse import unquote
 import time
 
-DB_URL = "postgresql://neondb_owner:npg_2RpxLi7PZYAH@ep-summer-grass-afx8wu4n.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
+DB_URL = os.getenv('DATABASE_URL')
+if not DB_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set. Set it in your .env file before running this script.")
 
-# Your current ESPN credentials
-ESPN_S2 = "AEArmnzZdpWSyItrEp1IPdZKGhF%2FWmmPfkH3nejnVWbp8Dq2hbpMy5ftf7Zx9iDMwG9lyW4UkaIpDuVci%2FvpF%2FDZcdcXEb027s6gxlFTQD6u5zEsQq1ZFOGuIf%2FDx%2BQIkBx6aDkD0L4aMpS5AGnZeYnocTrFHUUIF7pisNs%2Fl6yKq4hnjS2LvQfoAv5loNxKux0ur2J57t7Vm6US5cPKCLUpsI6pYi5WPmwFq87WONYItHDl8pY1A5G9v8IwX9ZThBCNPUHlQBm3dnZdf9DJGcn7"
-SWID = "{24083333-3B45-4857-8833-333B455857BD}"
+# ESPN credentials - read from environment instead of being hardcoded
+ESPN_S2 = os.getenv('ESPN_S2', '')
+SWID = os.getenv('SWID', '')
 LEAGUE_ID = "226912"
 
 def create_player_stats_table():

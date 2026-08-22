@@ -1,6 +1,9 @@
+import os
 import psycopg2
 
-DB_URL = "postgresql://neondb_owner:npg_2RpxLi7PZYAH@ep-summer-grass-afx8wu4n.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
+DB_URL = os.getenv('DATABASE_URL')
+if not DB_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set. Set it in your .env file before running this script.")
 
 def setup_schema():
     """Create all necessary tables"""

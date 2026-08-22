@@ -1,12 +1,15 @@
+import os
 import psycopg2
 from espn_api.football import League
 from urllib.parse import unquote
 
-# Your credentials (URL decoded)
-ESPN_S2 = unquote("AEBajs7sNZne74Zi%2FchVZW4UjLd7tIss%2FnGhSx3ZCF2fXy6%2BSf0YPn%2FvAjHYWCw3dI778IewOM0XsaKZRm9h6a0VV2yN2KOTTHYBJfMlUBCyj0U5%2Fuykvvch%2BHnvbulqbwm5DBb%2FWrt1sQJlQus1ZVKwSfA%2F2xnvnap%2BwXSwQ9Sdel%2FBpO0c%2BH4o%2F6sdgmpClUR%2Baym6ApwEREbu%2FU%2B%2BCtJsWojQL6VolllCwTkOFZrcZArIufJC3mqfiSQj0cSVgtmujwEQrGYBiX5Pqah60Hiw")
-SWID = "{24083333-3B45-4857-8833-333B455857BD}"
+# ESPN credentials - read from environment instead of being hardcoded
+ESPN_S2 = unquote(os.getenv('ESPN_S2', ''))
+SWID = os.getenv('SWID', '')
 LEAGUE_ID = 226912
-DB_URL = "postgresql://neondb_owner:npg_2RpxLi7PZYAH@ep-summer-grass-afx8wu4n.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require"
+DB_URL = os.getenv('DATABASE_URL')
+if not DB_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set. Set it in your .env file before running this script.")
 
 def import_season(year):
     """Import all data for a single season"""

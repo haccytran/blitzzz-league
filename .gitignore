@@ -1,6 +1,10 @@
 # dependencies & build
 node_modules/
 dist/
+python-stats-service/venv/
+
+# local backup archive - not for GitHub
+_archive/
 
 # local env files
 .env

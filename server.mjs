@@ -427,7 +427,7 @@ async function getLeagueData(leagueId = 'default') {
     waivers: [],
     buyins: {},
     duesPayments: {},
-    leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Thu 12:00 AM PT → Wed 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
+    leagueSettingsHtml: "<h2>League Settings</h2><ul><li>Scoring: Standard</li><li>Transactions counted from <b>Wed 12:00 AM PT → Tue 11:59 PM PT</b>; first two are free, then $5 each.</li></ul>",
     tradeBlock: [],
     rosters: {},
     lastUpdated: new Date().toISOString()
@@ -1746,7 +1746,21 @@ app.get("/api/progress", (req, res) => {
 // Week helpers
 // =========================
 const WEEK_START_DAY = 3;
-function fmtPT(dateLike){ return new Date(dateLike).toLocaleString(); }
+const LEAGUE_TZ = "America/Los_Angeles";
+
+// 2026-08-25: everything below this point that decides "what day/week is
+// this" now explicitly converts to Pacific Time first via toPT(). Before
+// this fix, these functions just used the SERVER's own clock - fine on a
+// laptop set to Pacific, but this site runs on Render's cloud servers,
+// which almost certainly run on UTC. A transaction at, say, 8:00 PM
+// Tuesday in Los Angeles is already 3:00 AM Wednesday in UTC - so without
+// this conversion, a pickup made late Tuesday night (still well within
+// that week, by league rules) could get silently counted as NEXT week's
+// transaction instead, exactly the kind of "why does the site show 3 adds
+// when I only made 2" complaint this needs to never cause.
+function toPT(d){ return new Date(new Date(d).toLocaleString("en-US", { timeZone: LEAGUE_TZ })); }
+
+function fmtPT(dateLike){ return new Date(dateLike).toLocaleString("en-US", { timeZone: LEAGUE_TZ }); }
 function normalizeEpoch(x){
   if (x == null) return Date.now();
   if (typeof x === "string") x = Number(x);
@@ -1762,13 +1776,13 @@ function normalizeEpoch(x){
 }
 
 function isWithinWaiverWindow(dateLike){
-  const z = new Date(dateLike);
+  const z = toPT(dateLike);
   if (z.getDay() !== 4) return false; // Thursday
   const minutes = z.getHours()*60 + z.getMinutes();
   return minutes <= 4*60 + 30; // 4:30 AM (keep same early morning window)
 }
 function startOfLeagueWeek(date){
-  const z = new Date(date);
+  const z = toPT(date);
   const base = new Date(z); base.setHours(0,0,0,0);
   const back = (base.getDay() - WEEK_START_DAY + 7) % 7;
   base.setDate(base.getDate() - back);
@@ -1776,16 +1790,45 @@ function startOfLeagueWeek(date){
   return base;
 }
 function firstWednesdayOfSeptember(year){
-  const d = new Date(year, 8, 1);
+  const d = toPT(new Date(year, 8, 1));
   const offset = (3 - d.getDay() + 7) % 7; // 3 = Wednesday
   d.setDate(d.getDate() + offset);
   d.setHours(0,0,0,0);
   return d;
 }
+
+// 2026-08-25: this used to be the ONLY way the server knew "when is week
+// 1" for a season - it just assumed week 1 always starts the first
+// Wednesday of September. That's wrong (2026's actual Week 1 kickoff is
+// Sept 9, the SECOND Wednesday) and matters for real money here: this is
+// what buckets waiver/free-agent transactions into a week for the
+// "2 free adds, then $5 each" rule. Instead of guessing, we now ask ESPN
+// directly what week it currently thinks the season is on (see the
+// matching fix + full rationale in src/App.jsx), and use that as an
+// anchor to count every other week from. This cache holds that answer
+// once it's been fetched - buildOfficialReport() and the auto-refresh
+// cycle below are what fill it in, since both already fetch ESPN's
+// mSettings view anyway (no extra network call needed).
+const __serverWeekAnchor = {}; // { [seasonYear]: { week, start } }
+
+// The effective "week 1 start" date to count weeks from - derived from
+// ESPN's own answer if we have one for this season, otherwise the old
+// September-guess formula as a fallback (only used before ESPN's answer
+// has loaded, or if that request failed).
+function effectiveWeek1Start(seasonYear){
+  const anchor = __serverWeekAnchor[seasonYear];
+  if (anchor) {
+    const w1 = new Date(anchor.start);
+    w1.setDate(w1.getDate() - (anchor.week - 1) * 7);
+    return w1;
+  }
+  return firstWednesdayOfSeptember(Number(seasonYear));
+}
+
 const DAY = 24*60*60*1000;
 function weekBucket(date, seasonYear) {
-  const z = new Date(date);
-  const w1 = firstWednesdayOfSeptember(Number(seasonYear));
+  const z = toPT(date);
+  const w1 = effectiveWeek1Start(seasonYear);
   
   // Calculate week number using UTC to avoid DST issues
   const zUTC = Date.UTC(z.getFullYear(), z.getMonth(), z.getDate());
@@ -1805,7 +1848,7 @@ function weekBucket(date, seasonYear) {
 
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeek(date);
-  const week1 = startOfLeagueWeek(firstWednesdayOfSeptember(seasonYear));
+  const week1 = startOfLeagueWeek(effectiveWeek1Start(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0;
   return { week, start };
@@ -2704,6 +2747,27 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
+  // 2026-08-25: fetch ESPN's own "what week is it" answer up front, before
+  // any transaction gets bucketed into a week further down (weekBucket()
+  // calls inside validateTransactions and below) - this is what decides
+  // which week's 2-free-adds-then-$5-each count a given waiver/free-agent
+  // pickup lands in, so it has to be set BEFORE that bucketing happens,
+  // not after. Reused again below for the playoff-weeks calculation, so
+  // this doesn't cost an extra ESPN request.
+  let settingsData = null;
+  try {
+    settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: false });
+    const currentMatchupPeriod = settingsData?.status?.currentMatchupPeriod;
+    if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0) {
+      __serverWeekAnchor[seasonId] = {
+        week: currentMatchupPeriod,
+        start: startOfLeagueWeek(new Date()),
+      };
+    }
+  } catch (anchorErr) {
+    console.error('[WEEK ANCHOR] Failed to fetch ESPN current week - falling back to date estimate:', anchorErr.message);
+  }
+
 // Add this right after the line: const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
 console.log('[DEBUG] Team ID to Name mapping:', idToName);
@@ -2874,15 +2938,12 @@ if (displayMethod === "Waivers" && isFAABLeague) {
 // shifts if the season length ever changes. This still assumes the standard 3-week playoff
 // bracket (matches ESPN's default, and matches the old hardcoded [15,16,17]) - if the playoff
 // format itself ever moves to 2 or 4 weeks, this needs another look.
+// (settingsData was already fetched near the top of this function, for
+// the week-anchor fix above - no need to fetch it again here.)
 let playoffWeeks = [15, 16, 17];
-try {
-  const settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: false });
-  const regSeasonWeeks = settingsData?.settings?.scheduleSettings?.matchupPeriodCount;
-  if (regSeasonWeeks) {
-    playoffWeeks = [regSeasonWeeks + 1, regSeasonWeeks + 2, regSeasonWeeks + 3];
-  }
-} catch (settingsError) {
-  console.error('[DUES REPORT] Failed to fetch league settings for playoff weeks, using default [15,16,17]:', settingsError.message);
+const regSeasonWeeks = settingsData?.settings?.scheduleSettings?.matchupPeriodCount;
+if (regSeasonWeeks) {
+  playoffWeeks = [regSeasonWeeks + 1, regSeasonWeeks + 2, regSeasonWeeks + 3];
 }
 
 const perWeek = new Map();
@@ -3726,10 +3787,15 @@ const BASE_REFRESH_INTERVAL = getSeasonAwareInterval();
 
 
 
-// Define both leagues to refresh
+// Define which leagues the auto-refresh cycle pulls from ESPN in the
+// background. Sculpin is inactive for the season (2026-08-25, same change
+// as hiding its league selector/Switch League button in App.jsx) - there's
+// no reason to keep pulling its ESPN data automatically every few hours.
+// Its entry is commented out, not deleted, so re-enabling it later (if
+// Sculpin comes back) is just a matter of uncommenting this one line.
 const LEAGUES_TO_REFRESH = [
   { id: 'blitzzz', espnId: '226912' },
-  { id: 'sculpin', espnId: '58645' }
+  // { id: 'sculpin', espnId: '58645' },
 ];
 
 // Enhanced logging
@@ -3778,7 +3844,19 @@ async function runAutoRefreshForLeague(leagueConfig) {
         espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mRoster", req: { headers: {} }, requireCookie: true }),
         espnFetch({ leagueId: leagueConfig.espnId, seasonId, view: "mSettings", req: { headers: {} }, requireCookie: true }),
       ]);
-      
+
+      // 2026-08-25: piggyback on this already-fetched mSettings response to
+      // keep the week-anchor cache warm (see effectiveWeek1Start above) -
+      // this cycle runs every few hours, so it's a good place to keep the
+      // "what week is it" answer fresh without any extra ESPN requests.
+      const refreshCurrentMatchupPeriod = setJson?.status?.currentMatchupPeriod;
+      if (typeof refreshCurrentMatchupPeriod === "number" && refreshCurrentMatchupPeriod > 0) {
+        __serverWeekAnchor[seasonId] = {
+          week: refreshCurrentMatchupPeriod,
+          start: startOfLeagueWeek(new Date()),
+        };
+      }
+
       const teams = teamJson?.teams || [];
       if (teams.length > 0) {
         const names = [...new Set(teams.map(t => teamName(t)))];

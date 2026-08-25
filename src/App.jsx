@@ -110,8 +110,47 @@ function firstWednesdayOfSeptemberPT(year){
   return d;
 }
 
+// 2026-08-25: this used to be the ONLY way the site knew "when is week 1" -
+// it just assumed week 1 always starts the first Wednesday of September.
+// That's wrong (2026's actual Week 1 kickoff is Sept 9, the SECOND
+// Wednesday of September, not the first). Instead of guessing, we now ask
+// ESPN directly what week it currently thinks the season is on, and use
+// that as an anchor point to count every other week from - accurate every
+// year automatically, no hardcoded date needed. This cache holds that
+// answer once it's been fetched; loadEspnWeekAnchor() below fills it in.
+const __espnWeekAnchor = {}; // { [seasonYear]: { week, start } }
+
+async function loadEspnWeekAnchor(leagueId, seasonId){
+  if (!leagueId || !seasonId) return;
+  try {
+    const res = await fetch(API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&view=mSettings&auth=1`));
+    if (!res.ok) return;
+    const data = await res.json();
+    const currentMatchupPeriod = data?.status?.currentMatchupPeriod;
+    if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0) {
+      __espnWeekAnchor[seasonId] = {
+        week: currentMatchupPeriod,
+        start: startOfLeagueWeekPT(new Date()),
+      };
+    }
+  } catch (err) {
+    console.error("Failed to load ESPN's current week - falling back to date estimate:", err);
+  }
+}
+
 function leagueWeekOf(date, seasonYear){
   const start = startOfLeagueWeekPT(date);
+  const anchor = __espnWeekAnchor[seasonYear];
+  if (anchor) {
+    // Trusted path: count forward/backward from ESPN's own "current week",
+    // in whole-week steps, instead of guessing where week 1 falls.
+    const weeksOffset = Math.round((start - anchor.start) / (7*24*60*60*1000));
+    let week = anchor.week + weeksOffset;
+    if (week < 1) week = 0;
+    return { week, start, key: localDateKey(start) };
+  }
+  // Fallback (only used before ESPN's answer has loaded, or if that
+  // request failed) - the old first-Wednesday-of-September estimate.
   const week1 = startOfLeagueWeekPT(firstWednesdayOfSeptemberPT(seasonYear));
   let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
   if (start < week1) week = 0;
@@ -494,6 +533,17 @@ useEffect(() => {
   // Weeks
 const [selectedWeek, setSelectedWeek] = useState(leagueWeekOf(new Date(), seasonYear));
 useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), seasonYear)); }, [seasonYear]);
+
+// 2026-08-25: ask ESPN what week it currently thinks the season is on
+// (see loadEspnWeekAnchor near the top of this file), then recompute the
+// default selected week using that real answer instead of the
+// September-guess fallback.
+useEffect(() => {
+  if (!espn.leagueId || !espn.seasonId) return;
+  loadEspnWeekAnchor(espn.leagueId, espn.seasonId).then(() => {
+    setSelectedWeek(leagueWeekOf(new Date(), seasonYear));
+  });
+}, [espn.leagueId, espn.seasonId]);
 
 const membersById = useMemo(()=>Object.fromEntries(data.members.map(m=>[m.id,m])),[data.members]);
 
@@ -1496,17 +1546,31 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
   setLoading(true);
   try {
     const winners = {};
-    const now = new Date();
-    const week1EndDate = new Date('2025-09-08T23:59:00-07:00');
-    
+
+    // 2026-08-25: reveal a week's winner starting Tuesday at midnight PT
+    // (one minute after Monday 11:59pm) - Monday Night Football is
+    // historically the last game of the fantasy week, so by Tuesday we
+    // should know who won. Anchored off ESPN's real "current week" answer
+    // (loadEspnWeekAnchor, near the top of this file) instead of the old
+    // hardcoded-2025-date guess, which broke every year the season didn't
+    // start on the exact date it assumed.
+    await loadEspnWeekAnchor(espn.leagueId, espn.seasonId);
+    const anchor = __espnWeekAnchor[espn.seasonId];
+
     // Process weeks 1-13
     for (let week = 1; week <= 13; week++) {
-      const weekEnd = new Date(week1EndDate);
-      weekEnd.setDate(week1EndDate.getDate() + ((week - 1) * 7));
-      
-      if (now <= weekEnd) continue;
-      
       try {
+        if (!anchor) continue; // ESPN's real anchor isn't loaded - don't guess with a stale date on a money feature
+
+        // Week N's window is Wed 12:00am PT through Tue 11:59pm PT.
+        // "Tuesday of week N" = that week's Wednesday start + 6 days.
+        const weekStart = new Date(anchor.start);
+        weekStart.setDate(weekStart.getDate() + (week - anchor.week) * 7);
+        const revealAt = new Date(weekStart);
+        revealAt.setDate(revealAt.getDate() + 6);
+
+        if (new Date() < revealAt) continue;
+
         let winner = null;
         
         // Week 10 (Over-Achiever) - use projection API
@@ -4167,8 +4231,16 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
       }
 
       const winners = [];
-      const now = new Date();
-      const week1EndDate = new Date('2025-09-08T23:59:00-07:00');
+
+      // 2026-08-25: reveal a week's highest scorer starting Tuesday at
+      // midnight PT (one minute after Monday 11:59pm) - Monday Night
+      // Football is historically the last game of the fantasy week, so
+      // by Tuesday we should know who won. Anchored off ESPN's real
+      // "current week" answer instead of the old hardcoded-2025-date
+      // guess, which broke every year the season didn't start on the
+      // exact date it assumed.
+      await loadEspnWeekAnchor(espn.leagueId, espn.seasonId);
+      const anchor = __espnWeekAnchor[espn.seasonId];
 
       // Group schedule by matchup period
       const byPeriod = {};
@@ -4185,16 +4257,19 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
       // Process each period (week)
       Object.keys(byPeriod).sort((a, b) => Number(a) - Number(b)).forEach(period => {
         const weekNum = Number(period);
-        
-        // Check if this week should show results
-        const weekEnd = new Date(week1EndDate);
-        weekEnd.setDate(week1EndDate.getDate() + ((weekNum - 1) * 7));
-        
-        if (now <= weekEnd) {
-          return; // Skip if deadline hasn't passed
-        }
-
         const matchups = byPeriod[period];
+
+        if (!anchor) return; // ESPN's real anchor isn't loaded - don't guess with a stale date
+
+        // Week N's window is Wed 12:00am PT through Tue 11:59pm PT.
+        // "Tuesday of week N" = that week's Wednesday start + 6 days.
+        const weekStart = new Date(anchor.start);
+        weekStart.setDate(weekStart.getDate() + (weekNum - anchor.week) * 7);
+        const revealAt = new Date(weekStart);
+        revealAt.setDate(revealAt.getDate() + 6);
+
+        if (new Date() < revealAt) return;
+
         let highestScore = 0;
         let winningTeam = "";
         let winningTeamId = null;

@@ -2124,10 +2124,21 @@ function buildCookie(req) {
   if (hdr) return String(hdr);
   const swid = process.env.SWID;
   const s2   = process.env.ESPN_S2 || process.env.S2;
-  
+
   console.log("Building cookie - SWID:", swid ? "present" : "missing", "S2:", s2 ? "present" : "missing");
-  
-  if (swid && s2) return `SWID=${swid}; ESPN_S2=${s2}`;
+
+  // Fixed 2026-08-25: this was sending the cookie as "ESPN_S2" (all caps).
+  // ESPN's own servers expect the cookie literally named "espn_s2"
+  // (lowercase) - cookie names are matched exactly, so "ESPN_S2" just
+  // wasn't recognized as the same cookie at all. Confirmed against the
+  // espn_api Python library (the one behind this project's own historical
+  // data imports, which reliably works against old completed seasons) -
+  // it sends {'espn_s2': ..., 'SWID': ...}, lowercase espn_s2 / uppercase
+  // SWID. This is very likely why authenticated ESPN requests were quietly
+  // behaving as if only SWID were present: ESPN saw an incomplete/invalid
+  // credential pair and, for older seasons at least, responded with a 404
+  // instead of a clearer 401.
+  if (swid && s2) return `SWID=${swid}; espn_s2=${s2}`;
   if (swid) return `SWID=${swid}`;  // Use just SWID
   if (process.env.ESPN_COOKIE) return process.env.ESPN_COOKIE;
   return "";
@@ -2151,8 +2162,21 @@ async function tryFetchJSON(url, requireCookie, req) {
   }
   const r = await fetch(url, { headers });
   const text = await r.text();
-  try { 
-    return { ok:true, json: JSON.parse(text), status: r.status }; 
+  // Fixed 2026-08-25: this used to only check whether the body parsed as
+  // JSON, not whether ESPN actually returned a success status. ESPN often
+  // returns a real error (401 Not Authorized, for example when a season is
+  // too old for the request to be un-authenticated) as a *valid JSON body*
+  // with an error status code - that was being treated as a successful,
+  // if oddly-shaped, response. Callers would then silently see "no teams"
+  // or "no data" instead of a clear error. Now a non-2xx status is treated
+  // as a failure like a parse error would be, so it's surfaced properly
+  // (and so espnFetch below still tries the other two ESPN URL variants
+  // before giving up, same as it always has for a parse failure).
+  if (!r.ok) {
+    return { ok:false, status: r.status, snippet: text.slice(0,200).replace(/\s+/g," "), ct: r.headers.get("content-type") || "" };
+  }
+  try {
+    return { ok:true, json: JSON.parse(text), status: r.status };
   } catch {
     return { ok:false, status: r.status, snippet: text.slice(0,200).replace(/\s+/g," "), ct: r.headers.get("content-type") || "" };
   }
@@ -2162,19 +2186,48 @@ async function espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requi
   if (!leagueId || !seasonId || !view) throw new Error("Missing leagueId/seasonId/view");
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
   const bust = `&_=${Date.now()}`;
-  const v = encodeURIComponent(view);
-  const urls = [
-    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
-    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`,
-    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=${v}${sp}${bust}`
+  // "view" can be a single string (view=mTeam) or, when the caller asked for
+  // more than one ESPN view in the same request (e.g. ?view=mMatchup&view=mBoxscore),
+  // Express hands it to us here as an array. Fixed 2026-08-25: this used to
+  // always treat it as one string, which silently mangled multi-view requests
+  // into a single bad "view=mMatchup,mBoxscore" param ESPN doesn't understand -
+  // now it builds one "view=" param per requested view, matching what the
+  // caller actually asked for.
+  const viewList = Array.isArray(view) ? view : [view];
+  const viewParams = viewList.map(v => `view=${encodeURIComponent(v)}`).join("&");
+
+  // Added 2026-08-25: seasons before 2018 live at a completely different
+  // ESPN endpoint - confirmed against the espn_api Python library, which is
+  // where Blitzzz's own historical data (2015-2025) originally came from.
+  // 2018-onward uses the normal .../seasons/{year}/segments/0/leagues/{id}
+  // path (what this function always used); anything older 404s there no
+  // matter what, and needs .../leagueHistory/{id}?seasonId={year} instead.
+  // That endpoint also wraps its response in an array (ESPN returns every
+  // stored snapshot for that season - there's normally just one), which is
+  // unwrapped below after a successful fetch.
+  const year = parseInt(seasonId, 10);
+  const isPre2018 = Number.isFinite(year) && year < 2018;
+
+  const urls = isPre2018 ? [
+    `https://fantasy.espn.com/apis/v3/games/ffl/leagueHistory/${leagueId}?seasonId=${seasonId}&${viewParams}${bust}`,
+    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/leagueHistory/${leagueId}?seasonId=${seasonId}&${viewParams}${bust}`,
+    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/leagueHistory/${leagueId}?seasonId=${seasonId}&${viewParams}${bust}`
+  ] : [
+    `https://fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?${viewParams}${sp}${bust}`,
+    `https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?${viewParams}${sp}${bust}`,
+    `https://site.web.api.espn.com/apis/fantasy/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?${viewParams}${sp}${bust}`
   ];
   let last = null;
   for (const url of urls) {
     const res = await tryFetchJSON(url, requireCookie, req);
-    if (res.ok) return res.json;
+    if (res.ok) {
+      // leagueHistory responses come back as an array - unwrap to the same
+      // single-object shape every other view/endpoint in this app expects.
+      return (isPre2018 && Array.isArray(res.json)) ? res.json[0] : res.json;
+    }
     last = res;
   }
-  throw new Error(`ESPN non-JSON for ${view}${scoringPeriodId?` (SP ${scoringPeriodId})`:""}; status ${last?.status}; ct ${last?.ct}; snippet: ${last?.snippet}`);
+  throw new Error(`ESPN fetch failed for ${viewList.join("+")}${scoringPeriodId?` (SP ${scoringPeriodId})`:""}; status ${last?.status}; ct ${last?.ct}; snippet: ${last?.snippet}`);
 }
 
 app.get("/api/espn", async (req, res) => {
@@ -2816,8 +2869,21 @@ if (displayMethod === "Waivers" && isFAABLeague) {
   
   console.log(`[DEBUG] Final transaction counts after all processing: ${rawMoves.filter(r => r.action === "ADD").length} adds, ${rawMoves.filter(r => r.action === "DROP").length} drops`);
   
-// Playoff weeks are free (weeks 15, 16, 17)
-const playoffWeeks = [15, 16, 17];
+// Playoff weeks are free (no waiver fee charged). The regular-season length is pulled from
+// ESPN's league settings instead of being hardcoded to a 14-week season, so this correctly
+// shifts if the season length ever changes. This still assumes the standard 3-week playoff
+// bracket (matches ESPN's default, and matches the old hardcoded [15,16,17]) - if the playoff
+// format itself ever moves to 2 or 4 weeks, this needs another look.
+let playoffWeeks = [15, 16, 17];
+try {
+  const settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: false });
+  const regSeasonWeeks = settingsData?.settings?.scheduleSettings?.matchupPeriodCount;
+  if (regSeasonWeeks) {
+    playoffWeeks = [regSeasonWeeks + 1, regSeasonWeeks + 2, regSeasonWeeks + 3];
+  }
+} catch (settingsError) {
+  console.error('[DUES REPORT] Failed to fetch league settings for playoff weeks, using default [15,16,17]:', settingsError.message);
+}
 
 const perWeek = new Map();
 for (const r of rawMoves) {
@@ -3437,17 +3503,37 @@ async function calculatePlayoffOdds({ leagueId, seasonId, currentWeek, numSimula
   }
   
   // Get schedule data
-  const scheduleData = await espnFetch({ 
-    leagueId, 
-    seasonId, 
-    view: "mMatchup", 
-    req, 
-    requireCookie: false 
+  const scheduleData = await espnFetch({
+    leagueId,
+    seasonId,
+    view: "mMatchup",
+    req,
+    requireCookie: false
   });
-  
-  const totalWeeks = 14;
-  const playoffSpots = 6;
-  
+
+  // Pull the real playoff format from ESPN's league settings instead of hardcoding it - this
+  // used to always assume 6 playoff spots / 14 weeks no matter what the league was actually
+  // configured for. Falls back to those same defaults only if the settings fetch fails or the
+  // field is missing. (This function is only a fallback anyway - the primary path calls the
+  // Python stats service, which has the same fix.)
+  let totalWeeks = 14;
+  let playoffSpots = 6;
+  try {
+    const settingsData = await espnFetch({
+      leagueId,
+      seasonId,
+      view: "mSettings",
+      req,
+      requireCookie: false
+    });
+    const scheduleSettings = settingsData?.settings?.scheduleSettings || {};
+    totalWeeks = scheduleSettings.matchupPeriodCount || totalWeeks;
+    playoffSpots = scheduleSettings.playoffTeamCount || playoffSpots;
+    console.log(`[PLAYOFF ODDS] Using totalWeeks=${totalWeeks}, playoffSpots=${playoffSpots} (from ESPN league settings)`);
+  } catch (settingsError) {
+    console.error('[PLAYOFF ODDS] Failed to fetch league settings, using defaults (6 spots / 14 weeks):', settingsError.message);
+  }
+
   // Build team stats from completed weeks only
   const teamStats = {};
   const teamIds = [];

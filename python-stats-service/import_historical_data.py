@@ -82,22 +82,41 @@ def import_season(year):
                         continue
                     
                     # Home team
-                    cur.execute("""
-                        INSERT INTO matchups (league_id, league_year, week, team_id, opponent_id, 
-                                            team_score, opponent_score, is_home, outcome)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        str(LEAGUE_ID), year, week, matchup.home_team.team_id, matchup.away_team.team_id,
-                        matchup.home_score, matchup.away_score, True,
-                        'W' if matchup.home_score > matchup.away_score else 
-                        'L' if matchup.home_score < matchup.away_score else 'T'
-                    ))
-                    
-                    # Away team
+                    # ON CONFLICT: matchups now has a UNIQUE constraint on
+                    # (league_id, league_year, week, team_id) - added by
+                    # fix_duplicate_matchups.py on 2026-08-25, after we found
+                    # this script had been silently duplicating rows every
+                    # time it was re-run for a year already in the table.
+                    # This makes re-running the import safe: it now updates
+                    # the existing row instead of inserting a second copy.
                     cur.execute("""
                         INSERT INTO matchups (league_id, league_year, week, team_id, opponent_id,
                                             team_score, opponent_score, is_home, outcome)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (league_id, league_year, week, team_id) DO UPDATE
+                        SET opponent_id = EXCLUDED.opponent_id,
+                            team_score = EXCLUDED.team_score,
+                            opponent_score = EXCLUDED.opponent_score,
+                            is_home = EXCLUDED.is_home,
+                            outcome = EXCLUDED.outcome
+                    """, (
+                        str(LEAGUE_ID), year, week, matchup.home_team.team_id, matchup.away_team.team_id,
+                        matchup.home_score, matchup.away_score, True,
+                        'W' if matchup.home_score > matchup.away_score else
+                        'L' if matchup.home_score < matchup.away_score else 'T'
+                    ))
+
+                    # Away team (same ON CONFLICT protection as above)
+                    cur.execute("""
+                        INSERT INTO matchups (league_id, league_year, week, team_id, opponent_id,
+                                            team_score, opponent_score, is_home, outcome)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (league_id, league_year, week, team_id) DO UPDATE
+                        SET opponent_id = EXCLUDED.opponent_id,
+                            team_score = EXCLUDED.team_score,
+                            opponent_score = EXCLUDED.opponent_score,
+                            is_home = EXCLUDED.is_home,
+                            outcome = EXCLUDED.outcome
                     """, (
                         str(LEAGUE_ID), year, week, matchup.away_team.team_id, matchup.home_team.team_id,
                         matchup.away_score, matchup.home_score, False,

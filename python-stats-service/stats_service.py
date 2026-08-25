@@ -396,13 +396,20 @@ def calculate_playoff_odds():
         
         league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
         schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
-        
+        settings_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mSettings")
+
         teams = league_data.get('teams', [])
         schedule = schedule_data.get('schedule', [])
-        
-        playoff_spots = 6
-        total_weeks = 14
-        
+
+        # Pull the real playoff format from ESPN's league settings instead of hardcoding it.
+        # This used to always assume 6 playoff spots / 14 weeks no matter what the league was
+        # actually configured for - falls back to those same defaults only if ESPN's settings
+        # view doesn't return the field for some reason.
+        schedule_settings = settings_data.get('settings', {}).get('scheduleSettings', {})
+        playoff_spots = schedule_settings.get('playoffTeamCount') or 6
+        total_weeks = schedule_settings.get('matchupPeriodCount') or 14
+        print(f"[PLAYOFF ODDS] Using playoff_spots={playoff_spots}, total_weeks={total_weeks} (from ESPN league settings)")
+
         random.seed(42)
         
         # Build team stats from ALL completed weeks
@@ -954,11 +961,15 @@ def strength_of_schedule_endpoint():
         # Fetch all data at once (FAST!)
         league_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mTeam")
         schedule_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mMatchup")
-        
+        settings_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mSettings")
+
         teams = league_data.get('teams', [])
         schedule = schedule_data.get('schedule', [])
-        
-        print(f"[SOS] Loaded {len(teams)} teams and {len(schedule)} matchups")
+        # Regular season length pulled from ESPN's league settings instead of a hardcoded 14,
+        # so "remaining schedule" is calculated correctly even if the season length changes.
+        total_weeks = (settings_data.get('settings', {}).get('scheduleSettings', {}).get('matchupPeriodCount')) or 14
+
+        print(f"[SOS] Loaded {len(teams)} teams and {len(schedule)} matchups (total_weeks={total_weeks})")
         
         # Build team stats for completed weeks
         team_stats = {}
@@ -1025,7 +1036,7 @@ def strength_of_schedule_endpoint():
             
             for matchup in schedule:
                 week = matchup.get('matchupPeriodId', 0)
-                if week <= current_week or week > 14:
+                if week <= current_week or week > total_weeks:
                     continue
                 
                 home = matchup.get('home', {})

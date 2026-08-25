@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { LandingPage } from './components/LandingPage.jsx';
 import { useLeagueConfig } from './hooks/useLeagueConfig.js';
 import { createLeagueAPI, createLeagueStorageKey } from './utils/leagueStorage.js';
+import { leagueConfigs } from './config/leagueConfigs.js';
 
 /* =========================
    Global Config
@@ -131,7 +132,12 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, matchu
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
   const mp = matchupPeriodId ? `&matchupPeriodId=${matchupPeriodId}` : "";
   const au = auth ? `&auth=1` : "";
-  const url = API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&view=${view}${sp}${mp}${au}`);
+  // "view" can be a single view name or (2026-08-25) an array of several,
+  // e.g. ["mTeam","mRoster","mMatchup","mSettings","mStandings"] - ESPN
+  // wants several views requested together for some data (particularly
+  // older, completed seasons), not one at a time.
+  const viewParam = (Array.isArray(view) ? view : [view]).map(v => `view=${v}`).join("&");
+  const url = API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&${viewParam}${sp}${mp}${au}`);
   
   console.log(`[ESPN API] Fetching: ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}${matchupPeriodId ? ` (MP ${matchupPeriodId})` : ""}`);
   const startTime = Date.now();
@@ -179,30 +185,18 @@ function useStored(key, initial=""){
    App Root with Subdomain Detection
    ========================= */
 export default function App() {
-  const [selectedLeague, setSelectedLeague] = useState(null);
-
-  // Check for subdomain or URL parameter on startup
-  useEffect(() => {
+  // Sculpin league is inactive for now (2026-08-25). Unless someone explicitly asks
+  // for it - via a "sculpin" subdomain or a "?league=sculpin" URL parameter - the site
+  // goes straight into Blitzzz and skips the two-league selection screen entirely.
+  // Nothing about Sculpin was deleted: its config (src/config/leagueConfigs.js), the
+  // LandingPage selector, and the "Switch League" button in the sidebar all still work
+  // exactly as before, in case the league gets reactivated later.
+  const [selectedLeague, setSelectedLeague] = useState(() => {
     const leagueFromSubdomain = getLeagueFromSubdomain();
-    console.log('Detected league from subdomain/URL:', leagueFromSubdomain);
-
-    if (leagueFromSubdomain) {
-      // Import the config to validate the league exists
-      import('./config/leagueConfigs').then(({ leagueConfigs }) => {
-        console.log('Available league configs:', Object.keys(leagueConfigs));
-        console.log('Looking for config:', leagueFromSubdomain);
-
-        if (leagueConfigs[leagueFromSubdomain]) {
-          console.log('Setting selected league to:', { id: leagueFromSubdomain, ...leagueConfigs[leagueFromSubdomain] });
-          setSelectedLeague({ id: leagueFromSubdomain, ...leagueConfigs[leagueFromSubdomain] });
-        } else {
-          console.log('League not found in configs');
-          // Don't clear URL - let them see the landing page
-        }
-      });
-    }
-  }, []);
-
+    const targetLeague = (leagueFromSubdomain === 'sculpin') ? 'sculpin' : 'blitzzz';
+    console.log('Defaulting into league (Sculpin inactive):', targetLeague);
+    return { id: targetLeague, ...leagueConfigs[targetLeague] };
+  });
 
   // Handle league selection from landing page
   const handleLeagueSelect = (league) => {
@@ -229,6 +223,9 @@ export default function App() {
     }
   };
 
+  // selectedLeague is now always set on first load (see the useState above), so this
+  // landing-page selector normally never shows. It's kept working so the sidebar's
+  // "Switch League" button (which calls handleBackToSelection) still has somewhere to go.
   if (!selectedLeague) {
     return <LandingPage onLeagueSelect={handleLeagueSelect} />;
   }
@@ -287,8 +284,8 @@ const switchLeague = () => {
 };
 
 const VALID_TABS = [
-  "announcements","hoodtrophies","activity","weekly","highestscorer","waivers","dues",
-  "transactions","drafts","rosters","powerrankings","nerddata","settings","trading","paydues","polls" 
+  "announcements","hoodtrophies","halloffame","activity","weekly","highestscorer","waivers","dues",
+  "transactions","drafts","rosters","powerrankings","nerddata","settings","trading","paydues","polls"
 ];
   const initialTabFromHash = () => {
   const h = (window.location.hash || "").replace("#","").trim();
@@ -922,6 +919,7 @@ async function loadOfficialReport(silent=false){
   const views = {
   announcements: <AnnouncementsView {...{isAdmin,login,logout,data,addAnnouncement,deleteAnnouncement}} espn={espn} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   hoodtrophies: <TrophyCaseView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
+  halloffame: <HallOfFameView config={config} apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
 
   ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
@@ -959,7 +957,7 @@ async function loadOfficialReport(silent=false){
   btnPri={btnPri}
   btnSec={btnSec}
 />,
-  rosters: <Rosters leagueId={espn.leagueId} seasonId="2025" apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
+  rosters: <Rosters leagueId={espn.leagueId} seasonId={espn.seasonId} apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
   powerrankings: <PowerRankingsView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   nerddata: <NerdDataView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   settings: <SettingsView {...{isAdmin,espn,setEspn,importEspnTeams,data,saveLeagueSettings}} btnPri={btnPri} btnSec={btnSec}/>,
@@ -1016,9 +1014,14 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           <div className="brand">
             <img src={config.logo} alt={`${config.name} Logo`} style={{width: 128, height: 128}} />
             <div className="brand-title">{config.name} <span>Fantasy Football League</span></div>
-            
-            <button 
-              className="btn" 
+
+            {/* "Switch League" button hidden while Sculpin is inactive (2026-08-25) -
+                there's only one league to switch to right now. The button and the
+                switchLeague() function are untouched below, so re-enabling this later
+                is just a matter of removing the "false &&" line. */}
+            {false && (
+            <button
+              className="btn"
               onClick={switchLeague}
               style={{
                 marginTop: 8,
@@ -1032,11 +1035,13 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
             >
               ← Switch League
             </button>
+            )}
           </div>
           
           {/* Navigation with mobile close functionality */}
           <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="hoodtrophies" label="🏆 Trophy Case" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          <NavBtn id="halloffame" label="🏛️ Hall of Fame" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           {config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           {config.id === 'sculpin' && <NavBtn id="highestscorer" label="👑 Highest Scorer" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
           <NavBtn id="activity" label="⏱️ Recent Activity" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> 
@@ -1449,12 +1454,38 @@ setActivities(pairedActivities);
   );
 }
 
+// ============================================================
+// WEEKLY CHALLENGES — locked in for the 2026 season (2026-08-25)
+// This is the single source of truth for the weekly challenge order,
+// names, and descriptions. Editing is no longer available on the site
+// (by Hac's request, so this list and the winner-calculation logic can
+// never drift out of sync with each other like they briefly did during
+// the 2026 reorder). To change the order or wording in a future season,
+// edit this list AND the matching week numbers in the
+// determineWeeklyWinner() switch statement and the
+// loadWeeklyChallengeWinners() special-casing further down this file.
+// ============================================================
+const WEEKLY_CHALLENGES = [
+  { week: 1, title: "Hot Start", text: "Highest overall team score (starters)" },
+  { week: 2, title: "MVP", text: "Highest scoring individual player, team defense included. (starters)" },
+  { week: 3, title: "Bulls-Eye", text: "Team closest to their projected point total" },
+  { week: 4, title: "Highest Scoring WR/RB", text: "Highest Scoring WR/RB (in starting lineup)" },
+  { week: 5, title: "Photo Finish", text: "Team with closest margin of victory" },
+  { week: 6, title: "Highest Scoring TE", text: "Highest Scoring TE (in starting lineup)" },
+  { week: 7, title: "Biggest Blow out", text: "Largest margin of victory" },
+  { week: 8, title: "Best Loser", text: "Highest scoring losing team" },
+  { week: 9, title: "Highest Scoring D/ST", text: "Highest Scoring D/ST (in starting lineup)" },
+  { week: 10, title: "Over-Achiever", text: "Team with most points over their weekly projection" },
+  { week: 11, title: "Dirty 30", text: "Team with the starting player closest to 30 points (under OR over)" },
+  { week: 12, title: "Bench Warmer", text: "Team with highest scoring bench player" },
+  { week: 13, title: "Hero to Zero", text: "Biggest NEGATIVE team points differential from the prior week to this week" },
+];
+
 function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear, espn, btnPri, btnSec }) {
-  const [editingId, setEditingId] = useState(null);
   const [weeklyWinners, setWeeklyWinners] = useState({});
   const [loading, setLoading] = useState(false);
   const [manualWinners, setManualWinners] = useState({});
-  
+
   const currentYear = new Date().getFullYear();
   const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
 
@@ -1478,13 +1509,13 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
       try {
         let winner = null;
         
-        // Week 6 (Overachiever) - use projection API
-        if (week === 6) {
+        // Week 10 (Over-Achiever) - use projection API
+        if (week === 10) {
   winner = await determineOverachiever(week, espn.leagueId, espn.seasonId, ht_projectedForWeek, ht_teamProjection);
         }
 
-        // Week 12 (Bulls-eye) - use projection API  
-else if (week === 12) {
+        // Week 3 (Bulls-Eye) - use projection API
+else if (week === 3) {
   winner = await determineBullseye(week, espn.leagueId, espn.seasonId, ht_projectedForWeek, ht_teamProjection);
 }
         // Other weeks use existing logic
@@ -1513,10 +1544,14 @@ else if (week === 12) {
     }
   }, [espn.leagueId, espn.seasonId]);
 
-  const list = Array.isArray(data.weeklyList) ? [...data.weeklyList] : [];
-  
-  // Keep chronological order, don't move completed weeks
-  list.sort((a, b) => (a.week || 0) - (b.week || 0));
+  // The list is now fixed (see WEEKLY_CHALLENGES above) - no longer editable from the site.
+  const list = WEEKLY_CHALLENGES.map(c => ({
+    id: `week-${c.week}`,
+    week: c.week,
+    weekLabel: `Week ${c.week}`,
+    title: c.title,
+    text: c.text
+  }));
 
   return (
     <Section title="Weekly Challenges" actions={
@@ -1526,94 +1561,52 @@ else if (week === 12) {
         </button>
       </div>
     }>
-      {isAdmin && <WeeklyForm seasonYear={seasonYear} onAdd={addWeekly} btnPri={btnPri} btnSec={btnSec} />}
       <div className="grid" style={{ gap: 12, marginTop: 12 }}>
-        {list.length === 0 && (
-          <div className="card" style={{ padding: 16, color: "#64748b" }}>
-            No weekly challenges yet.
-          </div>
-        )}
         {list.map(item => {
           const weekNumber = item.week || 0;
           const winner = weeklyWinners[weekNumber];
-          const isEditing = editingId === item.id;
-          
+
           return (
             <div key={item.id} className="card" style={{ padding: 16 }}>
-              {isEditing ? (
-                <WeeklyEditForm 
-                  item={item} 
-                  onSave={(updatedEntry) => {
-                    editWeekly(item.id, updatedEntry);
-                    setEditingId(null);
-                  }}
-                  onCancel={() => setEditingId(null)}
-                  btnPri={btnPri}
-                  btnSec={btnSec}
-                />
-              ) : (
-                <>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <h3 style={{ margin: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>
   {item.weekLabel || "Week"}
   {item.title ? <span style={{ fontWeight: "bold", color: "#ffb612" }}> — {item.title}</span> : null}
 </h3>
-                    </div>
-                    {isAdmin && (
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button
-                          className="btn"
-                          style={btnSec}
-                          onClick={() => setEditingId(item.id)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn"
-                          style={{ ...btnSec, background: "#fee2e2", color: "#991b1b" }}
-                          onClick={() => deleteWeekly(item.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                    {item.text}
-                  </div>
+                </div>
+              </div>
 
-                  {/* Winner Display */}
-                  {winner && (
-                    <div style={{ 
-                      marginTop: 12, 
-                      padding: 12, 
-                      background: "#f0f9ff", 
-                      borderRadius: 6,
-                      border: "1px solid #0ea5e9"
+              <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                {item.text}
+              </div>
+
+              {/* Winner Display */}
+              {winner && (
+                <div style={{
+                  marginTop: 12,
+                  padding: 12,
+                  background: "#f0f9ff",
+                  borderRadius: 6,
+                  border: "1px solid #0ea5e9"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: "18px" }}>🏆</span>
+                    <span style={{
+                      fontWeight: "bold",
+                      color: "#0066cc",
+                      textShadow: "0 0 8px #ffff00, 0 0 12px #ffff00",
+                      fontSize: "16px"
                     }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: "18px" }}>🏆</span>
-                        <span style={{ 
-                          fontWeight: "bold", 
-                          color: "#0066cc",
-                          textShadow: "0 0 8px #ffff00, 0 0 12px #ffff00",
-                          fontSize: "16px"
-                        }}>
-                          {winner.teamName}
-                        </span>
-                      </div>
-                      {winner.details && (
-                        <div style={{ marginTop: 4, fontSize: "14px", color: "#334155" }}>
-                          {winner.details}
-                        </div>
-                      )}
+                      {winner.teamName}
+                    </span>
+                  </div>
+                  {winner.details && (
+                    <div style={{ marginTop: 4, fontSize: "14px", color: "#334155" }}>
+                      {winner.details}
                     </div>
                   )}
-
-                  
-                                  </>
+                </div>
               )}
             </div>
           );
@@ -1688,41 +1681,41 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
     switch (weekNumber) {
       case 1: // Hot Start - Highest overall team score (starters)
         return determineHighestScoringTeam(matchupData, teamNames, weekNumber);
-        
-      case 2: // Photo Finish - Closest margin of victory
-        return determineClosestMargin(matchupData, teamNames, weekNumber);
-        
-      case 3: // Biggest Blow out - Largest margin of victory
-        return determineLargestMargin(matchupData, teamNames, weekNumber);
-        
-      case 4: // Dirty 30 - Player closest to 30 points
-        return determineDirty30(boxscoreData, teamNames, weekNumber);
-        
-      case 5: // Highest Scoring WR/RB
-        return determineHighestWRRB(boxscoreData, teamNames, weekNumber);
-        
-      case 7: // Hero to Zero - Biggest point drop from Week 6 to Week 7
-        return determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId);
-        
-      case 8: // Highest Scoring TE
-        return determineHighestTE(boxscoreData, teamNames, weekNumber);
-        
-      case 9: // MVP - Highest scoring individual player
+
+      case 2: // MVP - Highest scoring individual player
         return determineMVP(boxscoreData, teamNames, weekNumber);
-        
-      case 10: // Best Loser - Highest scoring losing team
+
+      case 4: // Highest Scoring WR/RB
+        return determineHighestWRRB(boxscoreData, teamNames, weekNumber);
+
+      case 5: // Photo Finish - Closest margin of victory
+        return determineClosestMargin(matchupData, teamNames, weekNumber);
+
+      case 6: // Highest Scoring TE
+        return determineHighestTE(boxscoreData, teamNames, weekNumber);
+
+      case 7: // Biggest Blow out - Largest margin of victory
+        return determineLargestMargin(matchupData, teamNames, weekNumber);
+
+      case 8: // Best Loser - Highest scoring losing team
         return determineBestLoser(matchupData, teamNames, weekNumber);
-        
-      case 11: // Bench Warmer - Highest scoring bench player
-        return determineBenchWarmer(boxscoreData, teamNames, weekNumber);
-        
-      case 13: // Highest Scoring D/ST
+
+      case 9: // Highest Scoring D/ST
         return determineHighestDST(boxscoreData, teamNames, weekNumber);
-        
-      case 6: // Over-Achiever - Manual selection required
-      case 12: // Bulls-Eye - Manual selection required
+
+      case 11: // Dirty 30 - Player closest to 30 points
+        return determineDirty30(boxscoreData, teamNames, weekNumber);
+
+      case 12: // Bench Warmer - Highest scoring bench player
+        return determineBenchWarmer(boxscoreData, teamNames, weekNumber);
+
+      case 13: // Hero to Zero - Biggest point drop from the prior week to this week
+        return determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId);
+
+      case 3: // Bulls-Eye - Manual selection required (uses projection API - see loadWeeklyChallengeWinners)
+      case 10: // Over-Achiever - Manual selection required (uses projection API - see loadWeeklyChallengeWinners)
         return null;
-        
+
       default:
         return null;
     }
@@ -1733,7 +1726,7 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
 }
 
 
-// Week 6: Overachiever - biggest positive difference from projection
+// Week 10: Over-Achiever - biggest positive difference from projection
 async function determineOverachiever(weekNumber, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection) {
   try {
     console.log(`[OVERACHIEVER] Starting calculation for Week ${weekNumber}`);
@@ -1828,7 +1821,7 @@ async function determineOverachiever(weekNumber, leagueId, seasonId, ht_projecte
   }
 }
 
-// Week 12: Bulls-eye - Team closest to their projected point total
+// Week 3: Bulls-Eye - Team closest to their projected point total
 async function determineBullseye(weekNumber, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection) {
   try {
     console.log(`[BULLS-EYE] Starting calculation for Week ${weekNumber}`);
@@ -2072,7 +2065,7 @@ function determineDirty30(boxscoreData, teamNames, weekNumber) {
   return null;
 }
 
-// Week 5: Highest Scoring WR/RB
+// Week 4: Highest Scoring WR/RB
 function determineHighestWRRB(boxscoreData, teamNames, weekNumber) {
   let highestScore = 0;
   let winningTeam = null;
@@ -2121,68 +2114,71 @@ function determineHighestWRRB(boxscoreData, teamNames, weekNumber) {
   return null;
 }
 
-// Week 7: Hero to Zero - Biggest point drop from Week 6 to Week 7
+// Hero to Zero - Biggest point drop from the prior week to this week (now week 13 - was hard-coded
+// to Week 6 -> Week 7 before the 2026 reorder; fixed to use weekNumber so it works on any week)
 async function determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId) {
   try {
-    // Get Week 6 scores
-    const week6Response = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
+    const prevWeekNumber = weekNumber - 1;
+
+    // Get the prior week's scores
+    const prevWeekResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
       mode: 'cors',
       headers: {
         'Accept': 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
-    
-    const week6Data = await week6Response.json();
-    
-    // Build Week 6 scores by team
-    const week6Scores = {};
-    if (week6Data.schedule) {
-      week6Data.schedule.forEach(matchup => {
-        if (matchup.matchupPeriodId === 6) {
+
+    const prevWeekData = await prevWeekResponse.json();
+
+    // Build the prior week's scores by team
+    const prevWeekScores = {};
+    if (prevWeekData.schedule) {
+      prevWeekData.schedule.forEach(matchup => {
+        if (matchup.matchupPeriodId === prevWeekNumber) {
           const homeScore = matchup.home?.totalPoints || 0;
           const awayScore = matchup.away?.totalPoints || 0;
-          
-          if (matchup.home?.teamId) week6Scores[matchup.home.teamId] = homeScore;
-          if (matchup.away?.teamId) week6Scores[matchup.away.teamId] = awayScore;
+
+          if (matchup.home?.teamId) prevWeekScores[matchup.home.teamId] = homeScore;
+          if (matchup.away?.teamId) prevWeekScores[matchup.away.teamId] = awayScore;
         }
       });
     }
-    
-    // Build Week 7 scores and find biggest drop
+
+    // Build this week's scores and find biggest drop
     let biggestDrop = 0;
     let winningTeam = null;
-    let week6Score = 0;
-    let week7Score = 0;
-    
+    let prevScore = 0;
+    let thisScore = 0;
+
     if (matchupData.schedule) {
       matchupData.schedule.forEach(matchup => {
-        if (matchup.matchupPeriodId === 7) {
+        if (matchup.matchupPeriodId === weekNumber) {
           [matchup.home, matchup.away].forEach(team => {
             const teamId = team.teamId;
-            const week7TeamScore = team.totalPoints || 0;
-            const week6TeamScore = week6Scores[teamId] || 0;
-            
-            // Only count if they scored LESS in Week 7
-            if (week7TeamScore < week6TeamScore) {
-              const drop = week6TeamScore - week7TeamScore;
-              
+            const thisWeekTeamScore = team.totalPoints || 0;
+            const prevWeekTeamScore = prevWeekScores[teamId] || 0;
+
+            // Only count if they scored LESS this week than the prior week
+            if (thisWeekTeamScore < prevWeekTeamScore) {
+              const drop = prevWeekTeamScore - thisWeekTeamScore;
+
               if (drop > biggestDrop) {
                 biggestDrop = drop;
                 winningTeam = teamId;
-                week6Score = week6TeamScore;
-                week7Score = week7TeamScore;
+                prevScore = prevWeekTeamScore;
+                thisScore = thisWeekTeamScore;
               }
             }
           });
         }
       });
     }
-    
+
     if (winningTeam) {
       return {
         teamName: teamNames[winningTeam] || `Team ${winningTeam}`,
-        details: `Dropped ${biggestDrop.toFixed(1)} points (${week6Score.toFixed(1)} to ${week7Score.toFixed(1)})`
+        details: `Dropped ${biggestDrop.toFixed(1)} points (${prevScore.toFixed(1)} to ${thisScore.toFixed(1)})`
       };
     }
     return null;
@@ -2242,7 +2238,7 @@ function determineHighestTE(boxscoreData, teamNames, weekNumber) {
   return null;
 }
 
-// Week 9: MVP
+// Week 2: MVP
 function determineMVP(boxscoreData, teamNames, weekNumber) {
   let highestScore = 0;
   let winningTeam = null;
@@ -2293,7 +2289,7 @@ function determineMVP(boxscoreData, teamNames, weekNumber) {
   return null;
 }
 
-// Week 10: Best Loser - Highest scoring losing team
+// Week 8: Best Loser - Highest scoring losing team
 function determineBestLoser(matchupData, teamNames, weekNumber) {
   let highestLosingScore = 0;
   let winningTeam = null;
@@ -2325,7 +2321,7 @@ function determineBestLoser(matchupData, teamNames, weekNumber) {
   return null;
 }
 
-// Week 11: Bench Warmer - Highest scoring bench player
+// Week 12: Bench Warmer - Highest scoring bench player
 function determineBenchWarmer(boxscoreData, teamNames, weekNumber) {
   let highestScore = 0;
   let winningTeam = null;
@@ -2370,7 +2366,7 @@ function determineBenchWarmer(boxscoreData, teamNames, weekNumber) {
   return null;
 }
 
-// Week 13: Highest Scoring D/ST
+// Week 9: Highest Scoring D/ST
 function determineHighestDST(boxscoreData, teamNames, weekNumber) {
   let highestScore = 0;
   let winningTeam = null;
@@ -2423,53 +2419,9 @@ function determineHighestDST(boxscoreData, teamNames, weekNumber) {
   return null;
 }
 
-function WeeklyEditForm({ item, onSave, onCancel, btnPri, btnSec }) {
-  const [weekLabel, setWeekLabel] = useState(item.weekLabel || "");
-  const [title, setTitle] = useState(item.title || "");
-  const [text, setText] = useState(item.text || "");
-
-  const handleSave = () => {
-    if (!weekLabel.trim()) return alert("Enter a week label");
-    if (!text.trim()) return alert("Enter a description");
-    
-    onSave({
-      weekLabel: weekLabel.trim(),
-      title: title.trim(),
-      text: text.trim(),
-      week: parseInt(String(weekLabel || "").replace(/\D/g, ""), 10) || 0
-    });
-  };
-
-  return (
-    <div>
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
-        <input
-          className="input"
-          placeholder="Week label (e.g., Week 1)"
-          value={weekLabel}
-          onChange={(e) => setWeekLabel(e.target.value)}
-        />
-        <input
-          className="input"
-          placeholder="Title of Challenge"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </div>
-      <textarea
-        className="input"
-        style={{ minHeight: 120, marginBottom: 8 }}
-        placeholder="Describe this week's challenge..."
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <div style={{ textAlign: "right", display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <button className="btn" style={btnSec} onClick={onCancel}>Cancel</button>
-        <button className="btn" style={btnPri} onClick={handleSave}>Save</button>
-      </div>
-    </div>
-  );
-}
+// WeeklyEditForm and WeeklyForm (the old add/edit UI for Weekly Challenges) were removed
+// 2026-08-25 when the challenge list was hardcoded into WEEKLY_CHALLENGES above - see the
+// comment above that constant for why and how to make changes in a future season.
 
 // DUES PAYMENT TRACKER
 
@@ -3309,17 +3261,23 @@ useEffect(() => {
         // Use server-stored roster data
         setTeams(response.rosterData);
       } else if (leagueId && seasonId) {
-        // If no server data and we have credentials, load from ESPN
-        const [teamJson, rosJson, setJson] = await Promise.all([
-          fetchEspnJson({ leagueId, seasonId, view: "mTeam" }),
-          fetchEspnJson({ leagueId, seasonId, view: "mRoster" }),
-          fetchEspnJson({ leagueId, seasonId, view: "mSettings" }),
-        ]);
-        
-        // Rest of the ESPN processing code stays the same...
-        const teamsById = Object.fromEntries((teamJson?.teams || []).map(t => [t.id, teamName(t)]));
-        const slotMap = slotIdToName(setJson?.settings?.rosterSettings?.lineupSlotCounts || {});
-        const items = (rosJson?.teams || []).map(t => {
+        // If no server data and we have credentials, load from ESPN.
+        // Changed 2026-08-25: this used to be 3 separate single-view
+        // requests (mTeam, mRoster, mSettings). ESPN merges every view you
+        // ask for into ONE team object, so asking for them all together in
+        // one request - the same view combo espn_api's own League() class
+        // uses, which is proven to work for older/completed seasons and
+        // not just the current one - returns everything this needs in one
+        // shot, and is also just fewer round trips.
+        const combined = await fetchEspnJson({
+          leagueId, seasonId,
+          view: ["mTeam", "mRoster", "mSettings", "mMatchup", "mStandings"],
+          auth: true
+        });
+
+        const teamsById = Object.fromEntries((combined?.teams || []).map(t => [t.id, teamName(t)]));
+        const slotMap = slotIdToName(combined?.settings?.rosterSettings?.lineupSlotCounts || {});
+        const items = (combined?.teams || []).map(t => {
           const entries = (t.roster?.entries || []).map(e => {
             const p = e.playerPoolEntry?.player;
             const fullName = p?.fullName || "Player";
@@ -4352,6 +4310,282 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
   );
 }
 
+/* =========================
+   HALL OF FAME (added 2026-08-25)
+
+   Shows read-only, past-season data: League Champion, Final Standings,
+   Trophy Case (all weeks), Weekly Challenge winners (2026 season onward
+   only — the site's first year, 2025, has no recorded challenge order, so
+   that section is simply hidden when 2025 is selected), and Rosters.
+
+   IMPORTANT: this has its OWN independent year picker (the "year" state
+   below). It does NOT read or write the global "espn" state that every
+   other page (Rosters/Dues/Transactions/League Settings/etc.) uses, and it
+   never touches League Settings' "Import ESPN Teams" flow either. Picking
+   a year in here can never change what any other page on the site shows —
+   that was the whole point of building it this way instead of reusing the
+   old "change the season in League Settings" approach.
+
+   It reuses the existing TrophyCaseView and Rosters components as-is
+   (they were already written to accept whatever league/season they're
+   given as props, so no changes were needed there), and reuses the same
+   determineWeeklyWinner() / determineOverachiever() / determineBullseye()
+   functions the live Weekly Challenges page uses — just called for a past,
+   already-completed season instead of live-gated by today's date.
+
+   Earliest year (2026-08-25): confirmed via the historical Postgres tables
+   that ESPN has returned league/team data for Blitzzz (226912) back to
+   2015. Full week-by-week matchup/boxscore data (needed for Trophy Case)
+   was only successfully pulled from 2019 onward during that same check —
+   2015-2018 may show Champion & Final Standings fine but an empty Trophy
+   Case / Rosters section if ESPN doesn't have boxscore-level data for
+   those years either. Both sections already fail gracefully (they show a
+   "no data" message instead of erroring) if that happens, so there's no
+   real downside to offering all the way back to 2015 — worth clicking
+   through an old year to see what actually shows up.
+   ========================= */
+const HALL_OF_FAME_FIRST_YEAR = 2015;
+
+function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
+  const currentCalendarYear = new Date().getFullYear();
+  // The current calendar year is left OUT of the picker entirely (2026-08-25,
+  // by Hac's request) - a season in progress has no Champion/Final Standings
+  // to show yet, so offering it just leads to a "not posted yet" message.
+  // It appears automatically once the calendar rolls over to the next year -
+  // fantasy seasons wrap up by mid-to-late December, so in practice this is
+  // only "wrong" for the ~2 weeks between a season finishing and Dec 31, a
+  // small enough gap not to be worth an extra live ESPN check just to detect
+  // "has this season actually finished." (If that gap ever bothers Hac, the
+  // fix would be to check whether ESPN has posted final ranks yet - exactly
+  // the same "hasFinalRanks" check the standings loader below already does -
+  // before deciding whether to list the current year at all.)
+  const mostRecentCompletedYear = currentCalendarYear - 1;
+  const defaultYear = Math.max(HALL_OF_FAME_FIRST_YEAR, mostRecentCompletedYear);
+
+  const [year, setYear] = useState(defaultYear);
+  const [section, setSection] = useState('champion');
+
+  const yearOptions = [];
+  for (let y = mostRecentCompletedYear; y >= HALL_OF_FAME_FIRST_YEAR; y--) yearOptions.push(y);
+
+  const leagueId = config?.espn?.leagueId || "";
+  const seasonId = String(year);
+  const localEspn = { leagueId, seasonId }; // shaped just like the global "espn" state, but local-only
+
+  // ---- Champion / Final Standings ----
+  const [standings, setStandings] = useState([]);
+  const [standingsLoading, setStandingsLoading] = useState(false);
+  const [standingsError, setStandingsError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    if (!leagueId || !seasonId) return;
+    (async () => {
+      setStandingsLoading(true);
+      setStandingsError("");
+      setStandings([]);
+      try {
+        // Requesting the full view combo (see the Rosters component note
+        // above) instead of just "mTeam" alone - a bare mTeam request was
+        // still failing for older completed seasons even with auth: true.
+        const teamJson = await fetchEspnJson({
+          leagueId, seasonId,
+          view: ["mTeam", "mRoster", "mSettings", "mMatchup", "mStandings"],
+          auth: true
+        });
+        const teams = (teamJson?.teams || []).map(t => ({
+          id: t.id,
+          name: teamName(t),
+          finalRank: t.rankCalculatedFinal || null,
+          playoffSeed: t.playoffSeed || null,
+          wins: t.record?.overall?.wins ?? 0,
+          losses: t.record?.overall?.losses ?? 0,
+          ties: t.record?.overall?.ties ?? 0,
+          pointsFor: t.record?.overall?.pointsFor ?? 0,
+          pointsAgainst: t.record?.overall?.pointsAgainst ?? 0,
+        }));
+        const hasFinalRanks = teams.some(t => t.finalRank);
+        teams.sort((a, b) => hasFinalRanks
+          ? (a.finalRank || 999) - (b.finalRank || 999)
+          : (b.wins - a.wins) || (b.pointsFor - a.pointsFor));
+        if (alive) {
+          setStandings(teams);
+          if (!hasFinalRanks && teams.length) {
+            setStandingsError(`ESPN hasn't posted final standings for ${seasonId} yet (the season may still be in progress). Showing current record instead.`);
+          }
+        }
+      } catch (err) {
+        console.error('Hall of Fame standings load error:', err);
+        if (alive) setStandingsError(`Could not load standings for ${seasonId}.`);
+      }
+      if (alive) setStandingsLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [leagueId, seasonId]);
+
+  const champion = standings.find(t => t.finalRank === 1);
+
+  // ---- Weekly Challenge winners (2026 season onward only, see comment above) ----
+  const showChallenges = year >= 2026;
+  const [challengeWinners, setChallengeWinners] = useState({});
+  const [challengesLoading, setChallengesLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    if (!showChallenges || !leagueId || !seasonId) {
+      setChallengeWinners({});
+      return;
+    }
+    (async () => {
+      setChallengesLoading(true);
+      const winners = {};
+      for (let week = 1; week <= 13; week++) {
+        try {
+          let winner = null;
+          if (week === 10) {
+            winner = await determineOverachiever(week, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection);
+          } else if (week === 3) {
+            winner = await determineBullseye(week, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection);
+          } else {
+            winner = await determineWeeklyWinner(week, leagueId, seasonId);
+          }
+          if (winner) winners[week] = winner;
+        } catch (err) {
+          console.error(`Hall of Fame: failed to determine Week ${week} winner for ${seasonId}:`, err);
+        }
+      }
+      if (alive) { setChallengeWinners(winners); setChallengesLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [leagueId, seasonId, showChallenges]);
+
+  const sections = [
+    { id: 'champion', label: '🏆 Champion & Standings' },
+    { id: 'trophies', label: '🎖️ Trophy Case' },
+    ...(showChallenges ? [{ id: 'challenges', label: '🗓️ Weekly Challenges' }] : []),
+    { id: 'rosters', label: '📋 Rosters' },
+  ];
+
+  return (
+    <Section
+      title="🏛️ Hall of Fame"
+      actions={
+        <select
+          className="input"
+          value={year}
+          onChange={(e) => { setYear(Number(e.target.value)); setSection('champion'); }}
+          style={{ width: 130 }}
+        >
+          {yearOptions.map(y => <option key={y} value={y}>{y} Season</option>)}
+        </select>
+      }
+    >
+      {/* Internal sub-navigation, so a viewer can jump between sections easily */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, borderBottom: "1px solid #e2e8f0", paddingBottom: 12 }}>
+        {sections.map(s => (
+          <button
+            key={s.id}
+            className="btn"
+            style={section === s.id ? btnPri : btnSec}
+            onClick={() => setSection(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {section === 'champion' && (
+        <div>
+          {standingsLoading && <p>Loading {seasonId} final standings…</p>}
+          {standingsError && <p style={{ color: "#dc2626" }}>{standingsError}</p>}
+
+          {champion && (
+            <div className="card" style={{ padding: 24, marginBottom: 20, textAlign: "center", background: "#fff8e1", border: "2px solid #ffb612" }}>
+              <div style={{ fontSize: 48 }}>🏆</div>
+              <div style={{ fontSize: 12, letterSpacing: 1, color: "#92400e", fontWeight: "bold" }}>{seasonId} LEAGUE CHAMPION</div>
+              <div style={{ fontSize: 28, fontWeight: "bold", marginTop: 4 }}>{champion.name}</div>
+              <div style={{ marginTop: 8, color: "#334155" }}>
+                {champion.wins}-{champion.losses}{champion.ties ? `-${champion.ties}` : ""} · {champion.pointsFor.toFixed(1)} PF
+              </div>
+            </div>
+          )}
+          {!standingsLoading && !champion && standings.length === 0 && !standingsError && (
+            <p style={{ color: "#64748b" }}>No standings on record for {seasonId} yet.</p>
+          )}
+
+          {standings.length > 0 && (
+            <>
+              <h3>Final Standings</h3>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0" }}>
+                      <th style={{ padding: 8 }}>Rank</th>
+                      <th style={{ padding: 8 }}>Team</th>
+                      <th style={{ padding: 8 }}>Record</th>
+                      <th style={{ padding: 8 }}>Points For</th>
+                      <th style={{ padding: 8 }}>Points Against</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {standings.map((t, i) => (
+                      <tr key={t.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: 8, fontWeight: t.finalRank === 1 ? "bold" : "normal" }}>{t.finalRank || (i + 1)}</td>
+                        <td style={{ padding: 8 }}>{t.finalRank === 1 ? "🏆 " : ""}{t.name}</td>
+                        <td style={{ padding: 8 }}>{t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ""}</td>
+                        <td style={{ padding: 8 }}>{t.pointsFor.toFixed(1)}</td>
+                        <td style={{ padding: 8 }}>{t.pointsAgainst.toFixed(1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {section === 'trophies' && (
+        <TrophyCaseView espn={localEspn} config={config} seasonYear={seasonId} btnPri={btnPri} btnSec={btnSec} />
+      )}
+
+      {section === 'challenges' && showChallenges && (
+        <div>
+          {challengesLoading && <p>Loading {seasonId} weekly challenge winners…</p>}
+          <div className="grid" style={{ gap: 12, marginTop: 12 }}>
+            {WEEKLY_CHALLENGES.map(c => {
+              const winner = challengeWinners[c.week];
+              return (
+                <div key={c.week} className="card" style={{ padding: 16 }}>
+                  <h3 style={{ margin: 0 }}>
+                    Week {c.week}
+                    <span style={{ fontWeight: "bold", color: "#ffb612" }}> — {c.title}</span>
+                  </h3>
+                  <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{c.text}</div>
+                  {winner && (
+                    <div style={{ marginTop: 12, padding: 12, background: "#f0f9ff", borderRadius: 6, border: "1px solid #0ea5e9" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: "18px" }}>🏆</span>
+                        <span style={{ fontWeight: "bold", color: "#0066cc" }}>{winner.teamName}</span>
+                      </div>
+                      {winner.details && <div style={{ marginTop: 4, fontSize: "14px", color: "#334155" }}>{winner.details}</div>}
+                    </div>
+                  )}
+                  {!winner && !challengesLoading && <p style={{ color: "#64748b", marginTop: 8 }}>No winner on record.</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {section === 'rosters' && (
+        <Rosters leagueId={leagueId} seasonId={seasonId} apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />
+      )}
+    </Section>
+  );
+}
+
 function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
 
@@ -4379,11 +4613,16 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 
     try {
       // First get team names
-      const teamsResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mTeam`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      });
-      
+      // Routed through our own server (with auth=1, so it attaches your ESPN
+      // login cookies) instead of hitting ESPN directly from the browser.
+      // Fixed 2026-08-25: a direct, cookie-less browser request like this
+      // one only worked for recent seasons - ESPN returned a 401 for older
+      // completed seasons (found while testing Hall of Fame against 2023).
+      // Also 2026-08-25: a bare view=mTeam was still failing (502) for 2023
+      // even with cookies attached - switched to the full view combo (see
+      // the Rosters component note) that's proven to work for old seasons.
+      const teamsResponse = await fetch(API(`/api/espn?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}&view=mTeam&view=mRoster&view=mSettings&view=mMatchup&view=mStandings&auth=1`));
+
       if (!teamsResponse.ok) throw new Error(`ESPN API error: ${teamsResponse.status}`);
       const teamsData = await teamsResponse.json();
       
@@ -4407,10 +4646,19 @@ for (let weekNum = 1; weekNum <= 14; weekNum++) {
 let __overT = { team: "", delta: -Infinity, actual: 0, proj: 0 };
 let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
 
-        const weekResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${espn.seasonId}/segments/0/leagues/${espn.leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNum}`, {
-          mode: 'cors',
-          headers: { 'Accept': 'application/json' }
-        });
+        // Same server-proxy + auth=1 fix as the team-names fetch above, PLUS
+        // (2026-08-25) also asking for mMatchupScore/mScoreboard alongside the
+        // original mMatchup/mBoxscore. Found by reading the espn_api Python
+        // library's source (the same one behind the working historical-data
+        // import scripts): its box_scores() function - the proven way to get
+        // this same roster/points data for a COMPLETED past season - asks
+        // ESPN for view=mMatchupScore + view=mScoreboard, not mMatchup/
+        // mBoxscore. Requesting all four together is a safe superset: ESPN
+        // merges whatever fields each view contributes into one response, so
+        // this can't remove anything the current season's view was already
+        // providing, only add the data path that (per that library) is the
+        // one actually meant for older, completed seasons.
+        const weekResponse = await fetch(API(`/api/espn?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}&view=mMatchup&view=mBoxscore&view=mMatchupScore&view=mScoreboard&scoringPeriodId=${weekNum}&auth=1`));
 
         if (!weekResponse.ok) continue;
         const weekData = await weekResponse.json();
@@ -6143,25 +6391,27 @@ const sortedRankings = [...rankings].sort((a, b) => {
                   </tbody>
                 </table>
 
-                {/* Mobile grid */}
+                {/* Mobile grid - column count follows however many teams are actually in the
+                    league (finalStandingsOdds[0].positions.length) instead of being fixed at
+                    10, so this stays correct if the league size changes again in the future. */}
                 <div className="final-standings-grid-mobile">
                   {/* Header row */}
-                  <div className="final-standings-header">
-                    <div>1</div>
-                    <div>2</div>
-                    <div>3</div>
-                    <div>4</div>
-                    <div>5</div>
-                    <div>6</div>
-                    <div>7</div>
-                    <div>8</div>
-                    <div>9</div>
-                    <div>10</div>
+                  <div
+                    className="final-standings-header"
+                    style={{ gridTemplateColumns: `repeat(${finalStandingsOdds[0]?.positions?.length || 10}, 1fr)` }}
+                  >
+                    {finalStandingsOdds[0]?.positions.map((_, index) => (
+                      <div key={index}>{index + 1}</div>
+                    ))}
                   </div>
-                  
+
                   {/* Data rows */}
                   {finalStandingsOdds.map(team => (
-                    <div key={team.name} className="final-standings-row">
+                    <div
+                      key={team.name}
+                      className="final-standings-row"
+                      style={{ gridTemplateColumns: `repeat(${team.positions.length || 10}, 1fr)` }}
+                    >
                       <div className="final-standings-row-bg">{team.name}</div>
                       {team.positions.map((pos, index) => (
                         <div 
@@ -6420,74 +6670,8 @@ function parseWeekNumber(weekLabel) {
   return parseInt(String(weekLabel || "").replace(/\D/g, ""), 10) || 0;
 }
 
-function WeeklyForm({ seasonYear, onAdd, btnPri, btnSec }) {
-  const [weekLabel, setWeekLabel] = useState(() => {
-    const now = leagueWeekOf(new Date(), seasonYear).week || 1;
-    return `Week ${now}`;
-  });
-  const [title, setTitle] = useState("");
-  const [text, setText] = useState("");
-
-  useEffect(() => {
-    const now = leagueWeekOf(new Date(), seasonYear).week || 1;
-    setWeekLabel(`Week ${now}`);
-  }, [seasonYear]);
-
-  return (
-    <div className="card" style={{ padding: 16, background: "#f8fafc" }}>
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <input
-          className="input"
-          placeholder="Week label (e.g., Week 1)"
-          value={weekLabel}
-          onChange={(e) => setWeekLabel(e.target.value)}
-        />
-        <input
-          className="input"
-          placeholder="Title of Challenge"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </div>
-
-      <textarea
-        className="input"
-        style={{ minHeight: 120, marginTop: 8 }}
-        placeholder="Describe this week's challenge…"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-
-      <div style={{ textAlign: "right", marginTop: 8 }}>
-        <button
-          className="btn"
-          style={btnPri}
-          onClick={() => {
-            const wk = parseWeekNumber(weekLabel);
-            const cleaned = String(weekLabel || "").trim();
-            if (!cleaned) return alert("Enter a week label (e.g., Week 1)");
-            if (!text.trim()) return alert("Enter a description");
-
-            onAdd({
-              id: Math.random().toString(36).slice(2),
-              weekLabel: cleaned,
-              week: wk,
-              title: title.trim(),
-              text: text.trim(),
-              createdAt: Date.now()
-            });
-
-            setTitle("");
-            setText("");
-            if (wk > 0) setWeekLabel(`Week ${wk + 1}`);
-          }}
-        >
-          Save
-        </button>
-      </div>
-    </div>
-  );
-}
+// WeeklyForm (the old "add a weekly challenge" UI) was removed 2026-08-25 - see the
+// comment above WEEKLY_CHALLENGES near WeeklyView for why and how to make changes now.
 
 function AddMember({ onAdd }) {
   const [name, setName] = useState("");

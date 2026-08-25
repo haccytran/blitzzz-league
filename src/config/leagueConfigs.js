@@ -14,10 +14,10 @@ export const leagueConfigs = {
     },
     espn: {
       leagueId: "226912", // Replace with actual ESPN League ID
-      defaultSeason: "2025"
+      defaultSeason: "2026"
     }
   },
-  
+
   sculpin: {
     id: 'sculpin',
     name: "Sculpin",

@@ -1164,7 +1164,7 @@ body.sculpin-league .trophy-table-desktop td:first-child {
   .trophy-grid-mobile .trophy-row {
     position: relative;
     display: grid;
-    grid-template-columns: repeat(10, 1fr);
+    grid-template-columns: repeat(12, 1fr); /* fallback only - App.jsx now sets this inline to match the actual number of teams */
     gap: 0;
     border-bottom: 1px solid #e5e7eb;
     padding: 8px 0;
@@ -1211,7 +1211,7 @@ body.sculpin-league .trophy-grid-mobile .trophy-row-bg {
   
   .trophy-grid-mobile .trophy-header {
     display: grid;
-    grid-template-columns: repeat(10, 1fr);
+    grid-template-columns: repeat(12, 1fr); /* fallback only - App.jsx now sets this inline to match the actual number of teams */
     gap: 0;
     border-bottom: 2px solid #e5e7eb;
     padding: 8px 0;
@@ -1479,7 +1479,7 @@ body.sculpin-league .luck-grid-mobile .luck-row-bg {
   .final-standings-grid-mobile .final-standings-row {
     position: relative;
     display: grid;
-    grid-template-columns: repeat(10, 1fr);
+    grid-template-columns: repeat(12, 1fr); /* fallback only - App.jsx now sets this inline to match the actual number of teams */
     gap: 0;
     border-bottom: 1px solid #e5e7eb;
     padding: 8px 0;
@@ -1513,7 +1513,7 @@ body.sculpin-league .luck-grid-mobile .luck-row-bg {
   
   .final-standings-grid-mobile .final-standings-header {
     display: grid;
-    grid-template-columns: repeat(10, 1fr);
+    grid-template-columns: repeat(12, 1fr); /* fallback only - App.jsx now sets this inline to match the actual number of teams */
     gap: 0;
     border-bottom: 2px solid #e5e7eb;
     padding: 8px 0;

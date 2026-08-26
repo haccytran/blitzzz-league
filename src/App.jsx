@@ -127,7 +127,19 @@ async function loadEspnWeekAnchor(leagueId, seasonId){
     if (!res.ok) return;
     const data = await res.json();
     const currentMatchupPeriod = data?.status?.currentMatchupPeriod;
-    if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0) {
+    const scoringPeriodId = data?.scoringPeriodId;
+    // 2026-08-26: only trust this as a real anchor once the season has
+    // actually started. ESPN reports currentMatchupPeriod=1 for the WHOLE
+    // pre-season gap (confirmed by directly checking the still-not-started
+    // 2026 season), so setting the anchor during that gap would "anchor"
+    // week 1 to whatever week we happened to check - a moving target that
+    // drifts forward every time this refreshes, not a stable real date.
+    // scoringPeriodId, on the other hand, stays 0 for the entire pre-season
+    // gap and only becomes real once games are actually being played -
+    // that's the signal that currentMatchupPeriod is finally meaningful.
+    // Until then, this intentionally leaves the old date-estimate fallback
+    // in place (see leagueWeekOf below) rather than anchoring on a guess.
+    if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0 && scoringPeriodId > 0) {
       __espnWeekAnchor[seasonId] = {
         week: currentMatchupPeriod,
         start: startOfLeagueWeekPT(new Date()),
@@ -459,9 +471,21 @@ useEffect(() => {
 async function loadDisplaySeason() {
   try {
     console.log('Loading display season from server...');
-    const response = await fetch(API('/api/report/default-season'));
+    // 2026-08-26: this was reading `response.season` straight off the raw
+    // fetch() Response object, which never has a `.season` property (that
+    // lives in the response BODY, only available after calling .json()).
+    // So serverSeason was ALWAYS undefined here, and this always silently
+    // fell through to DEFAULT_SEASON below - the hardcoded VITE_ESPN_SEASON
+    // build-time value (2025) - no matter what was actually saved via
+    // "Update Official Snapshot". This is why the site kept snapping back
+    // to 2025 on every fresh page load (Hac noticed it after local
+    // restarts, but the same thing would happen for any visitor's very
+    // first page load too - restarting just forces a full reload, which is
+    // what actually triggers this code path). Fixed by awaiting .json().
+    const res = await fetch(API('/api/report/default-season'));
+    const response = await res.json();
     console.log('Server default season response:', response);
-    
+
     // More robust season extraction
     let serverSeason = response?.season || response?.defaultSeason;
     
@@ -955,6 +979,24 @@ async function loadOfficialReport(silent=false){
       const t = await r.text().catch(()=> "");
       throw new Error(t || "Server rejected update");
     }
+
+    // 2026-08-26: also make this the season everyone else's browser loads
+    // by default. Without this, only the browser that clicked this button
+    // ever sees the new season - everyone else (a phone, a teammate, a
+    // fresh visit) still gets whatever season was set last, since that's
+    // read from the server on page load, not from this browser's own
+    // League Settings. Wrapped so that if this part fails, the snapshot
+    // that was just successfully built still isn't lost.
+    try {
+      await fetch(API('/api/report/set-display-season'), {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "x-admin": config.adminPassword },
+        body: JSON.stringify({ seasonId: espn.seasonId })
+      });
+    } catch (displaySeasonErr) {
+      console.error('Failed to set display season (snapshot itself still succeeded):', displaySeasonErr);
+    }
+
     await loadOfficialReport(true);
     setSyncPct(100); setSyncMsg("Snapshot ready");
   } catch(e){
@@ -2691,7 +2733,7 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
 {isAdmin && (
             <button className="btn" style={btnSec} onClick={() => {
               const rows = [["Week", "Range", "Team", "Adds", "Owes"]];
-              report.weekRows.forEach(w => w.entries.forEach(e => rows.push([w.week, w.range, e.name, e.count, `${e.owes}`])));
+              report.weekRows.forEach(w => w.entries.forEach(e => rows.push([w.week === 0 ? "Preseason" : w.week, w.range, e.name, e.count, `${e.owes}`])));
               downloadCSV("dues_by_week.csv", rows);
             }}>Download CSV (by week)</button>
 )}
@@ -2746,7 +2788,7 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
     
     return (
       <div key={w.week} style={{ marginBottom: 12 }}>
-        <div style={{ fontWeight: 600, margin: "6px 0" }}>Week {w.week} - {w.range.split(' (')[0].replace(/—/g, '→')} (Wednesday→Tuesday)</div>
+        <div style={{ fontWeight: 600, margin: "6px 0" }}>{w.week === 0 ? 'Preseason' : `Week ${w.week}`} - {w.range.split(' (')[0].replace(/—/g, '→')}{w.week > 0 ? ' (Wednesday→Tuesday)' : ''}</div>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -3254,7 +3296,13 @@ function DraftsView({ espn, btnPri, btnSec }) {
       {loading && <p>Loading draft data...</p>}
       {error && <p style={{ color: "#dc2626" }}>{error}</p>}
       
-      {!loading && !error && draftData && (
+      {!loading && !error && draftData && teamNames.length === 0 && (
+        <p style={{ color: "#64748b" }}>
+          No draft picks yet — this season's draft hasn't happened. Check back after draft day!
+        </p>
+      )}
+
+      {!loading && !error && draftData && teamNames.length > 0 && (
         <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
           {teamNames.map(teamName => {
             const picks = draftData.draftsByTeam[teamName];
@@ -4010,9 +4058,15 @@ function WaiversView({
     
     const weekKey = weekKeyFrom(selectedWeek);
     
-// Filter adds from the current week using server's Wed→Tue calculation
+// Filter adds from the current week using server's Wed→Tue calculation.
+// Week 0 (move.week === 0) is the "Preseason" bucket - adds made after
+// the draft but before Week 1 officially kicks off. Those are NOT free;
+// they count toward the same "2 free, then $5 each" rule, just tracked
+// separately from Week 1+. So week 0 is allowed through here same as
+// any other week - selecting "Preseason" in the week selector (which is
+// selectedWeek.week === 0) will correctly show/count those adds.
 const waiversThisWeek = espnReport.rawMoves.filter(move => {
-  if (move.action !== "ADD" || move.week <= 0) return false;
+  if (move.action !== "ADD") return false;
   // Use the server's week calculation (already stored in move.week)
   // and compare against selected week
   const selectedServerWeek = selectedWeek.week;
@@ -4062,7 +4116,7 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
 <div>
   <h3 style={{margin: 0, marginBottom: 2}}>Weekly Adds Counter</h3>
   <div style={{fontSize: 14, color: "#64748b"}}>
-  Week <span className="week-number-highlight">{selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'}</span>
+  Week <span className="week-number-highlight">{(__espnWeekAnchor[seasonYear] && selectedWeek.week > 0) ? selectedWeek.week : 'Pre-season'}</span>
 </div>
 </div>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
@@ -4097,12 +4151,12 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
         <div className="card" style={{padding:16}}>
           <div style={{marginBottom:8, textAlign:"center"}}>
   <h3 style={{marginBottom:8}}>
-    Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'} Activity (Wed→Tue)
+    Week {(__espnWeekAnchor[seasonYear] && selectedWeek.week > 0) ? selectedWeek.week : 'Pre-season'} Activity (Wed→Tue)
   </h3>
   
 </div>
 
-          <h4>Week {selectedWeek.week > 0 ? selectedWeek.week : 'Pre-season'} Adds</h4>
+          <h4>Week {(__espnWeekAnchor[seasonYear] && selectedWeek.week > 0) ? selectedWeek.week : 'Pre-season'} Adds</h4>
           <ul style={{listStyle:"none",padding:0,margin:0}}>
             {waiversThisWeek.length > 0 ? waiversThisWeek
   .sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -7129,7 +7183,11 @@ function WeekSelector({ selectedWeek, setSelectedWeek, seasonYear, btnPri, btnSe
     setSelectedWeek(w.week > 0 ? w : anchor);
   };
   
-  const label = selectedWeek.week > 0 ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
+  // Only call it "Week N" once ESPN has confirmed the season actually
+  // started (see loadEspnWeekAnchor near the top of this file) - otherwise
+  // it's still preseason, whatever the fallback date estimate says.
+  const seasonStarted = !!__espnWeekAnchor[seasonYear];
+  const label = (seasonStarted && selectedWeek.week > 0) ? `Week ${selectedWeek.week} (Wed→Tue)` : `Preseason (Wed→Tue)`;
   
   return (
   <div className="week-navigation" style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>

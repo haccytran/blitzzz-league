@@ -507,7 +507,15 @@ app.get("/api/draft", async (req, res) => {
       teamId: pick.teamId,
       playerId: pick.playerId || pick.player?.id,
       playerName: pick.player?.fullName || null
-    })).filter(p => p.playerId && p.teamId);
+    // 2026-08-26 (corrected): before the draft actually happens, ESPN still
+    // returns the full round-by-round pick ORDER (real team/round/pick
+    // number), but every not-yet-made pick carries a placeholder playerId
+    // of -1. The "Team -15999 D/ST" text you'd otherwise see isn't the raw
+    // ID - it's what dstName() below produces when it runs -1 through the
+    // "-16000 minus proTeamId" formula (Math.abs(-1) - 16000 = -15999).
+    // Filtering the real placeholder value (-1) here so this only shows
+    // picks that have actually happened.
+    })).filter(p => p.playerId && p.playerId !== -1 && p.teamId);
 
     // Collect all unique player IDs that need names
     const needNames = rawPicks
@@ -1917,7 +1925,9 @@ async function fetchDraftData({ leagueId, seasonId, req, onProgress }) {
       pickNumber: pick.pickNumber || pick.overallPickNumber,
       round: pick.roundId,
       executionDate: pick.date || draftJson?.draftDetail?.draftSettings?.date
-    })).filter(p => p.playerId && p.teamId);
+    // Same pre-draft placeholder exclusion as the /api/draft route above
+    // (corrected: the real placeholder value is -1, not -15999).
+    })).filter(p => p.playerId && p.playerId !== -1 && p.teamId);
     
     console.log(`[DEBUG] Found ${picks.length} draft picks`);
     return picks;
@@ -2758,7 +2768,18 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   try {
     settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: false });
     const currentMatchupPeriod = settingsData?.status?.currentMatchupPeriod;
-    if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0) {
+    const scoringPeriodId = settingsData?.scoringPeriodId;
+    // 2026-08-26: only trust this as a real anchor once the season has
+    // actually started - ESPN reports currentMatchupPeriod=1 for the WHOLE
+    // pre-season gap (confirmed against the still-not-started 2026 season),
+    // so anchoring during that gap would tie "week 1" to whatever week we
+    // happened to check, drifting forward every time this refreshes rather
+    // than a stable real date. scoringPeriodId stays 0 for the entire
+    // pre-season gap and only goes positive once games are actually being
+    // played - that's the signal currentMatchupPeriod has become meaningful.
+    // Until then this deliberately leaves the old date-estimate fallback in
+    // place (see effectiveWeek1Start above).
+    if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0 && scoringPeriodId > 0) {
       __serverWeekAnchor[seasonId] = {
         week: currentMatchupPeriod,
         start: startOfLeagueWeek(new Date()),
@@ -2946,9 +2967,18 @@ if (regSeasonWeeks) {
   playoffWeeks = [regSeasonWeeks + 1, regSeasonWeeks + 2, regSeasonWeeks + 3];
 }
 
+// 2026-08-26: week 0 is the "preseason" bucket - every ADD that happened
+// after the draft but before ESPN's real Week 1 kickoff (weekBucket()
+// clamps any date before the anchor to week 0). This USED to be skipped
+// entirely here ("week <= 0 -> continue"), which silently treated all
+// preseason adds as free/uncounted. Per league rule, preseason adds are
+// NOT free - they get the same "2 free, then $5 each" treatment as any
+// other week, just tallied in their own bucket instead of being merged
+// into Week 1. So week 0 now flows through this same counting loop like
+// any other week.
 const perWeek = new Map();
 for (const r of rawMoves) {
-  if (r.action !== "ADD" || r.week <= 0) continue;
+  if (r.action !== "ADD") continue;
   if (!perWeek.has(r.week)) perWeek.set(r.week, new Map());
   const m = perWeek.get(r.week);
   m.set(r.team, (m.get(r.team) || 0) + 1);
@@ -2958,7 +2988,10 @@ const weekRows = [];
 const totals = new Map();
 const rangeByWeek = {};
 for (const r of rawMoves) {
-  if (r.week > 0 && !rangeByWeek[r.week]) rangeByWeek[r.week] = r.range;
+  // Week 0 doesn't have a real Wed-Tue calendar range (it's "everything
+  // before kickoff"), so it gets a plain label instead of the computed
+  // date range, which would otherwise show a misleading single week.
+  if (!rangeByWeek[r.week]) rangeByWeek[r.week] = r.week === 0 ? "Preseason (before Week 1 kickoff)" : r.range;
 }
 
 for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
@@ -3045,7 +3078,16 @@ app.post("/api/report/set-display-season", requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Season ID required" });
     }
 
-        
+    // 2026-08-26: this route used to accept the request and say "success"
+    // without actually saving anything anywhere - so it never changed what
+    // GET /api/report/default-season returns, which is what every visitor's
+    // browser reads on page load to decide which season to show. Found
+    // because Hac updated his own browser to 2026 but his phone (a fresh
+    // page load) still showed 2025. This is the fix: actually persist it,
+    // using the same storage (database if configured, otherwise a file)
+    // every other read of current_display_season.json already uses.
+    await writeJson("current_display_season.json", { season: String(seasonId) });
+
     res.json({ success: true, defaultSeason: seasonId });
   } catch (error) {
     console.error('Failed to set display season:', error);
@@ -3850,7 +3892,10 @@ async function runAutoRefreshForLeague(leagueConfig) {
       // this cycle runs every few hours, so it's a good place to keep the
       // "what week is it" answer fresh without any extra ESPN requests.
       const refreshCurrentMatchupPeriod = setJson?.status?.currentMatchupPeriod;
-      if (typeof refreshCurrentMatchupPeriod === "number" && refreshCurrentMatchupPeriod > 0) {
+      const refreshScoringPeriodId = setJson?.scoringPeriodId;
+      // Same pre-season gate as buildOfficialReport above - don't anchor
+      // until the season has actually started (scoringPeriodId > 0).
+      if (typeof refreshCurrentMatchupPeriod === "number" && refreshCurrentMatchupPeriod > 0 && refreshScoringPeriodId > 0) {
         __serverWeekAnchor[seasonId] = {
           week: refreshCurrentMatchupPeriod,
           start: startOfLeagueWeek(new Date()),

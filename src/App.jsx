@@ -338,12 +338,38 @@ const VALID_TABS = [
   "announcements","hoodtrophies","halloffame","activity","weekly","highestscorer","waivers","dues",
   "transactions","drafts","rosters","powerrankings","nerddata","settings","trading","paydues","polls"
 ];
+
+// 2026-08-26: homepage auto-routing. When someone just types the domain
+// name (no #hash at all), the site used to always default to Trophy Case.
+// Hac wants that to depend on where the season actually is: Hall of Fame
+// during the preseason AND all of Week 1 (Trophy Case wouldn't have
+// anything from the new season to show until Week 1's games are actually
+// final), then Trophy Case from Week 2 onward. This can't wait for ESPN's
+// real week-anchor answer (that's an async fetch - see loadEspnWeekAnchor
+// - and this needs a same-render guess), so it uses the synchronous
+// date-estimate fallback first (leagueWeekOf already falls back to this
+// automatically when no anchor is cached yet) and gets corrected below,
+// in LeagueHub, once the real answer loads.
+const homepageDefaultTab = () => {
+  const guessedWeek = leagueWeekOf(new Date(), new Date().getFullYear()).week;
+  return guessedWeek >= 2 ? "hoodtrophies" : "halloffame";
+};
+
   const initialTabFromHash = () => {
   const h = (window.location.hash || "").replace("#","").trim();
-  return VALID_TABS.includes(h) ? h : "hoodtrophies";
+  return VALID_TABS.includes(h) ? h : homepageDefaultTab();
 };
 
   const [active, setActive] = useState(initialTabFromHash);
+
+  // Remembers whether this was a bare "typed the domain name" landing (no
+  // explicit #hash) - only that case should ever get auto-routed between
+  // Hall of Fame and Trophy Case. Anyone who followed or bookmarked a
+  // specific #hash keeps landing exactly where they asked to go, and this
+  // never touches it. Captured once, on mount.
+  const wasBareLandingRef = useRef(
+    !VALID_TABS.includes((window.location.hash || "").replace("#","").trim())
+  );
 
     useEffect(() => {
   const onHash = () => {
@@ -565,7 +591,19 @@ useEffect(()=>{ setSelectedWeek(leagueWeekOf(new Date(), seasonYear)); }, [seaso
 useEffect(() => {
   if (!espn.leagueId || !espn.seasonId) return;
   loadEspnWeekAnchor(espn.leagueId, espn.seasonId).then(() => {
-    setSelectedWeek(leagueWeekOf(new Date(), seasonYear));
+    const w = leagueWeekOf(new Date(), seasonYear);
+    setSelectedWeek(w);
+
+    // Homepage auto-routing (see homepageDefaultTab/wasBareLandingRef
+    // above): now that ESPN's real week-anchor answer has loaded, correct
+    // the initial synchronous guess if needed. Only applies to a bare
+    // "typed the domain name" landing, and only if the visitor is still
+    // sitting on one of the two auto-routed tabs (hasn't since clicked
+    // somewhere else themselves, which this must never override).
+    if (wasBareLandingRef.current) {
+      const correctDefault = w.week >= 2 ? "hoodtrophies" : "halloffame";
+      setActive(prev => (prev === "halloffame" || prev === "hoodtrophies") ? correctDefault : prev);
+    }
   });
 }, [espn.leagueId, espn.seasonId]);
 

@@ -3836,21 +3836,39 @@ let consecutiveFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
 // Determine refresh interval based on time of year
+// 2026-09-07: bumped from 3hr/12hr to 30min/3hr now that a single cycle
+// pulls far less ESPN data than it used to (see effectiveMaxSp in
+// buildOfficialReport, and the skip-if-already-captured check in the
+// weekly-snapshot loop above) - both of those savings scale with how often
+// this runs, so a more aggressive cadence costs much less than it would
+// have before those fixes. Recalculated fresh every cycle (see
+// startAutoRefresh below), so this takes effect immediately, no redeploy
+// needed if it's tuned again later.
 function getSeasonAwareInterval() {
   const month = new Date().getMonth(); // 0-11
-  
+
 // September - January: In-season (more frequent)
   if (month >= 8 || month <= 0) {
-    return 3 * 60 * 60 * 1000; // 3 hours during season
+    return 30 * 60 * 1000; // 30 minutes during season
   }
-  
+
 // February - August: Off-season (less frequent)
-  return 12 * 60 * 60 * 1000; // 12 hours off-season
+  return 3 * 60 * 60 * 1000; // 3 hours off-season
 }
 
-const BASE_REFRESH_INTERVAL = getSeasonAwareInterval();
-
-
+// 2026-09-07: this used to be calculated ONCE here, when the server process
+// starts, then reused for the entire lifetime of that process (see the old
+// setInterval(runCycle, BASE_REFRESH_INTERVAL) below). That was fine when
+// the server restarted often (Render spinning it down and back up), since
+// each restart re-ran this and picked up the current month - but now that
+// the keep-alive ping (see .github/workflows/keep-alive.yml) keeps the
+// server running for weeks or months at a stretch, a server that happened
+// to start in-season could keep refreshing every 3 hours straight through
+// the off-season, or vice versa, until the next actual deploy. Removed the
+// one-time constant - startAutoRefresh() below now calls
+// getSeasonAwareInterval() fresh every single cycle instead, so it adjusts
+// itself automatically the moment the calendar crosses the
+// September/February boundaries, no redeploy required.
 
 
 // Define which leagues the auto-refresh cycle pulls from ESPN in the
@@ -4067,8 +4085,26 @@ if (slotId === 20) { // Bench
 const now = new Date();
 const currentWeekNum = leagueWeekOf(now, seasonId).week || 0;
 
+// 2026-09-07: this used to unconditionally re-fetch EVERY week from 1
+// through the current week from ESPN on every single refresh cycle - so by
+// midseason, a routine 3-hour refresh would re-pull full matchup/boxscore/
+// roster data for a dozen-plus already-finished weeks that can never change
+// again, every single time, forever. Only the current (still in-progress,
+// still-updating) week actually needs a fresh ESPN pull each cycle - once a
+// past week is captured, it's done. Skip re-fetching any past week that
+// already has a stored snapshot; still fetch the current week every cycle
+// (its scores are still live), and still fetch any past week that's somehow
+// missing one (e.g. the very first refresh after a gap, or a week that
+// failed to capture last time).
 for (let week = 1; week <= currentWeekNum; week++) {
   try {
+    if (week < currentWeekNum) {
+      const existing = await getWeeklySnapshot(leagueConfig.espnId, seasonId, week);
+      if (existing) {
+        logRefresh(`Week ${week} snapshot for ${leagueConfig.id} already captured - skipping re-fetch`);
+        continue;
+      }
+    }
     await captureWeeklySnapshot({
       leagueId: leagueConfig.espnId,
       seasonId,
@@ -4188,43 +4224,54 @@ async function runAutoRefresh() {
 // Start auto-refresh cycle with enhanced error handling
 function startAutoRefresh() {
   if (autoRefreshInterval) {
-    clearInterval(autoRefreshInterval);
-    logRefresh('Cleared existing refresh interval');
+    clearTimeout(autoRefreshInterval);
+    logRefresh('Cleared existing refresh timer');
   }
-  
-  logRefresh('Starting enhanced 10-minute refresh cycle');
-  
+
+  logRefresh('Starting auto-refresh cycle (season-aware interval, recalculated fresh every cycle)');
+
   const runCycle = async () => {
     try {
       await runAutoRefresh();
-      
-      // Adjust interval based on failure rate
-      let nextInterval = BASE_REFRESH_INTERVAL;
-      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        nextInterval = BASE_REFRESH_INTERVAL * 2; // Double interval after too many failures
-        logRefresh(`Increasing refresh interval to ${nextInterval/60000} minutes due to consecutive failures`);
-      }
-      
     } catch (error) {
       logRefresh(`Cycle failed with unhandled error: ${error.message}`, 'error');
       consecutiveFailures++;
+    } finally {
+      // 2026-09-07: this used to run on a fixed setInterval tick, so the
+      // 3-hour-in-season / 12-hour-off-season choice was locked in once at
+      // server startup and never revisited for the life of that process -
+      // fine when Render restarted the process often, but the keep-alive
+      // ping can now keep it running for months straight, so a process that
+      // happened to start in-season could keep refreshing every 3 hours
+      // clear through the off-season (or vice versa) until the next deploy.
+      // Recomputing getSeasonAwareInterval() here, fresh before scheduling
+      // each next run, means it adjusts itself the moment the calendar
+      // crosses the September/February boundary - no redeploy needed. This
+      // also makes the "back off after repeated failures" doubling below
+      // actually take effect for the first time - it used to just compute a
+      // number and never use it, since the old fixed setInterval couldn't
+      // change its own tick rate once started.
+      let nextInterval = getSeasonAwareInterval();
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        nextInterval *= 2;
+        logRefresh(`Increasing refresh interval to ${nextInterval / 60000} minutes due to consecutive failures`);
+      }
+      autoRefreshInterval = setTimeout(runCycle, nextInterval);
     }
   };
-  
-  // Run first cycle after 2 minutes instead of immediately
-  setTimeout(() => {
+
+  // Run first cycle after 2 minutes instead of immediately; runCycle's own
+  // finally-block above takes over scheduling every cycle after this one.
+  autoRefreshInterval = setTimeout(() => {
     logRefresh('Running initial refresh cycle');
     runCycle();
   }, 120000);
-  
-  // Set up interval
-  autoRefreshInterval = setInterval(runCycle, BASE_REFRESH_INTERVAL);
-  
+
   // Enhanced process handlers
   const handleExit = (signal) => {
     logRefresh(`Received ${signal}, cleaning up auto-refresh`);
     if (autoRefreshInterval) {
-      clearInterval(autoRefreshInterval);
+      clearTimeout(autoRefreshInterval);
       autoRefreshInterval = null;
     }
     if (signal !== 'SIGTERM') {
@@ -4260,11 +4307,11 @@ function startAutoRefresh() {
 
 // Enhanced status endpoint
 app.get("/api/auto-refresh/status", (req, res) => {
-  res.json({ 
-    status: "running", 
+  res.json({
+    status: "running",
     interval: autoRefreshInterval ? "active" : "inactive",
     timestamp: new Date().toISOString(),
-    nextRun: `Every ${BASE_REFRESH_INTERVAL / (60 * 1000)} minutes`,  // Dynamic based on season
+    nextRun: `Every ${getSeasonAwareInterval() / (60 * 1000)} minutes`,  // Recalculated live, not fixed at server startup
     isRefreshing: isRefreshing,
     lastRefreshAttempt: lastRefreshAttempt ? new Date(lastRefreshAttempt).toISOString() : null,
     consecutiveFailures: consecutiveFailures,

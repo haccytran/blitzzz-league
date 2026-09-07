@@ -1,0 +1,25 @@
+name: Keep Render Services Awake
+
+# Pings both live Render services every 10 minutes, 24/7, so neither one
+# ever sits idle long enough (Render's free tier spins a service down
+# after ~15 minutes with no incoming traffic) to trigger the "waking up"
+# cold-start screen for a visitor.
+#
+# To change anything here later: edit this file and push to main like any
+# other change - GitHub runs it on its own schedule, nothing else needs
+# to be running for it to work.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {} # lets you trigger a one-off run from the repo's Actions tab, for testing
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping main site (blitzzz-league)
+        run: curl -sS -m 90 https://blitzzz-league.onrender.com/api/health || echo "Main site ping failed or timed out - not treated as a workflow failure"
+
+      - name: Ping stats service (Python)
+        run: curl -sS -m 90 https://python-1e1g.onrender.com/health || echo "Stats service ping failed or timed out - not treated as a workflow failure"

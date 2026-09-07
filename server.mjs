@@ -2765,10 +2765,32 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   // not after. Reused again below for the playoff-weeks calculation, so
   // this doesn't cost an extra ESPN request.
   let settingsData = null;
+  // 2026-09-07: fetchSeasonMovesAllSources/fetchRosterSeries below used to
+  // always run with maxSp:25 (every one of a full 25-week season), no matter
+  // how far the season has actually progressed - meaning every refresh (this
+  // runs both from the automatic background job every 3-12 hours AND every
+  // manual "Update Official Snapshot" click) re-pulled ESPN transaction and
+  // roster data for weeks that haven't happened yet, every single time.
+  // Render bills for outbound calls this server makes to third-party APIs
+  // like ESPN's (confirmed via Render's own Aug 2025 bandwidth-pricing
+  // change), so this was real, needless, recurring traffic - most
+  // dramatically right now in preseason/Week 1, where at most 1-2 scoring
+  // periods have any real data to return, not 25. effectiveMaxSp below caps
+  // the loop to ESPN's own reported current week (+1 week of buffer) instead,
+  // and falls back to the old always-safe 25 if that signal isn't available
+  // for any reason. Deliberately independent of the scoringPeriodId-gated
+  // anchor logic just below (that gate is only about when to trust "current
+  // week" for real-money fee bucketing) - a future scoring period can't have
+  // any transactions yet regardless of whether the season has "really"
+  // started, so it's always safe to skip fetching it.
+  let effectiveMaxSp = 25;
   try {
     settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: false });
     const currentMatchupPeriod = settingsData?.status?.currentMatchupPeriod;
     const scoringPeriodId = settingsData?.scoringPeriodId;
+    if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0) {
+      effectiveMaxSp = Math.min(25, currentMatchupPeriod + 1);
+    }
     // 2026-08-26: only trust this as a real anchor once the season has
     // actually started - ESPN reports currentMatchupPeriod=1 for the WHOLE
     // pre-season gap (confirmed against the still-not-started 2026 season),
@@ -2795,13 +2817,13 @@ console.log('[DEBUG] Team ID to Name mapping:', idToName);
 
 // Get draft data for baseline
 const draftPicks = await fetchDraftData({ leagueId, seasonId, req });
-  const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp:25 });
+  const all = await fetchSeasonMovesAllSources({ leagueId, seasonId, req, maxSp: effectiveMaxSp });
   console.log(`[DEBUG] Total moves extracted from all sources: ${all.length}`);
   console.log(`[DEBUG] Sample moves:`, all.slice(0, 3));
   
 
 console.log('[DEBUG] About to build roster series');
-  const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp:25 });
+  const series = await fetchRosterSeries({ leagueId, seasonId, req, maxSp: effectiveMaxSp });
 console.log('[DEBUG] Roster building completed:', {
   rosterExists: !!series.roster,
   rosterLength: series.roster?.length || 0,
@@ -3207,20 +3229,22 @@ if (!validPasswords.includes(adminHeader)) {
   const jobId = (req.query?.jobId || `job_${Date.now()}`);
   
   try {
-    setProgress(jobId, 5, "Fetching teams…");
-    await espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false });
-    
-    await fetchSeasonMovesAllSources({
-      leagueId, seasonId, req, maxSp: 25,
-      onProgress: (sp, max, msg) => setProgress(jobId, 10 + Math.round((sp / max) * 45), `${msg} (${sp}/${max})`)
-    });
-    
-    await fetchRosterSeries({
-      leagueId, seasonId, req, maxSp: 25,
-      onProgress: (sp, max, msg) => setProgress(jobId, 55 + Math.round((sp / max) * 27), `${msg} (${sp}/${max})`)
-    });
-    
-    setProgress(jobId, 92, "Computing official totals…");
+    // 2026-09-07: this used to fetch the ENTIRE season's ESPN transaction and
+    // roster history right here (mTeam, then a full fetchSeasonMovesAllSources
+    // + fetchRosterSeries pass) purely to animate this progress bar with
+    // real sp/max percentages - then throw all of it away and fetch the exact
+    // same data again inside buildOfficialReport() below, which is the only
+    // place any of it actually got used. That doubled every manual "Update
+    // Official Snapshot" click's ESPN API traffic (and roughly doubled how
+    // long the click took, between the real network calls and the
+    // 120-240ms sleep between each of up to 25 scoring periods, twice).
+    // Removed the throwaway pre-fetch; buildOfficialReport() does the one
+    // real fetch now (and, as of the same date, caps it to the current week
+    // instead of always 25 - see the comment above effectiveMaxSp in that
+    // function), and this just shows coarser progress around that single
+    // real pass instead of a live per-week percentage.
+    setProgress(jobId, 10, "Fetching ESPN data (transactions, rosters)…");
+    setProgress(jobId, 60, "Validating transactions…");
     const report = await buildOfficialReport({ leagueId, seasonId, req });
     const snapshot = { seasonId, leagueId, ...report };
     

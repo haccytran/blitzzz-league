@@ -2019,20 +2019,31 @@ async function validateTransactions(transactions, series, draftPicks, seasonYear
   let processLosers = 0;
   
   for (const rec of txPairs) {
-    // Always keep EXECUTE transactions (Free Agents)
-    if (rec.method === "EXECUTE") {
-      kept.push(rec);
-      continue;
-    }
-    
     // Always keep standalone drops
     if (rec.drop && !rec.add) {
       kept.push(rec);
       continue;
     }
-    
+
     // === WAIVER VALIDATION LOGIC (episode-aware) ===
-if (rec.method === "PROCESS" && rec.add) {
+    // Fixed 2026-09-09: this used to only run for rec.method === "PROCESS"
+    // (ESPN-labeled waivers) - any add ESPN/our own method-guessing labeled
+    // "EXECUTE" (free agent) was kept unconditionally with zero roster
+    // verification, on the assumption that a free-agent add is always
+    // instant. That assumption broke a real case: Hac placed a $0 FAAB bid
+    // on a free agent (Jordyn Tyson) that was still sitting unprocessed in
+    // ESPN's queue - ESPN's own Recent Activity page confirmed nothing had
+    // happened yet - but enhancedInferMethod's fallback (nothing else
+    // matched) defaulted it to "EXECUTE", so it sailed through here as if
+    // already on the roster, and showed up on the site as a done deal.
+    // Now EXECUTE adds get the exact same roster-verified check PROCESS
+    // adds already did - if the player's actually on the team's roster (or
+    // provably was, via an intervening drop), it's kept exactly as before;
+    // if not, it's correctly treated as not-yet-real instead of trusted
+    // blindly. This changes nothing for a genuinely-completed free-agent
+    // add (it'll still show up on the roster and pass), it only stops
+    // still-pending ones from being displayed as done.
+    if ((rec.method === "PROCESS" || rec.method === "EXECUTE") && rec.add) {
   // Check for explicit failure status
   if (rec.originalTransaction?.statusType === "ROSTER_UPDATE_FAILED" ||
       rec.originalTransaction?.statusType === "FAILED" ||
@@ -2110,7 +2121,7 @@ if (rec.method === "PROCESS" && rec.add) {
     kept.push(rec);
   }
   
-  console.log(`[DEBUG] Waiver processing: ${processWinners} winners, ${processLosers} losers filtered out`);
+  console.log(`[DEBUG] Add roster-verification: ${processWinners} confirmed, ${processLosers} not-yet-real filtered out (waivers + free agents)`);
   
   // Expand back to individual transactions
   const finalTransactions = [];
@@ -2601,7 +2612,7 @@ async function fetchRosterSeries({ leagueId, seasonId, req, maxSp=25, onProgress
     let byTeam = {};
     
     try {
-      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:false });
+      const r = await espnFetch({ leagueId, seasonId, view:"mRoster", scoringPeriodId: sp, req, requireCookie:true });
       for (const t of (r?.teams || [])) {
         const set = new Set();
         for (const e of (t.roster?.entries || [])) {
@@ -2754,7 +2765,14 @@ async function buildPlayerMap({ leagueId, seasonId, req, ids, maxSp=25, onProgre
 //  Uses validated transactions for dues
 
 async function buildOfficialReport({ leagueId, seasonId, req }){
-  const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:false });
+  // Fixed 2026-09-08: this was requireCookie:false. ESPN was lenient about
+  // auth for the current season while it only had placeholder/pre-draft
+  // teams, but the moment the 2026 draft actually completed and real
+  // rosters existed, ESPN started 404-ing this same unauthenticated mTeam
+  // request for the live league too - not just old completed seasons like
+  // the "old seasons were silently unauthenticated" bug found on 2026-08-25.
+  // Same fix: always send ESPN's cookies for real league data.
+  const mTeam = await espnFetch({ leagueId, seasonId, view:"mTeam", req, requireCookie:true });
   const idToName = Object.fromEntries((mTeam?.teams || []).map(t => [t.id, teamName(t)]));
 
   // 2026-08-25: fetch ESPN's own "what week is it" answer up front, before
@@ -2785,7 +2803,7 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
   // started, so it's always safe to skip fetching it.
   let effectiveMaxSp = 25;
   try {
-    settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: false });
+    settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: true });
     const currentMatchupPeriod = settingsData?.status?.currentMatchupPeriod;
     const scoringPeriodId = settingsData?.scoringPeriodId;
     if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0) {
@@ -3280,11 +3298,14 @@ async function captureWeeklySnapshot({ leagueId, seasonId, weekNumber, req }) {
   
   try {
     // Fetch all necessary data for this week
+    // Fixed 2026-09-08: same auth fix as buildOfficialReport above - these
+    // four were all requireCookie:false and started 404-ing as soon as the
+    // 2026 draft completed and the league had real data to protect.
     const [teamData, matchupData, boxscoreData, rosterData] = await Promise.all([
-      espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: false }),
-      espnFetch({ leagueId, seasonId, view: "mMatchup", scoringPeriodId: weekNumber, req, requireCookie: false }),
-      espnFetch({ leagueId, seasonId, view: "mBoxscore", scoringPeriodId: weekNumber, req, requireCookie: false }),
-      espnFetch({ leagueId, seasonId, view: "mRoster", scoringPeriodId: weekNumber, req, requireCookie: false })
+      espnFetch({ leagueId, seasonId, view: "mTeam", req, requireCookie: true }),
+      espnFetch({ leagueId, seasonId, view: "mMatchup", scoringPeriodId: weekNumber, req, requireCookie: true }),
+      espnFetch({ leagueId, seasonId, view: "mBoxscore", scoringPeriodId: weekNumber, req, requireCookie: true }),
+      espnFetch({ leagueId, seasonId, view: "mRoster", scoringPeriodId: weekNumber, req, requireCookie: true })
     ]);
 
     const teamNames = {};
@@ -3630,12 +3651,14 @@ async function calculatePlayoffOdds({ leagueId, seasonId, currentWeek, numSimula
   }
   
   // Get schedule data
+  // Fixed 2026-09-08: was requireCookie:false - see buildOfficialReport fix
+  // above for why this now needs to always send ESPN's cookies.
   const scheduleData = await espnFetch({
     leagueId,
     seasonId,
     view: "mMatchup",
     req,
-    requireCookie: false
+    requireCookie: true
   });
 
   // Pull the real playoff format from ESPN's league settings instead of hardcoding it - this
@@ -3651,7 +3674,7 @@ async function calculatePlayoffOdds({ leagueId, seasonId, currentWeek, numSimula
       seasonId,
       view: "mSettings",
       req,
-      requireCookie: false
+      requireCookie: true
     });
     const scheduleSettings = settingsData?.settings?.scheduleSettings || {};
     totalWeeks = scheduleSettings.matchupPeriodCount || totalWeeks;

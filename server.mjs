@@ -11,6 +11,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pkg from 'pg';
 import cookieParser from 'cookie-parser';
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 const { Pool } = pkg;
 
 const DEFAULT_LEAGUE_ID = process.env.VITE_ESPN_LEAGUE_ID || "";
@@ -4781,6 +4783,152 @@ app.get("/api/weekly-text/next-challenge", async (req, res) => {
   } catch (e) {
     console.error("[Weekly Text - Next Challenge] Failed:", e.message);
     res.status(502).type("text/plain").send("Error generating next-challenge text: " + e.message);
+  }
+});
+
+// =========================
+// Screenshot generation (2026-09-17)
+// Powers the two automated image texts (winner card, trophies card) by
+// launching a real headless browser against this server's OWN already-
+// working live pages (#weekly, #hoodtrophies) and screenshotting the
+// exact DOM element Tasker asked for - see the data-loaded/id attributes
+// added to WeeklyView and TrophyCaseView in App.jsx. This deliberately
+// reuses the real rendered page instead of re-implementing any of the
+// winner/trophy calculation logic a second time, so a screenshot can
+// never disagree with what's actually on the site.
+//
+// Uses @sparticuz/chromium (a slimmed-down Chromium build made for
+// memory-constrained hosts) instead of full Puppeteer, since Render's
+// free tier only has 512MB RAM - and closes the browser after every
+// single screenshot rather than keeping it resident, since this only
+// needs to run once a week.
+// =========================
+
+async function launchScreenshotBrowser() {
+  // @sparticuz/chromium ships a Linux-only binary, built for exactly the
+  // kind of serverless Linux container Render runs - it can't launch on a
+  // local Windows/Mac dev machine. On Render (process.env.RENDER is set
+  // there automatically), use that lightweight Chromium as intended; for
+  // local testing, fall back to regular Puppeteer's own cross-platform
+  // bundled Chromium instead (installed separately, dev-only).
+  if (process.env.RENDER) {
+    return puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: { width: 900, height: 1200 },
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+  } else {
+    const { default: puppeteerFull } = await import("puppeteer");
+    return puppeteerFull.launch({
+      defaultViewport: { width: 900, height: 1200 },
+      headless: true,
+    });
+  }
+}
+
+async function screenshotElement({ path, rootSelector, elementId, expandButtonText }) {
+  // Self-request: this hits the same Node process's own static-served
+  // build on the same port, not an external URL - so it works identically
+  // in local dev and on Render, and doesn't count against Render's
+  // outbound-bandwidth billing (see the bandwidth investigation notes).
+  const selfUrl = `http://localhost:${PORT}${path}`;
+  const browser = await launchScreenshotBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.goto(selfUrl, { waitUntil: "networkidle0", timeout: 90000 });
+
+    // Wait for this page's data to finish loading (see the data-loaded
+    // attribute added to WeeklyView/TrophyCaseView in App.jsx) before
+    // screenshotting anything - otherwise we'd capture a "Loading..." state.
+    await page.waitForSelector(`${rootSelector}[data-loaded="true"]`, { timeout: 90000 });
+
+    // The site shows a 3-second logo splash screen on every load,
+    // independent of when the actual data finishes loading - wait for it
+    // to fully disappear too, or we risk screenshotting the logo instead
+    // of the real card (see IntroSplash in App.jsx).
+    await page.waitForFunction(() => !document.querySelector(".splash"), { timeout: 10000 });
+
+    const targetSelector = `#${elementId}`;
+    await page.waitForSelector(targetSelector, { timeout: 15000 });
+
+    // Trophy Case cards can be collapsed - expand this one first if needed
+    // so the full content is actually visible to screenshot.
+    if (expandButtonText) {
+      const expanded = await page.evaluate((sel, btnText) => {
+        const card = document.querySelector(sel);
+        if (!card) return false;
+        const buttons = Array.from(card.querySelectorAll("button"));
+        const showBtn = buttons.find(b => b.textContent.includes(btnText));
+        if (showBtn) { showBtn.click(); return true; }
+        return false;
+      }, targetSelector, expandButtonText);
+      if (expanded) {
+        await new Promise(r => setTimeout(r, 500)); // let the re-render settle
+      }
+    }
+
+    const element = await page.$(targetSelector);
+    if (!element) throw new Error(`Element ${targetSelector} not found on page`);
+    return await element.screenshot({ type: "png" });
+  } finally {
+    await browser.close();
+  }
+}
+
+// GET /api/weekly-image/winner.png
+// Optional ?week=N to force a specific week (same override pattern as the
+// text endpoints). Optional ?leagueId=/?seasonId= too.
+app.get("/api/weekly-image/winner.png", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = await wtResolveLeagueSeason(req);
+    let week;
+    if (req.query.week) {
+      week = parseInt(req.query.week, 10);
+    } else {
+      await wtRefreshWeekAnchor(leagueId, seasonId, req);
+      week = leagueWeekOf(new Date(), seasonId).week;
+    }
+    if (!week || week < 1) {
+      return res.status(404).send("No weekly challenge card to screenshot yet.");
+    }
+    const buffer = await screenshotElement({
+      path: "/#weekly",
+      rootSelector: "#weekly-challenges-root",
+      elementId: `weekly-challenge-card-${week}`,
+    });
+    res.type("png").send(buffer);
+  } catch (e) {
+    console.error("[Weekly Image - Winner] Failed:", e.message);
+    res.status(502).send("Error generating winner screenshot: " + e.message);
+  }
+});
+
+// GET /api/weekly-image/trophies.png
+// Optional ?week=N to force a specific week.
+app.get("/api/weekly-image/trophies.png", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = await wtResolveLeagueSeason(req);
+    let week;
+    if (req.query.week) {
+      week = parseInt(req.query.week, 10);
+    } else {
+      await wtRefreshWeekAnchor(leagueId, seasonId, req);
+      week = leagueWeekOf(new Date(), seasonId).week;
+    }
+    if (!week || week < 1) {
+      return res.status(404).send("No trophy card to screenshot yet.");
+    }
+    const buffer = await screenshotElement({
+      path: "/#hoodtrophies",
+      rootSelector: "#trophy-case-root",
+      elementId: `trophy-week-card-${week}`,
+      expandButtonText: "Show",
+    });
+    res.type("png").send(buffer);
+  } catch (e) {
+    console.error("[Weekly Image - Trophies] Failed:", e.message);
+    res.status(502).send("Error generating trophies screenshot: " + e.message);
   }
 });
 

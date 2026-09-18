@@ -1698,6 +1698,7 @@ else if (week === 3) {
   }));
 
   return (
+    <div id="weekly-challenges-root" data-loaded={loading ? "false" : "true"}>
     <Section title="Weekly Challenges" actions={
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn" style={btnSec} onClick={loadWeeklyChallengeWinners} disabled={loading}>
@@ -1711,8 +1712,7 @@ else if (week === 3) {
           const winner = weeklyWinners[weekNumber];
 
           return (
-            <div key={item.id} className="card" style={{ padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div key={item.id} id={`weekly-challenge-card-${item.week}`} className="card" style={{ padding: 16 }}>              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <h3 style={{ margin: 0 }}>
   {item.weekLabel || "Week"}
@@ -1757,8 +1757,11 @@ else if (week === 3) {
         })}
       </div>
     </Section>
+    </div>
   );
 }
+
+// DETERMINE WEEKLY WINNER
 
 // DETERMINE WEEKLY WINNER
 async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
@@ -5442,8 +5445,8 @@ setTrophyCounts(trophyCounts);
   };
 
   return (
-    <Section title="🏆 Trophy Case" actions={
-      <button className="btn" style={btnSec} onClick={loadTrophies} disabled={loading}>
+    <div id="trophy-case-root" data-loaded={loading ? "false" : "true"}>
+    <Section title="🏆 Trophy Case" actions={      <button className="btn" style={btnSec} onClick={loadTrophies} disabled={loading}>
         {loading ? "Loading..." : "Refresh"}
       </button>
     }>
@@ -5454,7 +5457,7 @@ setTrophyCounts(trophyCounts);
       )}
 
       {weeklyTrophies.map(weekData => (
-        <div key={weekData.week} className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <div key={weekData.week} id={`trophy-week-card-${weekData.week}`} className="card" style={{ padding: 16, marginBottom: 16 }}>
           <div 
             style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
             onClick={() => toggleWeek(weekData.week)}
@@ -5966,6 +5969,7 @@ if (negLeader && negMax > 0) {
         </div>
       )}
     </Section>
+    </div>
   );
 }
 

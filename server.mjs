@@ -4836,6 +4836,7 @@ async function screenshotElement({ path, rootSelector, elementId, expandButtonTe
   const browser = await launchScreenshotBrowser();
   try {
     const page = await browser.newPage();
+
     await page.goto(selfUrl, { waitUntil: "networkidle0", timeout: 90000 });
 
     // Wait for this page's data to finish loading (see the data-loaded
@@ -4849,8 +4850,38 @@ async function screenshotElement({ path, rootSelector, elementId, expandButtonTe
     // of the real card (see IntroSplash in App.jsx).
     await page.waitForFunction(() => !document.querySelector(".splash"), { timeout: 10000 });
 
-    const targetSelector = `#${elementId}`;
-    await page.waitForSelector(targetSelector, { timeout: 15000 });
+    // Render's slim headless Chromium has no emoji font installed, so
+    // emoji characters render as empty boxes in screenshots. Fix: load
+    // Twemoji (Twitter's open-source emoji image set) and swap every
+    // emoji character for its matching tiny image before screenshotting -
+    // this only affects the screenshot, never the real site. Using the PNG
+    // set (not SVG) for more reliable headless rendering, and giving each
+    // swapped-in image explicit small dimensions - without this, each
+    // emoji image renders at its native ~254px size and blows out the
+    // card's layout instead of sitting inline like the original character.
+    await page.addStyleTag({
+      content: "img.emoji { height: 1.1em; width: 1.1em; vertical-align: -0.2em; }",
+    });
+    await page.addScriptTag({ url: "https://cdn.jsdelivr.net/npm/twemoji@14.0.2/dist/twemoji.min.js" });
+    await page.evaluate(() => {
+      window.twemoji.parse(document.body, {
+        base: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/",
+        folder: "72x72",
+        ext: ".png",
+      });
+    });
+    // Wait for those swapped-in emoji images to actually finish loading
+    // before we screenshot, or they'll show up blank/half-loaded.
+    await page.evaluate(() =>
+      Promise.all(
+        Array.from(document.images)
+          .filter(img => !img.complete)
+          .map(img => new Promise(resolve => { img.onload = img.onerror = resolve; }))
+      )
+    );
+
+
+    const targetSelector = `#${elementId}`;    await page.waitForSelector(targetSelector, { timeout: 15000 });
 
     // Trophy Case cards can be collapsed - expand this one first if needed
     // so the full content is actually visible to screenshot.

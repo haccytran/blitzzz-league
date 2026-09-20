@@ -4727,10 +4727,32 @@ async function wtResolveLeagueSeason(req) {
 // Most recently COMPLETED week: ESPN's current week is the in-progress one,
 // so the winner/trophies for "last week" are current - 1. ?week=N overrides
 // it to force a specific completed week (handy for testing).
+//
+// Weekly challenges lock at Tuesday 12:00 AM PT (Monday Night Football is
+// over by then), a full day BEFORE the Wednesday 12:00 AM PT cutoff used for
+// bucketing waiver/free-agent transactions - so this deliberately does NOT
+// use leagueWeekOf()/the transaction week. Wed-Mon, ESPN's current matchup
+// period is the in-progress week, so completed = current - 1. From Tue 12 AM
+// PT the week that just ended counts as completed, even though ESPN may not
+// have advanced its period yet.
 async function wtResolveCompletedWeek(req, leagueId, seasonId) {
   if (req.query.week) return parseInt(req.query.week, 10);
-  await wtRefreshWeekAnchor(leagueId, seasonId, req);
-  return (leagueWeekOf(new Date(), seasonId).week || 0) - 1;
+
+  const settingsData = await espnFetch({ leagueId, seasonId, view: "mSettings", req, requireCookie: true });
+  const espnWeek = settingsData?.status?.currentMatchupPeriod;
+  if (typeof espnWeek !== "number" || espnWeek < 1) return 0;
+
+  if (toPT(new Date()).getDay() !== 2) return espnWeek - 1; // not Tuesday
+
+  // Tuesday: ESPN flips its period at some point during the day, so ask the
+  // scores which side of the flip we're on. If the period ESPN reports has
+  // scored points it's the week that just ended; if it's all zeros it's the
+  // brand-new week and the ended one is espnWeek - 1.
+  const matchupData = await espnFetch({ leagueId, seasonId, view: "mMatchup", req, requireCookie: true });
+  const hasScores = (matchupData.schedule || []).some(m =>
+    m.matchupPeriodId === espnWeek && ((m.home?.totalPoints || 0) > 0 || (m.away?.totalPoints || 0) > 0)
+  );
+  return hasScores ? espnWeek : espnWeek - 1;
 }
 
 // GET /api/weekly-text/winner

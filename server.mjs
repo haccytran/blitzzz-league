@@ -4724,20 +4724,24 @@ async function wtResolveLeagueSeason(req) {
   return { leagueId, seasonId };
 }
 
+// Most recently COMPLETED week: ESPN's current week is the in-progress one,
+// so the winner/trophies for "last week" are current - 1. ?week=N overrides
+// it to force a specific completed week (handy for testing).
+async function wtResolveCompletedWeek(req, leagueId, seasonId) {
+  if (req.query.week) return parseInt(req.query.week, 10);
+  await wtRefreshWeekAnchor(leagueId, seasonId, req);
+  return (leagueWeekOf(new Date(), seasonId).week || 0) - 1;
+}
+
 // GET /api/weekly-text/winner
+// Announces the winner of the most recently completed week.
 // Optional ?week=N to force a specific week (handy for testing without
 // waiting for the real reveal time). Optional ?leagueId=/?seasonId= too.
 app.get("/api/weekly-text/winner", async (req, res) => {
   try {
     const { leagueId, seasonId } = await wtResolveLeagueSeason(req);
 
-    let week;
-    if (req.query.week) {
-      week = parseInt(req.query.week, 10);
-    } else {
-      await wtRefreshWeekAnchor(leagueId, seasonId, req);
-      week = leagueWeekOf(new Date(), seasonId).week;
-    }
+    const week = await wtResolveCompletedWeek(req, leagueId, seasonId);
 
     if (!week || week < 1) {
       return res.type("text/plain").send("No weekly challenge winner to announce yet - season hasn't started.");
@@ -4759,7 +4763,9 @@ app.get("/api/weekly-text/winner", async (req, res) => {
 });
 
 // GET /api/weekly-text/next-challenge
-// Optional ?week=N to force which week's challenge to describe.
+// Describes the challenge for the week after the most recently completed one
+// (i.e. the in-progress week). Optional ?week=N to force which week's
+// challenge to describe.
 app.get("/api/weekly-text/next-challenge", async (req, res) => {
   try {
     const { leagueId, seasonId } = await wtResolveLeagueSeason(req);
@@ -4768,9 +4774,7 @@ app.get("/api/weekly-text/next-challenge", async (req, res) => {
     if (req.query.week) {
       nextWeek = parseInt(req.query.week, 10);
     } else {
-      await wtRefreshWeekAnchor(leagueId, seasonId, req);
-      const currentWeek = leagueWeekOf(new Date(), seasonId).week || 0;
-      nextWeek = currentWeek + 1;
+      nextWeek = (await wtResolveCompletedWeek(req, leagueId, seasonId)) + 1;
     }
 
     const challenge = WEEKLY_CHALLENGES.find(c => c.week === nextWeek);
@@ -4827,7 +4831,10 @@ async function launchScreenshotBrowser() {
   }
 }
 
-async function screenshotElement({ path, rootSelector, elementId, expandButtonText }) {
+// elementIds: one or more element ids. With several, returns a single image
+// covering the union of their bounding boxes (they sit next to each other on
+// the page); ids that aren't on the page are skipped, but the first must exist.
+async function screenshotElement({ path, rootSelector, elementIds, expandButtonText }) {
   // Self-request: this hits the same Node process's own static-served
   // build on the same port, not an external URL - so it works identically
   // in local dev and on Render, and doesn't count against Render's
@@ -4881,7 +4888,8 @@ async function screenshotElement({ path, rootSelector, elementId, expandButtonTe
     );
 
 
-    const targetSelector = `#${elementId}`;    await page.waitForSelector(targetSelector, { timeout: 15000 });
+    const targetSelector = `#${elementIds[0]}`;
+    await page.waitForSelector(targetSelector, { timeout: 15000 });
 
     // Trophy Case cards can be collapsed - expand this one first if needed
     // so the full content is actually visible to screenshot.
@@ -4899,34 +4907,47 @@ async function screenshotElement({ path, rootSelector, elementId, expandButtonTe
       }
     }
 
-    const element = await page.$(targetSelector);
-    if (!element) throw new Error(`Element ${targetSelector} not found on page`);
-    return await element.screenshot({ type: "png" });
+    if (elementIds.length === 1) {
+      const element = await page.$(targetSelector);
+      if (!element) throw new Error(`Element ${targetSelector} not found on page`);
+      return await element.screenshot({ type: "png" });
+    }
+
+    // Union of all requested cards' boxes, in full-page coordinates.
+    const clip = await page.evaluate((ids) => {
+      const rects = ids
+        .map(id => document.getElementById(id))
+        .filter(Boolean)
+        .map(el => el.getBoundingClientRect());
+      if (!rects.length) return null;
+      const x = Math.min(...rects.map(r => r.left)) + window.scrollX;
+      const y = Math.min(...rects.map(r => r.top)) + window.scrollY;
+      const right = Math.max(...rects.map(r => r.right)) + window.scrollX;
+      const bottom = Math.max(...rects.map(r => r.bottom)) + window.scrollY;
+      return { x, y, width: right - x, height: bottom - y };
+    }, elementIds);
+    if (!clip) throw new Error("None of the requested elements were found on page");
+    return await page.screenshot({ type: "png", clip, captureBeyondViewport: true });
   } finally {
     await browser.close();
   }
 }
 
 // GET /api/weekly-image/winner.png
-// Optional ?week=N to force a specific week (same override pattern as the
-// text endpoints). Optional ?leagueId=/?seasonId= too.
+// Two cards: the most recently completed week's challenge (with its winner)
+// plus the next week's challenge. Optional ?week=N forces the completed week
+// (same override pattern as the text endpoints). Optional ?leagueId=/?seasonId= too.
 app.get("/api/weekly-image/winner.png", async (req, res) => {
   try {
     const { leagueId, seasonId } = await wtResolveLeagueSeason(req);
-    let week;
-    if (req.query.week) {
-      week = parseInt(req.query.week, 10);
-    } else {
-      await wtRefreshWeekAnchor(leagueId, seasonId, req);
-      week = leagueWeekOf(new Date(), seasonId).week;
-    }
+    const week = await wtResolveCompletedWeek(req, leagueId, seasonId);
     if (!week || week < 1) {
       return res.status(404).send("No weekly challenge card to screenshot yet.");
     }
     const buffer = await screenshotElement({
       path: "/#weekly",
       rootSelector: "#weekly-challenges-root",
-      elementId: `weekly-challenge-card-${week}`,
+      elementIds: [`weekly-challenge-card-${week}`, `weekly-challenge-card-${week + 1}`],
     });
     res.type("png").send(buffer);
   } catch (e) {
@@ -4936,24 +4957,18 @@ app.get("/api/weekly-image/winner.png", async (req, res) => {
 });
 
 // GET /api/weekly-image/trophies.png
-// Optional ?week=N to force a specific week.
+// Shows the most recently completed week. Optional ?week=N to force a specific week.
 app.get("/api/weekly-image/trophies.png", async (req, res) => {
   try {
     const { leagueId, seasonId } = await wtResolveLeagueSeason(req);
-    let week;
-    if (req.query.week) {
-      week = parseInt(req.query.week, 10);
-    } else {
-      await wtRefreshWeekAnchor(leagueId, seasonId, req);
-      week = leagueWeekOf(new Date(), seasonId).week;
-    }
+    const week = await wtResolveCompletedWeek(req, leagueId, seasonId);
     if (!week || week < 1) {
       return res.status(404).send("No trophy card to screenshot yet.");
     }
     const buffer = await screenshotElement({
       path: "/#hoodtrophies",
       rootSelector: "#trophy-case-root",
-      elementId: `trophy-week-card-${week}`,
+      elementIds: [`trophy-week-card-${week}`],
       expandButtonText: "Show",
     });
     res.type("png").send(buffer);

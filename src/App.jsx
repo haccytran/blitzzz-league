@@ -140,8 +140,10 @@ async function loadEspnWeekAnchor(leagueId, seasonId){
     // Until then, this intentionally leaves the old date-estimate fallback
     // in place (see leagueWeekOf below) rather than anchoring on a guess.
     if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0 && scoringPeriodId > 0) {
+      const isTuesdayPT = toPT(new Date()).getDay() === 2;
       __espnWeekAnchor[seasonId] = {
         week: currentMatchupPeriod,
+        txWeek: isTuesdayPT ? currentMatchupPeriod - 1 : currentMatchupPeriod,
         start: startOfLeagueWeekPT(new Date()),
       };
     }
@@ -157,7 +159,7 @@ function leagueWeekOf(date, seasonYear){
     // Trusted path: count forward/backward from ESPN's own "current week",
     // in whole-week steps, instead of guessing where week 1 falls.
     const weeksOffset = Math.round((start - anchor.start) / (7*24*60*60*1000));
-    let week = anchor.week + weeksOffset;
+    let week = (typeof anchor.txWeek === "number" ? anchor.txWeek : anchor.week) + weeksOffset;
     if (week < 1) week = 0;
     return { week, start, key: localDateKey(start) };
   }
@@ -3054,9 +3056,16 @@ for (let i = 0; i < rows.length; i++) {
 }
   
   return combinedRows.map((r, index) => {
-    const isShaded = r.pairNumber % 2 === 0;
+    // 2026-09-22: was `r.pairNumber % 2`, which only ADD+DROP swap rows
+    // ever had set (Math.floor(combinedRows.length / 2) at push time) -
+    // any standalone add/drop got pairNumber=undefined, and worse, two
+    // unrelated transactions landing at positions 0 and 1 both computed
+    // pairNumber 0 and shared the same shade. Since combinedRows already
+    // holds exactly one entry per transaction (paired or standalone),
+    // alternating on its own index here is correct and simpler.
+    const isShaded = index % 2 === 0;
     const backgroundColor = isShaded ? "#fffbeb" : "transparent";
-    
+
     return (
       <tr key={index} style={{ backgroundColor }}>
         <td style={{...td, fontSize: "12px"}}>
@@ -3166,7 +3175,9 @@ for (let i = 0; i < rows.length; i++) {
 }
     
     return combinedRows.map((r, i) => {
-      const isShaded = r.pairNumber % 2 === 0;
+      // 2026-09-22: same fix as the desktop table above - alternate by
+      // this row's own position instead of the broken r.pairNumber.
+      const isShaded = i % 2 === 0;
       const backgroundColor = isShaded ? "#fffbeb" : "transparent";
       
       return (

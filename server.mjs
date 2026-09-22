@@ -2444,6 +2444,14 @@ if (src === "tx") {
   console.log(`[DEBUG] Raw timestamp: ${rawDate}, Normalized: ${normalizeEpoch(rawDate)}, Final date: ${when.toISOString()}`);
 }
     const eventId = t.id ?? t.transactionId ?? t.proposedTransactionId ?? t.proposalId ?? null;
+    // 2026-09-22: ESPN keeps a PENDING record for every waiver claim the
+    // moment it's submitted, then adds a SEPARATE EXECUTED record once it
+    // actually clears (plus FAILED_PLAYERALREADYDROPPED / FAILED_INVALID-
+    // PLAYERSOURCE for claims that never went through). None of those are
+    // real transactions - only EXECUTED is. Skip anything else so the same
+    // claim doesn't show up twice with two different timestamps.
+    const statusStr = t.status ?? t.statusType ?? null;
+    if (statusStr && statusStr !== "EXECUTED") continue;
     const items = Array.isArray(t.items) ? t.items
                : Array.isArray(t.messages) ? t.messages
                : Array.isArray(t.changes) ? t.changes
@@ -2822,8 +2830,9 @@ async function buildOfficialReport({ leagueId, seasonId, req }){
     // Until then this deliberately leaves the old date-estimate fallback in
     // place (see effectiveWeek1Start above).
     if (typeof currentMatchupPeriod === "number" && currentMatchupPeriod > 0 && scoringPeriodId > 0) {
+      const isTuesdayPT = toPT(new Date()).getDay() === 2;
       __serverWeekAnchor[seasonId] = {
-        week: currentMatchupPeriod,
+        week: isTuesdayPT ? currentMatchupPeriod - 1 : currentMatchupPeriod,
         start: startOfLeagueWeek(new Date()),
       };
     }
@@ -3963,8 +3972,9 @@ async function runAutoRefreshForLeague(leagueConfig) {
       // Same pre-season gate as buildOfficialReport above - don't anchor
       // until the season has actually started (scoringPeriodId > 0).
       if (typeof refreshCurrentMatchupPeriod === "number" && refreshCurrentMatchupPeriod > 0 && refreshScoringPeriodId > 0) {
+        const isTuesdayPT = toPT(new Date()).getDay() === 2;
         __serverWeekAnchor[seasonId] = {
-          week: refreshCurrentMatchupPeriod,
+          week: isTuesdayPT ? refreshCurrentMatchupPeriod - 1 : refreshCurrentMatchupPeriod,
           start: startOfLeagueWeek(new Date()),
         };
       }

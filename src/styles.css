@@ -1770,7 +1770,8 @@ body.theme-chargers [style*="color: rgb(17, 24, 39)"] {
 /* Trophy Leaderboard team names: cleaner, single soft glow instead of the
    4-layer neon blur (which reads muddy on the navy background) */
 body.theme-chargers .trophy-table-desktop th:first-child,
-body.theme-chargers .trophy-table-desktop td:first-child {
+body.theme-chargers .trophy-table-desktop td:first-child,
+body.theme-chargers .trophy-grid-mobile .trophy-row-bg {
   color: var(--accent) !important;
   font-weight: 600;
   text-shadow: 0 0 8px rgba(255,194,14,0.45) !important;

@@ -1795,3 +1795,8 @@ body.theme-chargers .final-scores-card {
   background: linear-gradient(135deg, #0C1E36 0%, #1B3A5C 50%, #0C1E36 100%) !important;
   border: 1px solid var(--border);
 }
+
+/* Splash screen: match the Chargers navy background instead of white */
+body.theme-chargers .splash {
+  background: var(--bg) !important;
+}

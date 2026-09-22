@@ -5130,6 +5130,7 @@ if (unluckyLosers.length > 0) {
           weekTrophies.trophies.push({
             emoji: "👑",
             title: "High score",
+            team: highScore.team,
             value: <>{TN(highScore.team)} with {highScore.score.toFixed(2)} points</>
           });
         }
@@ -5138,6 +5139,7 @@ if (unluckyLosers.length > 0) {
           weekTrophies.trophies.push({
             emoji: "💩",
             title: "Low score",
+            team: lowScore.team,
             value: <>{TN(lowScore.team)} with {lowScore.score.toFixed(2)} points</>
           });
         }
@@ -5146,6 +5148,7 @@ if (unluckyLosers.length > 0) {
           weekTrophies.trophies.push({
             emoji: "😱",
             title: "Blow out",
+            team: biggestBlowout.winner,
             value: <>{TN(biggestBlowout.winner)} blew out {biggestBlowout.loser} by {biggestBlowout.margin.toFixed(2)} points</>
           });
         }
@@ -5154,6 +5157,7 @@ if (unluckyLosers.length > 0) {
           weekTrophies.trophies.push({
             emoji: "😅",
             title: "Close win",
+            team: closestWin.winner,
             value: <>{TN(closestWin.winner)} barely beat {closestWin.loser} by {closestWin.margin.toFixed(2)} points</>
           });
         }
@@ -5166,6 +5170,7 @@ if (unluckyLosers.length > 0) {
   weekTrophies.trophies.push({
     emoji: "🍀",
     title: "Lucky",
+    team: luckiestWin.team,
     value
   });
 }
@@ -5178,6 +5183,7 @@ if (unluckyLoss) {
   weekTrophies.trophies.push({
     emoji: "😡",
     title: "Unlucky",
+    team: unluckyLoss.team,
     value
   });
 }
@@ -5187,6 +5193,7 @@ if (__overT.team) {
   weekTrophies.trophies.push({
     emoji: "📈",
     title: "Overachiever",
+    team: __overT.team,
     value: <>{TN(__overT.team)} was {__overT.delta.toFixed(2)} points over their projection ({__overT.actual.toFixed(2)} vs {__overT.proj.toFixed(2)})</>
     // If your code uses 'text' instead of 'value', change 'value:' to 'text:' here and below.
   });
@@ -5195,6 +5202,7 @@ if (__underT.team) {
   weekTrophies.trophies.push({
     emoji: "📉",
     title: "Underachiever",
+    team: __underT.team,
     value: <>{TN(__underT.team)} was {Math.abs(__underT.delta).toFixed(2)} points under their projection ({__underT.actual.toFixed(2)} vs {__underT.proj.toFixed(2)})</>
   });
 }
@@ -5208,6 +5216,7 @@ if (__underT.team) {
   weekTrophies.trophies.push({
     emoji: "🤖",
     title: "Best Manager",
+    team: bestManager.teams,
     value: <>{TN(teamList)} scored {bestManager.percentage.toFixed(1)}% of their optimal score!</>
   });
 }
@@ -5220,6 +5229,7 @@ if (worstManager.benchPoints > 0 && worstManager.teams.length > 0) {
   weekTrophies.trophies.push({
     emoji: "🤡",
     title: "Worst Manager",
+    team: worstManager.teams,
     value: <>{TN(teamList)} left {worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring {worstManager.percentage.toFixed(1)}% of their optimal score.</>
   });
 }
@@ -5283,11 +5293,13 @@ Object.values(teamNames).forEach(team => {
 for (const week of trophiesData) {
   // 1) Count trophies you award in week.trophies (if you already do this elsewhere, keep it)
   for (const t of (week.trophies || [])) {
-    // bump per-team trophy counts (optional; keeps your existing behavior)
-    const row = String(t.value || t.text || "");
-    const name = Object.values(teamNames).find(n => row.includes(n));
-    if (name && trophyCounts[name] && t.emoji) {
-      if (t.emoji in trophyCounts[name]) trophyCounts[name][t.emoji] += 1;
+    // bump per-team trophy counts using the plain-text team name(s) stored
+    // alongside the JSX value (the JSX itself can't be read back as a string)
+    const names = Array.isArray(t.team) ? t.team : (t.team ? [t.team] : []);
+    for (const name of names) {
+      if (name && trophyCounts[name] && t.emoji) {
+        if (t.emoji in trophyCounts[name]) trophyCounts[name][t.emoji] += 1;
+      }
     }
   }
 

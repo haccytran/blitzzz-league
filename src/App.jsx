@@ -4846,6 +4846,16 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
       // `return null` (skip this week) and the final push became a return.
       const maxWeekToTry = Math.min(14, teamsData?.status?.currentMatchupPeriod || 14);
 
+      // 2026-09-22: this loop's own weekResponse fetch above already asks
+      // for view=mBoxscore alongside mMatchup/mMatchupScore/mScoreboard, so
+      // its weekData.schedule already carries the same
+      // rosterForCurrentScoringPeriod data the season-stats loop further
+      // below used to go fetch a SECOND time (one more ESPN request per
+      // completed week, for data already sitting right here). Stash each
+      // week's schedule here as it comes in so that second loop can reuse it
+      // instead of re-fetching - see rawScheduleByWeek.get(...) there.
+      const rawScheduleByWeek = new Map();
+
       const processWeek = async (weekNum) => {
 // Reset trackers for each week
 let __overT = { team: "", delta: -Infinity, actual: 0, proj: 0 };
@@ -4869,6 +4879,8 @@ let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
         const weekData = await weekResponse.json();
 
         if (!weekData.schedule) return null;
+
+        rawScheduleByWeek.set(weekNum, weekData.schedule);
 
         const matchups = weekData.schedule.filter(m => m.matchupPeriodId === weekNum);
         
@@ -5317,14 +5329,22 @@ for (const week of trophiesData) {
   }
 
   // 4) === ADD HERE: Over/Under totals + Manager stats for THIS week ===
-  // Pull ESPN boxscore for this week to read projections & optimal lineup
+  // Pull ESPN boxscore for this week to read projections & optimal lineup.
+  // 2026-09-22: reuse the schedule the week-processing loop above already
+  // fetched (it asked for view=mBoxscore too) instead of re-fetching the
+  // same data from ESPN a second time. Falls back to a fresh fetch only if
+  // that cache is somehow missing this week, so this can't break anything
+  // that worked before - it just skips a redundant request when it can.
   try {
-    const boxResp = await fetchEspnJson({
-      leagueId: espn.leagueId,
-      seasonId: espn.seasonId,
-      view: "mBoxscore",
-      scoringPeriodId: week.week
-    });
+    const cachedSchedule = rawScheduleByWeek.get(week.week);
+    const boxResp = cachedSchedule
+      ? { schedule: cachedSchedule }
+      : await fetchEspnJson({
+          leagueId: espn.leagueId,
+          seasonId: espn.seasonId,
+          view: "mBoxscore",
+          scoringPeriodId: week.week
+        });
 
   // ADD DEBUG CODE HERE FOR FIRST WEEK ONLY
   if (week.week === 1) {

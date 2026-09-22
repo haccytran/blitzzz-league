@@ -1280,26 +1280,54 @@ const ht_projectedForWeek = (playerObj, week) => {
   return Number(row?.appliedTotal ?? 0);
 };
 
-// Get team's total projected points
+// Get team's total projected points.
+//
+// IMPORTANT: this must be the projection ESPN had BEFORE the games started
+// that week, not a number that keeps changing while games are being played.
+// ESPN's "totalProjectedPointsLive" field is a LIVE number: once a game
+// kicks off, it starts blending in players' real, already-scored points, so
+// it drifts away from the original pre-game projection as the week
+// progresses and is a different number depending on when we happen to check
+// it. That's no good for "how far did this team beat/miss their projection"
+// style trophies (Overachiever/Underachiever/Bullseye/etc.) - we want the
+// one true pre-game number every time, whether we check mid-game, right
+// after the week ends, or a year later.
+//
+// The fix: build the team's projection ourselves by summing each starting
+// player's individual PROJECTED stat line (statSourceId === 1, see
+// ht_projectedForWeek above). ESPN freezes that per-player projected number
+// at kickoff and does not overwrite it as the game plays out, so it stays
+// stable no matter when we fetch it. We only fall back to ESPN's team-level
+// fields if, for some reason, we don't have roster/player data to sum (e.g.
+// an odd API response), since a rough number is better than none.
 const ht_teamProjection = (teamSideObj, week) => {
-  const teamLevel =
-    teamSideObj?.totalProjectedPointsLive ??
-    teamSideObj?.totalProjectedPoints ??
-    null;
-  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
-
   const entries =
     teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
     teamSideObj?.roster?.entries ||
     [];
 
-  let sum = 0;
-  for (const e of entries) {
-    if (ht_isBenchSlot(e?.lineupSlotId)) continue;
-    const player = e?.playerPoolEntry?.player;
-    sum += ht_projectedForWeek(player, week);
+  if (entries.length > 0) {
+    let sum = 0;
+    let counted = 0;
+    for (const e of entries) {
+      if (ht_isBenchSlot(e?.lineupSlotId)) continue;
+      const player = e?.playerPoolEntry?.player;
+      sum += ht_projectedForWeek(player, week);
+      counted++;
+    }
+    if (counted > 0) return sum;
   }
-  return sum;
+
+  // Fallback only: no per-player data available to sum, so use whatever
+  // team-level projection ESPN provided (frozen "totalProjectedPoints"
+  // preferred over the live-updating "totalProjectedPointsLive" one).
+  const teamLevel =
+    teamSideObj?.totalProjectedPoints ??
+    teamSideObj?.totalProjectedPointsLive ??
+    null;
+  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
+
+  return 0;
 };
 /* =========================
    Components

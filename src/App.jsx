@@ -4826,11 +4826,27 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 
       const trophiesData = [];
 
+      // 2026-09-22: this used to always loop weekNum 1..14 in sequence,
+      // awaiting each week's fetch (plus a naughty-list fetch per completed
+      // week) one at a time before starting the next - up to ~19 sequential
+      // ESPN/server round trips on every single page open, most of them for
+      // weeks that haven't been played yet and get thrown away as soon as
+      // "allGamesComplete" comes back false. Two fixes:
+      //   1) Only try weeks up through ESPN's own currentMatchupPeriod
+      //      (already sitting in teamsData.status from the fetch above - no
+      //      extra request needed) instead of blindly trying all the way to
+      //      14. For an old, fully-completed season this is still its final
+      //      week, so nothing is lost there either.
+      //   2) Fetch every week's data at the same time (Promise.all) instead
+      //      of one at a time - order doesn't matter since trophiesData gets
+      //      sorted by week right after this loop anyway.
+      // processWeek below is the exact same per-week logic that used to live
+      // directly in the for-loop, just wrapped as a function so it can be
+      // called once per week and run in parallel; every `continue` became a
+      // `return null` (skip this week) and the final push became a return.
+      const maxWeekToTry = Math.min(14, teamsData?.status?.currentMatchupPeriod || 14);
 
-
-
-      // Process each week individually
-for (let weekNum = 1; weekNum <= 14; weekNum++) {
+      const processWeek = async (weekNum) => {
 // Reset trackers for each week
 let __overT = { team: "", delta: -Infinity, actual: 0, proj: 0 };
 let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
@@ -4849,10 +4865,10 @@ let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
         // one actually meant for older, completed seasons.
         const weekResponse = await fetch(API(`/api/espn?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}&view=mMatchup&view=mBoxscore&view=mMatchupScore&view=mScoreboard&scoringPeriodId=${weekNum}&auth=1`));
 
-        if (!weekResponse.ok) continue;
+        if (!weekResponse.ok) return null;
         const weekData = await weekResponse.json();
 
-        if (!weekData.schedule) continue;
+        if (!weekData.schedule) return null;
 
         const matchups = weekData.schedule.filter(m => m.matchupPeriodId === weekNum);
         
@@ -4863,7 +4879,7 @@ let __underT = { team: "", delta: Infinity,  actual: 0, proj: 0 };
           m.winner !== 'UNDECIDED'
         );
         
-        if (!allGamesComplete) continue;
+        if (!allGamesComplete) return null;
 
 // Fetch naughty list for this week
 try {
@@ -5197,7 +5213,14 @@ if (worstManager.benchPoints > 0 && worstManager.teams.length > 0) {
         console.log('[WEEK', weekNum, 'BEST MANAGER FINAL]', bestManager);
         console.log('[WEEK', weekNum, 'WORST MANAGER FINAL]', worstManager);
 
-        trophiesData.push(weekTrophies);
+        return weekTrophies;
+      };
+
+      const weeksToTry = [];
+      for (let w = 1; w <= maxWeekToTry; w++) weeksToTry.push(w);
+      const weekResults = await Promise.all(weeksToTry.map(processWeek));
+      for (const wt of weekResults) {
+        if (wt) trophiesData.push(wt);
       }
 
       // Sort newest first and auto-expand most recent

@@ -5124,11 +5124,13 @@ if (unluckyLosers.length > 0) {
 }
 
         // Build trophies
+        const TN = (n) => <span className="trophy-team-name">{n}</span>;
+
         if (highScore.team) {
           weekTrophies.trophies.push({
             emoji: "👑",
             title: "High score",
-            value: `${highScore.team} with ${highScore.score.toFixed(2)} points`
+            value: <>{TN(highScore.team)} with {highScore.score.toFixed(2)} points</>
           });
         }
 
@@ -5136,7 +5138,7 @@ if (unluckyLosers.length > 0) {
           weekTrophies.trophies.push({
             emoji: "💩",
             title: "Low score",
-            value: `${lowScore.team} with ${lowScore.score.toFixed(2)} points`
+            value: <>{TN(lowScore.team)} with {lowScore.score.toFixed(2)} points</>
           });
         }
 
@@ -5144,7 +5146,7 @@ if (unluckyLosers.length > 0) {
           weekTrophies.trophies.push({
             emoji: "😱",
             title: "Blow out",
-            value: `${biggestBlowout.winner} blew out ${biggestBlowout.loser} by ${biggestBlowout.margin.toFixed(2)} points`
+            value: <>{TN(biggestBlowout.winner)} blew out {biggestBlowout.loser} by {biggestBlowout.margin.toFixed(2)} points</>
           });
         }
 
@@ -5152,15 +5154,15 @@ if (unluckyLosers.length > 0) {
           weekTrophies.trophies.push({
             emoji: "😅",
             title: "Close win",
-            value: `${closestWin.winner} barely beat ${closestWin.loser} by ${closestWin.margin.toFixed(2)} points`
+            value: <>{TN(closestWin.winner)} barely beat {closestWin.loser} by {closestWin.margin.toFixed(2)} points</>
           });
         }
 
         if (luckiestWin) {
-  const value = luckiestWin.allWinning 
-    ? `All winning teams had a winning record vs the league, but ${luckiestWin.team} had the worst record (${luckiestWin.wouldBeat}-${luckiestWin.wouldLose}) and scored only ${luckiestWin.score.toFixed(2)} points`
-    : `${luckiestWin.team} was ${luckiestWin.wouldBeat}-${luckiestWin.wouldLose} against the league, but still got the win`;
-  
+  const value = luckiestWin.allWinning
+    ? <>All winning teams had a winning record vs the league, but {TN(luckiestWin.team)} had the worst record ({luckiestWin.wouldBeat}-{luckiestWin.wouldLose}) and scored only {luckiestWin.score.toFixed(2)} points</>
+    : <>{TN(luckiestWin.team)} was {luckiestWin.wouldBeat}-{luckiestWin.wouldLose} against the league, but still got the win</>;
+
   weekTrophies.trophies.push({
     emoji: "🍀",
     title: "Lucky",
@@ -5170,9 +5172,9 @@ if (unluckyLosers.length > 0) {
 
 if (unluckyLoss) {
   const value = unluckyLoss.allLosing
-    ? `All losing teams had a losing record vs the league, but ${unluckyLoss.team} had the best record (${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose}) and scored ${unluckyLoss.score.toFixed(2)} points`
-    : `${unluckyLoss.team} was ${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose} against the league, but still took an L`;
-  
+    ? <>All losing teams had a losing record vs the league, but {TN(unluckyLoss.team)} had the best record ({unluckyLoss.wouldBeat}-{unluckyLoss.wouldLose}) and scored {unluckyLoss.score.toFixed(2)} points</>
+    : <>{TN(unluckyLoss.team)} was {unluckyLoss.wouldBeat}-{unluckyLoss.wouldLose} against the league, but still took an L</>;
+
   weekTrophies.trophies.push({
     emoji: "😡",
     title: "Unlucky",
@@ -5185,7 +5187,7 @@ if (__overT.team) {
   weekTrophies.trophies.push({
     emoji: "📈",
     title: "Overachiever",
-    value: `${__overT.team} was ${__overT.delta.toFixed(2)} points over their projection (${__overT.actual.toFixed(2)} vs ${__overT.proj.toFixed(2)})`
+    value: <>{TN(__overT.team)} was {__overT.delta.toFixed(2)} points over their projection ({__overT.actual.toFixed(2)} vs {__overT.proj.toFixed(2)})</>
     // If your code uses 'text' instead of 'value', change 'value:' to 'text:' here and below.
   });
 }
@@ -5193,32 +5195,32 @@ if (__underT.team) {
   weekTrophies.trophies.push({
     emoji: "📉",
     title: "Underachiever",
-    value: `${__underT.team} was ${Math.abs(__underT.delta).toFixed(2)} points under their projection (${__underT.actual.toFixed(2)} vs ${__underT.proj.toFixed(2)})`
+    value: <>{TN(__underT.team)} was {Math.abs(__underT.delta).toFixed(2)} points under their projection ({__underT.actual.toFixed(2)} vs {__underT.proj.toFixed(2)})</>
   });
 }
 
 
         if (bestManager.percentage > 0 && bestManager.teams.length > 0) {
-  const teamList = bestManager.teams.length === 1 
+  const teamList = bestManager.teams.length === 1
     ? bestManager.teams[0]
     : bestManager.teams.slice(0, -1).join(', ') + ' and ' + bestManager.teams[bestManager.teams.length - 1];
-  
+
   weekTrophies.trophies.push({
     emoji: "🤖",
     title: "Best Manager",
-    value: `${teamList} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
+    value: <>{TN(teamList)} scored {bestManager.percentage.toFixed(1)}% of their optimal score!</>
   });
 }
 
 if (worstManager.benchPoints > 0 && worstManager.teams.length > 0) {
-  const teamList = worstManager.teams.length === 1 
+  const teamList = worstManager.teams.length === 1
     ? worstManager.teams[0]
     : worstManager.teams.slice(0, -1).join(', ') + ' and ' + worstManager.teams[worstManager.teams.length - 1];
-  
+
   weekTrophies.trophies.push({
     emoji: "🤡",
     title: "Worst Manager",
-    value: `${teamList} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
+    value: <>{TN(teamList)} left {worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring {worstManager.percentage.toFixed(1)}% of their optimal score.</>
   });
 }
 
@@ -5534,7 +5536,7 @@ setTrophyCounts(trophyCounts);
           {expandedWeeks.has(weekData.week) && (
             <div style={{ marginTop: 16 }}>
               {/* Final Scores (aligned names/scores, mobile-safe) */}
-<div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 6 }}>
+<div className="final-scores-card" style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 6 }}>
   <h4 style={{ marginTop: 0, marginBottom: 12, textAlign: "center" }}>Final Scores</h4>
 
   <style>{`
@@ -5613,8 +5615,8 @@ setTrophyCounts(trophyCounts);
                   }}>
                     <span style={{ fontSize: 24 }}>{trophy.emoji}</span>
                     <div>
-                      <div style={{ fontWeight: 600, marginBottom: 2 }}>{trophy.title}</div>
-                      <div style={{ fontSize: 14, color: "#64748b" }}>{trophy.value}</div>
+                      <div className="trophy-title" style={{ fontWeight: 600, marginBottom: 2 }}>{trophy.title}</div>
+                      <div className="trophy-value" style={{ fontSize: 14, color: "#64748b" }}>{trophy.value}</div>
                     </div>
                   </div>
                 ))}

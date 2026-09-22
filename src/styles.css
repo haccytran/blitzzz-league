@@ -1776,3 +1776,22 @@ body.theme-chargers .trophy-grid-mobile .trophy-row-bg {
   font-weight: 600;
   text-shadow: 0 0 8px rgba(255,194,14,0.45) !important;
 }
+
+/* Trophy Case / Hall of Fame award list (High score, Blow out, etc.):
+   title in gold, team-name sentence in Chargers powder blue */
+body.theme-chargers .trophy-title {
+  color: var(--accent) !important;
+}
+body.theme-chargers .trophy-value {
+  color: var(--ink) !important;
+}
+body.theme-chargers .trophy-team-name {
+  color: #FFFFFF !important;
+  font-weight: 700;
+}
+
+/* Final Scores card: same navy/slate gradient as the champion banner, no glow */
+body.theme-chargers .final-scores-card {
+  background: linear-gradient(135deg, #0C1E36 0%, #1B3A5C 50%, #0C1E36 100%) !important;
+  border: 1px solid var(--border);
+}

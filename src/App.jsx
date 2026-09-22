@@ -171,6 +171,30 @@ function leagueWeekOf(date, seasonYear){
   return { week, start, key: localDateKey(start) };
 }
 
+// 2026-09-22: like leagueWeekOf, but always uses ESPN's raw currentMatchupPeriod
+// (anchor.week) instead of the Tuesday-shifted anchor.txWeek. That shift exists
+// so a transaction made late Monday night/early Tuesday still counts toward the
+// PRIOR week for dues purposes - correct for transactions/waivers, but wrong for
+// "how many weeks of games are complete": by Tuesday, last week's games have been
+// over for a day, so that count should NOT be shifted back. Power Rankings and
+// Luck Index were both calling leagueWeekOf for this and silently under-counting
+// by one week every Tuesday (e.g. showing only 1 week of games played when 2
+// weeks had actually finished) - this is what to use for that instead.
+function completedGamesWeekOf(date, seasonYear){
+  const start = startOfLeagueWeekPT(date);
+  const anchor = __espnWeekAnchor[seasonYear];
+  if (anchor) {
+    const weeksOffset = Math.round((start - anchor.start) / (7*24*60*60*1000));
+    let week = anchor.week + weeksOffset;
+    if (week < 1) week = 0;
+    return { week, start, key: localDateKey(start) };
+  }
+  const week1 = startOfLeagueWeekPT(firstWednesdayOfSeptemberPT(seasonYear));
+  let week = Math.floor((start - week1) / (7*24*60*60*1000)) + 1;
+  if (start < week1) week = 0;
+  return { week, start, key: localDateKey(start) };
+}
+
 function weekKeyFrom(w){ return w.key || localDateKey(w.start || new Date()) }
 function localDateKey(d){ const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const da=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${da}` }
 function fmtShort(d){ return toPT(d).toLocaleDateString(undefined,{month:"short", day:"numeric"}) }
@@ -3056,13 +3080,6 @@ for (let i = 0; i < rows.length; i++) {
 }
   
   return combinedRows.map((r, index) => {
-    // 2026-09-22: was `r.pairNumber % 2`, which only ADD+DROP swap rows
-    // ever had set (Math.floor(combinedRows.length / 2) at push time) -
-    // any standalone add/drop got pairNumber=undefined, and worse, two
-    // unrelated transactions landing at positions 0 and 1 both computed
-    // pairNumber 0 and shared the same shade. Since combinedRows already
-    // holds exactly one entry per transaction (paired or standalone),
-    // alternating on its own index here is correct and simpler.
     const isShaded = index % 2 === 0;
     const backgroundColor = isShaded ? "#fffbeb" : "transparent";
 
@@ -3175,8 +3192,6 @@ for (let i = 0; i < rows.length; i++) {
 }
     
     return combinedRows.map((r, i) => {
-      // 2026-09-22: same fix as the desktop table above - alternate by
-      // this row's own position instead of the broken r.pairNumber.
       const isShaded = i % 2 === 0;
       const backgroundColor = isShaded ? "#fffbeb" : "transparent";
       
@@ -6013,6 +6028,14 @@ function NerdDataView({ espn, config, seasonYear, btnPri, btnSec }) {
   setLoading(true);
   try {
     // Calculate the current completed week
+    // 2026-09-22: deliberately still leagueWeekOf here, not
+    // completedGamesWeekOf - unlike Power Rankings below, this doesn't
+    // subtract 1 from the in-progress week, so it was already relying on
+    // leagueWeekOf's Tuesday shift to land on the right "completed" week on
+    // Tuesdays specifically. Changing it without separately fixing that -1
+    // would make this wrong on the other six days instead. Leaving as-is
+    // since nothing was reported broken here - revisit together if that
+    // changes.
     const now = new Date();
     const weekCalc = leagueWeekOf(now, seasonYear);
     const currentInProgressWeek = weekCalc.week || 1;
@@ -6306,9 +6329,17 @@ const sortedRankings = [...rankings].sort((a, b) => {
     setError("");
 
     try {
-      // Calculate current week - use last COMPLETED week
+      // Calculate current week - use last COMPLETED week.
+      // 2026-09-22: completedGamesWeekOf, not leagueWeekOf - leagueWeekOf
+      // shifts the week back by one on Tuesdays (for transaction/dues
+      // bucketing, where that's correct), which made this under-count by
+      // one on Tuesdays: e.g. right now ESPN's real current matchup period
+      // is 3 (2 weeks of games actually finished), but leagueWeekOf reported
+      // 2 on a Tuesday, so this subtracted 1 again and showed only 1 week of
+      // games played instead of 2. See completedGamesWeekOf's comment near
+      // the top of this file.
       const now = new Date();
-      const weekCalc = leagueWeekOf(now, seasonYear);
+      const weekCalc = completedGamesWeekOf(now, seasonYear);
       const currentInProgressWeek = weekCalc.week || 1;
       const completedWeek = Math.max(1, currentInProgressWeek - 1);
       setCurrentWeek(completedWeek);

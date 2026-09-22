@@ -112,11 +112,19 @@ def power_points(dominance_matrix, teams_data, team_stats):
     
     return power_dict
 
-def calculate_team_power_rankings(league_id, year, current_week, espn_s2, swid):
-    """Calculate power rankings using dominance matrix - shared logic for both endpoints"""
-    league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
-    schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
-    
+def calculate_team_power_rankings(league_id, year, current_week, espn_s2, swid, league_data=None, schedule_data=None):
+    """Calculate power rankings using dominance matrix - shared logic for both endpoints.
+
+    2026-09-22: league_data/schedule_data can be passed in by a caller that
+    already fetched them (e.g. a combined mTeam+mMatchup call), so this
+    doesn't hit ESPN a second time for data the route already has. Only
+    fetches on its own (as one combined call, not two separate ones) when a
+    caller doesn't supply them."""
+    if league_data is None or schedule_data is None:
+        combined = fetch_espn_data(league_id, year, espn_s2, swid, view=["mTeam", "mMatchup"])
+        league_data = combined
+        schedule_data = combined
+
     teams = league_data.get('teams', [])
     schedule = schedule_data.get('schedule', [])
     
@@ -233,25 +241,66 @@ def calculate_team_power_rankings(league_id, year, current_week, espn_s2, swid):
     
     return power_ranks, team_stats
 
+class ESPNAuthError(Exception):
+    """ESPN returned 401 - espn_s2/SWID cookies are missing, wrong, or expired."""
+    pass
+
+
+class ESPNLeagueNotFoundError(Exception):
+    """ESPN returned 404 - the league ID doesn't exist for that season."""
+    pass
+
+
 def fetch_espn_data(league_id, year, espn_s2=None, swid=None, view="mTeam", scoring_period=None):
-    """Fetch data directly from ESPN API"""
+    """Fetch data directly from ESPN API.
+
+    `view` can be a single view name ("mTeam") or a list of view names
+    (["mTeam", "mMatchup", "mSettings"]). 2026-09-22: ESPN's API accepts
+    several views in one request and merges all their data into a single
+    response - passing a list here sends one HTTP request instead of one
+    per view (confirmed against the community espn-api library, which does
+    the same thing in its own get_league()). Every route in this file used
+    to call this function once per view and just merge the dicts itself;
+    that's slower and, under Render's request timeout, more likely to leave
+    a page showing data from some views but not others. Callers can still
+    pass a single view name for a one-off, targeted fetch (e.g. the
+    /debug-espn-data route, which deliberately fetches each view separately
+    so a failure in one doesn't hide the others).
+    """
     url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{league_id}"
-    
+
     cookies = {}
     if espn_s2:
         cookies["espn_s2"] = unquote(espn_s2)
     if swid:
         cookies["SWID"] = unquote(swid)
-    
-    params = {"view": view}
+
+    params = {"view": view if isinstance(view, list) else [view]}
     if scoring_period:
         params["scoringPeriodId"] = scoring_period
-    
+
     response = requests.get(url, cookies=cookies, params=params)
-    
+
+    # 2026-09-22: distinguish *why* ESPN rejected the request instead of a
+    # generic "ESPN API returned 401/404" - this is what the community
+    # espn-api library does too (ESPNAccessDenied vs ESPNInvalidLeague), and
+    # it makes Render's logs immediately tell you which of "cookies expired"
+    # vs "wrong league ID/season" vs "ESPN is having issues" you're looking
+    # at, instead of having to go dig through a raw status code.
+    if response.status_code == 401:
+        raise ESPNAuthError(
+            "ESPN rejected this request (401 Unauthorized) - the espn_s2/SWID "
+            "cookies are missing, wrong, or have expired. Check the ESPN_S2 "
+            "and SWID environment variables."
+        )
+    if response.status_code == 404:
+        raise ESPNLeagueNotFoundError(
+            f"ESPN has no league {league_id} for season {year} (404 Not Found) - "
+            "double check the league ID and season/year."
+        )
     if response.status_code != 200:
-        raise Exception(f"ESPN API returned {response.status_code}")
-    
+        raise Exception(f"ESPN API returned unexpected status {response.status_code}")
+
     return response.json()
 
 @app.route('/health', methods=['GET'])
@@ -271,15 +320,23 @@ def calculate_power_rankings():
     
         if not league_id or not year:
             return jsonify({"error": "leagueId and year are required"}), 400
-        
+
+        # 2026-09-22: this route used to fetch mTeam+mMatchup once inside
+        # calculate_team_power_rankings, then fetch the exact same two views
+        # AGAIN right here for the all-play calculation below - 4 ESPN calls
+        # for data that's really just 1. Fetch it once, combined, and hand
+        # it to both.
+        combined = fetch_espn_data(league_id, year, espn_s2, swid, view=["mTeam", "mMatchup"])
+        league_data = combined
+        schedule_data = combined
+
         # Get power rankings using dominance matrix
         power_ranks, team_stats = calculate_team_power_rankings(
-            league_id, year, current_week, espn_s2, swid
+            league_id, year, current_week, espn_s2, swid,
+            league_data=league_data, schedule_data=schedule_data
         )
-        
+
         # Calculate all-play records
-        league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
-        schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
         schedule = schedule_data.get('schedule', [])
 
         all_week_scores = {}
@@ -394,9 +451,12 @@ def calculate_playoff_odds():
         
         print(f"[PLAYOFF ODDS] Starting calculation for league {league_id}, year {year}, current week {current_week}")
         
-        league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
-        schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
-        settings_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mSettings")
+        # 2026-09-22: mTeam+mMatchup+mSettings in one combined call instead of
+        # three separate ESPN requests - see fetch_espn_data's docstring.
+        combined = fetch_espn_data(league_id, year, espn_s2, swid, view=["mTeam", "mMatchup", "mSettings"])
+        league_data = combined
+        schedule_data = combined
+        settings_data = combined
 
         teams = league_data.get('teams', [])
         schedule = schedule_data.get('schedule', [])
@@ -710,9 +770,11 @@ def calculate_luck_index():
         
         print(f"[LUCK INDEX] Request: league={league_id}, year={year}, week={current_week}")  # ADD THIS
         
-        schedule_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mMatchup")
+        # 2026-09-22: combined call instead of two separate ones.
+        combined = fetch_espn_data(league_id, year, espn_s2, swid, view=["mMatchup", "mTeam"])
+        schedule_data = combined
         schedule = schedule_data.get('schedule', [])
-        league_data = fetch_espn_data(league_id, year, espn_s2, swid, view="mTeam")
+        league_data = combined
         team_names = {}
         for team in league_data.get('teams', []):
             team_names[team['id']] = team.get('name', f"Team {team['id']}")
@@ -986,10 +1048,13 @@ def strength_of_schedule_endpoint():
         print(f"[SOS] Received: league={league_id}, season={season_id}, week={current_week}")
         print(f"[SOS] Credentials: espn_s2={bool(espn_s2)}, swid={bool(swid)}")  # ADD THIS DEBUG LINE
                 
-        # Fetch all data at once (FAST!)
-        league_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mTeam")
-        schedule_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mMatchup")
-        settings_data = fetch_espn_data(league_id, season_id, espn_s2, swid, view="mSettings")
+        # Fetch all data at once (FAST!) - 2026-09-22: this comment used to be
+        # aspirational (it was actually 3 separate calls below); now it's
+        # really one combined call.
+        combined = fetch_espn_data(league_id, season_id, espn_s2, swid, view=["mTeam", "mMatchup", "mSettings"])
+        league_data = combined
+        schedule_data = combined
+        settings_data = combined
 
         teams = league_data.get('teams', [])
         schedule = schedule_data.get('schedule', [])
@@ -1049,8 +1114,13 @@ def strength_of_schedule_endpoint():
                 'gamesPlayed': games_played
             }
         
-        # Calculate power rankings
-        power_ranks, _ = calculate_team_power_rankings(league_id, season_id, current_week, espn_s2, swid)
+        # Calculate power rankings - reuse the mTeam+mMatchup data already
+        # fetched above instead of calculate_team_power_rankings fetching
+        # them again itself.
+        power_ranks, _ = calculate_team_power_rankings(
+            league_id, season_id, current_week, espn_s2, swid,
+            league_data=league_data, schedule_data=schedule_data
+        )
         
         # Calculate SOS for each team
         sos_results = []

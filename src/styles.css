@@ -1566,3 +1566,212 @@ body.sculpin-league .final-standings-grid-mobile .final-standings-row-bg {
     margin-bottom: 4px;
   }
 }
+
+
+/* ========================================
+   CHARGERS THEME (toggle-able, adds onto blitzzz-league)
+   To test: add class 'theme-chargers' to body (see Part 2)
+   To revert: remove that one class — nothing else changes
+   ======================================== */
+
+body.theme-chargers {
+  --bg: #061224;
+  --surface: #0C1E36;
+  --border: #1E324F;
+  --ink: #7EC8E3;
+  --muted: #8FA2BD;
+  --primary: #0080C6;
+  --primary-600: #006ba6;
+  --accent: #FFC20E;
+  --brand-primary: #0080C6;
+  --brand-accent: #FFC20E;
+}
+
+body.theme-chargers {
+  background: var(--bg);
+}
+
+/* Cards: depth instead of flat white */
+body.theme-chargers .card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+body.theme-chargers .card:hover {
+  border-color: var(--primary);
+}
+
+/* Sidebar / header: metallic navy-to-gold instead of flat blue */
+body.theme-chargers .app-shell .sidebar,
+body.theme-chargers .mobile-header {
+  background: linear-gradient(180deg, #0C1E36 0%, #061224 100%) !important;
+  border-right: 1px solid var(--border);
+}
+
+body.theme-chargers .sidebar,
+body.theme-chargers .sidebar * {
+  color: var(--muted) !important;
+}
+
+body.theme-chargers .sidebar .brand-title {
+  color: var(--ink) !important;
+}
+
+/* Nav links */
+body.theme-chargers .navlink {
+  color: var(--muted) !important;
+}
+body.theme-chargers .navlink:hover {
+  background: rgba(255,194,14,0.10);
+  border-color: rgba(255,194,14,0.35);
+}
+body.theme-chargers .navlink.nav-active {
+  background: rgba(255,194,14,0.18) !important;
+  border-color: var(--accent) !important;
+  color: var(--ink) !important;
+}
+
+/* Buttons */
+body.theme-chargers .btn {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--border);
+}
+body.theme-chargers .btn.primary {
+  background: var(--accent) !important;
+  color: #061224 !important;
+  border-color: transparent;
+  font-weight: 600;
+}
+body.theme-chargers .btn.primary:hover {
+  background: #FFD84D !important;
+}
+body.theme-chargers .btn-commish {
+  background: var(--accent) !important;
+  color: #061224 !important;
+}
+body.theme-chargers .btn-commish:hover {
+  background: #FFD84D !important;
+}
+
+/* Badges */
+body.theme-chargers .badge {
+  background: rgba(255,194,14,0.12);
+  border: 1px solid rgba(255,194,14,0.4);
+  color: var(--accent);
+}
+
+/* Table rows inside cards */
+body.theme-chargers .card table th,
+body.theme-chargers .card table td {
+  border-color: var(--border) !important;
+  color: var(--ink);
+}
+body.theme-chargers .card table thead th {
+  color: var(--muted) !important;
+}
+
+/* ---- Chargers theme refinements: fix bright/low-contrast spots ---- */
+/* NOTE: browsers reflect inline colors as rgb(), not hex — these match the
+   real rendered attribute values, confirmed directly in the running app. */
+
+/* Generic near-white panels (buy-in list, admin payment box, announcement
+   editor, weekly-winner rows, etc.) -> dark panel instead of near-white */
+body.theme-chargers [style*="rgb(248, 250, 252)"] {
+  background: #132A48 !important;
+  border-color: var(--border) !important;
+}
+
+/* Trophy Case reason boxes: solid white -> dark card */
+body.theme-chargers [style*="background: rgb(255, 255, 255)"] {
+  background: #132A48 !important;
+  border-color: var(--border) !important;
+  color: var(--ink) !important;
+}
+
+/* Recent Activity / Transactions zebra-stripe rows: pale yellow -> subtle gold tint */
+body.theme-chargers [style*="rgb(255, 251, 235)"] {
+  background-color: rgba(125, 200, 227, 0.08) !important;
+}
+
+/* Waivers/Dues neutral black numbers -> theme ink (red/green ones untouched) */
+body.theme-chargers [style*="color: rgb(0, 0, 0)"] {
+  color: var(--ink) !important;
+}
+
+/* Hall of Fame champion banner: pale yellow card -> stands out from regular navy cards */
+body.theme-chargers [style*="background: rgb(255, 248, 225)"] {
+  background: linear-gradient(135deg, #0C1E36 0%, #1B3A5C 50%, #0C1E36 100%) !important;
+  border: 2px solid var(--accent) !important;
+  box-shadow: 0 0 45px rgba(255,194,14,0.45), 0 4px 20px rgba(0,0,0,0.4) !important;
+}
+
+/* Real <input>/<textarea> fields: match the Announcements editor's dark field
+   look (Trading Block, Pay Dues, etc. all share the .input class) */
+body.theme-chargers .input {
+  background: #132A48;
+  color: var(--ink);
+  border-color: var(--border);
+}
+body.theme-chargers .input::placeholder {
+  color: var(--muted);
+}
+
+/* "LEAGUE CHAMPION" label + secondary brown/slate text -> legible on navy */
+body.theme-chargers [style*="rgb(146, 64, 14)"] {
+  color: var(--accent) !important;
+}
+body.theme-chargers [style*="rgb(51, 65, 85)"] {
+  color: var(--muted) !important;
+}
+
+/* Muted secondary text used everywhere (timestamps, sub-labels) */
+body.theme-chargers [style*="rgb(100, 116, 139)"] {
+  color: var(--muted) !important;
+}
+
+/* Light dividers between rows -> theme border color instead of near-white */
+body.theme-chargers [style*="rgb(226, 232, 240)"],
+body.theme-chargers [style*="rgb(229, 231, 235)"] {
+  border-color: var(--border) !important;
+}
+
+/* Weekly Challenges winner box: pale blue -> subtle navy/gold */
+body.theme-chargers [style*="background: rgb(240, 249, 255)"] {
+  background: rgba(255,194,14,0.08) !important;
+  border-color: var(--accent) !important;
+}
+body.theme-chargers [style*="rgb(0, 102, 204)"] {
+  color: var(--accent) !important;
+}
+
+/* Final Standings Odds: sticky white team-name column -> dark */
+body.theme-chargers td[style*="background: rgb(255, 255, 255)"],
+body.theme-chargers th[style*="background: rgb(255, 255, 255)"],
+body.theme-chargers td[style*="background: white"],
+body.theme-chargers th[style*="background: white"] {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+}
+
+/* Draft Recap round/pick numbers (and a couple other dark-on-light labels):
+   Chargers baby blue instead of near-black */
+body.theme-chargers [style*="rgb(11, 18, 32)"] {
+  color: #7EC8E3 !important;
+}
+
+/* Trophy Case "Final Scores" winning team names: near-black -> Chargers gold */
+body.theme-chargers [style*="color: rgb(17, 24, 39)"] {
+  color: var(--accent) !important;
+}
+
+/* Trophy Leaderboard team names: cleaner, single soft glow instead of the
+   4-layer neon blur (which reads muddy on the navy background) */
+body.theme-chargers .trophy-table-desktop th:first-child,
+body.theme-chargers .trophy-table-desktop td:first-child {
+  color: var(--accent) !important;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(255,194,14,0.45) !important;
+}

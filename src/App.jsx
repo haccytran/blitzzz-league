@@ -1642,14 +1642,12 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
       try {
         if (!anchor) continue; // ESPN's real anchor isn't loaded - don't guess with a stale date on a money feature
 
-        // Week N's window is Wed 12:00am PT through Tue 11:59pm PT.
-        // "Tuesday of week N" = that week's Wednesday start + 6 days.
-        const weekStart = new Date(anchor.start);
-        weekStart.setDate(weekStart.getDate() + (week - anchor.week) * 7);
-        const revealAt = new Date(weekStart);
-        revealAt.setDate(revealAt.getDate() + 6);
-
-        if (new Date() < revealAt) continue;
+        // 2026-09-22: reveal a week's winner once ESPN has moved PAST it.
+        // anchor.week is ESPN's real currentMatchupPeriod (the week that's
+        // still in progress) - so any week strictly before it is done and
+        // safe to reveal, while anchor.week itself (and anything after it)
+        // is still being played and must stay hidden.
+        if (week >= anchor.week) continue;
 
         let winner = null;
         
@@ -4356,14 +4354,9 @@ function HighestScorerView({ espn, config, seasonYear, btnPri, btnSec }) {
 
         if (!anchor) return; // ESPN's real anchor isn't loaded - don't guess with a stale date
 
-        // Week N's window is Wed 12:00am PT through Tue 11:59pm PT.
-        // "Tuesday of week N" = that week's Wednesday start + 6 days.
-        const weekStart = new Date(anchor.start);
-        weekStart.setDate(weekStart.getDate() + (weekNum - anchor.week) * 7);
-        const revealAt = new Date(weekStart);
-        revealAt.setDate(revealAt.getDate() + 6);
-
-        if (new Date() < revealAt) return;
+        // 2026-09-22: reveal a week's highest scorer once ESPN has moved
+        // PAST it. Same fix as the weekly-challenge loader above.
+        if (weekNum >= anchor.week) return;
 
         let highestScore = 0;
         let winningTeam = "";

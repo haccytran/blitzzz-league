@@ -312,7 +312,12 @@ app.get('/api/leagues/:leagueId/season-records', async (req, res) => {
     };
     const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
     
-    const response = await fetch(`http://localhost:5001/season-records?leagueId=${espnLeagueId}`);
+    // 2026-09-22: was hardcoded to localhost:5001, which only ever works
+    // when this Node process and the Python service happen to run on the
+    // same machine - on Render they're two separate services, so this
+    // always failed in production. PYTHON_SERVICE_URL already resolves to
+    // the right host in both environments (see its definition above).
+    const response = await fetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -329,7 +334,8 @@ app.get('/api/leagues/:leagueId/positional-records', async (req, res) => {
     };
     const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
     
-    const response = await fetch(`http://localhost:5001/positional-records?leagueId=${espnLeagueId}`);
+    // 2026-09-22: same PYTHON_SERVICE_URL fix as season-records above.
+    const response = await fetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -738,7 +744,8 @@ app.get("/api/leagues/:leagueId/streaming-analysis/:seasonId", async (req, res) 
     const leagueConfigs = { 'blitzzz': '226912', 'sculpin': '58645' };
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
-    const response = await fetch(`http://localhost:5001/streaming-analysis?leagueId=${espnLeagueId}&year=${seasonId}`);
+    // 2026-09-22: was hardcoded to localhost:5001 - see PYTHON_SERVICE_URL fix note below.
+    const response = await fetch(`${PYTHON_SERVICE_URL}/streaming-analysis?leagueId=${espnLeagueId}&year=${seasonId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -754,7 +761,12 @@ app.get("/api/leagues/:leagueId/season-records/:seasonId", async (req, res) => {
     const leagueConfigs = { 'blitzzz': '226912', 'sculpin': '58645' };
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
-    const response = await fetch(`http://localhost:5001/season-records?leagueId=${espnLeagueId}`);
+    // 2026-09-22: was hardcoded to localhost:5001, which never resolves
+    // to the actual Python service on Render (it's a separate service
+    // there, at PYTHON_SERVICE_URL) - this is why /#nerddata was blank
+    // in production. This is the route the frontend actually calls
+    // (with :seasonId); the earlier duplicate route above got the same fix.
+    const response = await fetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -770,7 +782,8 @@ app.get("/api/leagues/:leagueId/positional-records/:seasonId", async (req, res) 
     const leagueConfigs = { 'blitzzz': '226912', 'sculpin': '58645' };
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
-    const response = await fetch(`http://localhost:5001/positional-records?leagueId=${espnLeagueId}`);
+    // 2026-09-22: same PYTHON_SERVICE_URL fix as season-records above.
+    const response = await fetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {

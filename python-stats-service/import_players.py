@@ -67,9 +67,17 @@ def fetch_boxscore(year, week):
 
 def get_position_name(position_id):
     """Convert ESPN position ID to position name"""
+    # 2026-09-22: this table was wrong for defaultPositionId (it was really
+    # ESPN's lineupSlotId scheme). Confirmed against ESPN's live mBoxscore
+    # data: 1=QB, 2=RB, 3=WR, 4=TE, 5=K, 16=D/ST. The old table had QB
+    # missing (0 instead of 1), WR missing (4 instead of 3) - and worse, its
+    # 4 pointed to "WR" while 4 is actually TE, so every real TE got stored
+    # as a WR. QB, WR and K all silently fell through to "FLEX". See
+    # fix_player_positions.py for the one-time correction of rows already
+    # imported with the old, wrong mapping.
     positions = {
-        0: "QB", 2: "RB", 4: "WR", 6: "TE", 
-        16: "D/ST", 17: "K", 20: "Bench"
+        1: "QB", 2: "RB", 3: "WR", 4: "TE",
+        5: "K", 16: "D/ST", 20: "Bench"
     }
     return positions.get(position_id, "FLEX")
 

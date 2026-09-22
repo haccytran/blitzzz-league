@@ -847,34 +847,60 @@ def get_season_records():
             LIMIT 1
         """, (league_id,))
         lowest_score = cur.fetchone()
-        
+
+        # 2026-09-22: team names weren't being resolved here at all (every
+        # other endpoint in this file - luck-index, playoff-odds, streaming
+        # - already does this), so the frontend's teamName lookups always
+        # came back empty. A team's name/owner can change between seasons,
+        # so this is keyed by (team_id, league_year), not just team_id.
+        cur.execute("""
+            SELECT DISTINCT team_id, league_year, team_name
+            FROM teams
+            WHERE league_id = %s
+        """, (league_id,))
+        team_names = {(row['team_id'], row['league_year']): row['team_name'] for row in cur.fetchall()}
+
+        def name_for(row):
+            if not row:
+                return None
+            return team_names.get((row['team_id'], row['league_year']), f"Team {row['team_id']}")
+
         cur.close()
         conn.close()
-        
+
         records = {
             'mostWins': {
                 'teamId': most_wins['team_id'] if most_wins else None,
+                'teamName': name_for(most_wins),
                 'year': most_wins['league_year'] if most_wins else None,
+                'wins': most_wins['wins'] if most_wins else 0,
                 'value': most_wins['wins'] if most_wins else 0
             },
             'highestScore': {
                 'teamId': highest_score['team_id'] if highest_score else None,
+                'teamName': name_for(highest_score),
                 'year': highest_score['league_year'] if highest_score else None,
                 'week': highest_score['week'] if highest_score else None,
+                'score': float(highest_score['team_score']) if highest_score else 0,
                 'value': float(highest_score['team_score']) if highest_score else 0
             },
             'mostPointsFor': {
                 'teamId': most_pf['team_id'] if most_pf else None,
+                'teamName': name_for(most_pf),
                 'year': most_pf['league_year'] if most_pf else None,
+                'points': float(most_pf['total_pf']) if most_pf else 0,
                 'value': float(most_pf['total_pf']) if most_pf else 0
             },
             'mostPointsAgainst': {
                 'teamId': most_pa['team_id'] if most_pa else None,
+                'teamName': name_for(most_pa),
                 'year': most_pa['league_year'] if most_pa else None,
+                'points': float(most_pa['total_pa']) if most_pa else 0,
                 'value': float(most_pa['total_pa']) if most_pa else 0
             },
             'biggestBlowout': {
                 'teamId': biggest_blowout['team_id'] if biggest_blowout else None,
+                'teamName': name_for(biggest_blowout),
                 'opponentId': biggest_blowout['opponent_id'] if biggest_blowout else None,
                 'year': biggest_blowout['league_year'] if biggest_blowout else None,
                 'week': biggest_blowout['week'] if biggest_blowout else None,
@@ -882,12 +908,14 @@ def get_season_records():
             },
             'lowestScore': {
                 'teamId': lowest_score['team_id'] if lowest_score else None,
+                'teamName': name_for(lowest_score),
                 'year': lowest_score['league_year'] if lowest_score else None,
                 'week': lowest_score['week'] if lowest_score else None,
+                'score': float(lowest_score['team_score']) if lowest_score else 0,
                 'value': float(lowest_score['team_score']) if lowest_score else 0
             }
         }
-        
+
         return jsonify({'seasonRecords': records}), 200
         
     except Exception as e:
@@ -1299,7 +1327,10 @@ def import_transactions():
                 player = p.get('player', {})
                 player_id = player.get('id')
                 if player_id:
-                    position_map = {0: 'QB', 2: 'RB', 4: 'WR', 6: 'TE', 16: 'D/ST', 17: 'K'}
+                    # 2026-09-22: same wrong defaultPositionId mapping fixed
+                    # in import_players.py's get_position_name - see the
+                    # comment there for the real ESPN values.
+                    position_map = {1: 'QB', 2: 'RB', 3: 'WR', 4: 'TE', 5: 'K', 16: 'D/ST'}
                     player_info_map[player_id] = {
                         'name': player.get('fullName', f'Player {player_id}'),
                         'position': position_map.get(player.get('defaultPositionId'), 'UNKNOWN')

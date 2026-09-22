@@ -1293,6 +1293,39 @@ app.get("/api/leagues/:leagueId/snapshot/:seasonId/:weekNumber", async (req, res
   }
 });
 
+// Get the pre-computed Trophy Case cache for a season, if one has been
+// built yet. This is what src/App.jsx's Trophy Case page reads FIRST,
+// instead of recalculating every trophy from scratch on every page load -
+// see computeTrophyCaseData()/refreshTrophyCaseCacheIfNeeded() below for how
+// this cache actually gets built (automatically, in the background, once a
+// week's games are all final - no page visit required to trigger it).
+app.get("/api/leagues/:leagueId/trophy-case-cache/:seasonId", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+
+    const leagueConfigs = {
+      'blitzzz': '226912',
+      'sculpin': '58645'
+    };
+
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+
+    const cache = await getTrophyCaseCache(espnLeagueId, seasonId);
+
+    if (cache) {
+      res.json(cache);
+    } else {
+      // Nothing computed yet (brand new season, or the very first auto-
+      // refresh cycle hasn't run yet). The frontend falls back to computing
+      // live from ESPN itself when it gets a 404 here, so this is safe.
+      res.status(404).json({ error: "Trophy Case cache not built yet" });
+    }
+  } catch (error) {
+    console.error('Failed to retrieve Trophy Case cache:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get all snapshots for a season
 app.get("/api/leagues/:leagueId/snapshots/:seasonId", async (req, res) => {
   try {
@@ -3514,6 +3547,508 @@ async function getSeasonSnapshots(leagueId, seasonId) {
   }
 }
 
+/* =========================================================
+   Trophy Case server-side cache
+   =========================================================
+   Why this exists: the Trophy Case page used to recalculate every trophy
+   (High Score, Blow Out, Overachiever, etc.) from scratch, live, in every
+   visitor's own browser, every single time they opened the page - lots of
+   redundant ESPN-derived work for data that's actually final and unchanging
+   once a week's games are over. Since a week's trophies can't change once
+   Monday Night Football ends, we compute them ONCE here in the background
+   (piggybacking on the auto-refresh cycle that already runs every 30
+   minutes in-season) and save the result. The frontend then just fetches
+   this saved copy instead of recalculating anything.
+
+   Storage: reuses the existing weekly_snapshots table with the sentinel
+   week_number = 0 (a real week is always >= 1, so this can never collide
+   with an actual week's snapshot) - no new database table/migration
+   needed. Falls back to a JSON file on disk when there's no database
+   configured, exactly like every other snapshot function in this file.
+   ========================================================= */
+
+async function saveTrophyCaseCache(leagueId, seasonId, cache) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO weekly_snapshots (league_id, season_id, week_number, snapshot_data)
+        VALUES ($1, $2, 0, $3)
+        ON CONFLICT (league_id, season_id, week_number)
+        DO UPDATE SET snapshot_data = $3, created_at = CURRENT_TIMESTAMP
+      `, [leagueId, seasonId, JSON.stringify(cache)]);
+    } finally {
+      client.release();
+    }
+  } else {
+    await writeJson(`trophycase_${leagueId}_${seasonId}.json`, cache);
+  }
+}
+
+async function getTrophyCaseCache(leagueId, seasonId) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT snapshot_data FROM weekly_snapshots WHERE league_id = $1 AND season_id = $2 AND week_number = 0',
+        [leagueId, seasonId]
+      );
+      return result.rows.length > 0 ? result.rows[0].snapshot_data : null;
+    } finally {
+      client.release();
+    }
+  } else {
+    return await readJson(`trophycase_${leagueId}_${seasonId}.json`, null);
+  }
+}
+
+// Same projection helpers as src/App.jsx's ht_projectedForWeek/
+// ht_teamProjection (kept deliberately identical in logic - see the long
+// comment on the client-side version for why we sum each starter's frozen
+// pre-game projected stat line instead of trusting ESPN's live-updating
+// team-level projection field).
+function ht_isBenchSlot(slotId) { return slotId === 20 || slotId === 21; }
+
+function ht_projectedForWeek(playerObj, week) {
+  const stats = playerObj?.stats;
+  if (!Array.isArray(stats)) return 0;
+  const row = stats.find(
+    s => s?.scoringPeriodId === week && s?.statSourceId === 1 && s?.statSplitTypeId === 1
+  );
+  return Number(row?.appliedTotal ?? 0);
+}
+
+function ht_teamProjection(teamSideObj, week) {
+  const entries =
+    teamSideObj?.rosterForCurrentScoringPeriod?.entries ||
+    teamSideObj?.roster?.entries ||
+    [];
+
+  if (entries.length > 0) {
+    let sum = 0;
+    let counted = 0;
+    for (const e of entries) {
+      if (ht_isBenchSlot(e?.lineupSlotId)) continue;
+      const player = e?.playerPoolEntry?.player;
+      sum += ht_projectedForWeek(player, week);
+      counted++;
+    }
+    if (counted > 0) return sum;
+  }
+
+  const teamLevel =
+    teamSideObj?.totalProjectedPoints ??
+    teamSideObj?.totalProjectedPointsLive ??
+    null;
+  if (teamLevel != null && isFinite(teamLevel)) return Number(teamLevel);
+
+  return 0;
+}
+
+// Same optimal-lineup calculation as src/App.jsx's calculateOptimalScore -
+// kept in lockstep with that version since this is what "Best/Worst
+// Manager" (bench points left, % of optimal score) is based on.
+function calculateOptimalScore(teamData) {
+  if (!teamData?.rosterForCurrentScoringPeriod?.entries) return teamData?.totalPoints || 0;
+
+  const entries = teamData.rosterForCurrentScoringPeriod.entries;
+  const playersByPosition = { QB: [], RB: [], WR: [], TE: [], K: [], DEF: [] };
+
+  entries.forEach(entry => {
+    const pos = entry.playerPoolEntry?.player?.defaultPositionId;
+    const score = entry.playerPoolEntry?.appliedStatTotal || 0;
+    const playerId = entry.playerPoolEntry?.player?.id || Math.random();
+
+    let position;
+    switch (pos) {
+      case 1: position = 'QB'; break;
+      case 2: position = 'RB'; break;
+      case 3: position = 'WR'; break;
+      case 4: position = 'TE'; break;
+      case 6: position = 'TE'; break;
+      case 5: position = 'K'; break;
+      case 16: position = 'DEF'; break;
+      default: return;
+    }
+
+    playersByPosition[position].push({ score, playerId });
+  });
+
+  Object.keys(playersByPosition).forEach(pos => {
+    playersByPosition[pos].sort((a, b) => b.score - a.score);
+  });
+
+  let optimal = 0;
+  const usedPlayerIds = new Set();
+
+  const takeNext = (list) => {
+    for (const player of list) {
+      if (!usedPlayerIds.has(player.playerId)) {
+        usedPlayerIds.add(player.playerId);
+        return player.score;
+      }
+    }
+    return 0;
+  };
+
+  optimal += takeNext(playersByPosition.QB);
+  optimal += takeNext(playersByPosition.K);
+  optimal += takeNext(playersByPosition.DEF);
+  optimal += takeNext(playersByPosition.TE);
+  optimal += takeNext(playersByPosition.RB);
+  optimal += takeNext(playersByPosition.RB);
+  optimal += takeNext(playersByPosition.WR);
+  optimal += takeNext(playersByPosition.WR);
+
+  const rbWrCombined = [...playersByPosition.RB, ...playersByPosition.WR].sort((a, b) => b.score - a.score);
+  optimal += takeNext(rbWrCombined);
+
+  const flexCombined = [...playersByPosition.RB, ...playersByPosition.WR, ...playersByPosition.TE].sort((a, b) => b.score - a.score);
+  optimal += takeNext(flexCombined);
+
+  return optimal;
+}
+
+// Builds one week's trophies exactly like src/App.jsx's processWeek did,
+// but reading from the weekly_snapshots data that captureWeeklySnapshot()
+// already stores (see the auto-refresh loop above) instead of re-fetching
+// ESPN again - this week's data was just fetched a few lines up in
+// refreshTrophyCaseCacheIfNeeded(), so no extra ESPN calls happen here.
+function buildWeekTrophies(weekNum, teamNames, matchupSchedule, boxscoreSchedule) {
+  const boxByTeamId = {};
+  for (const row of (boxscoreSchedule || [])) {
+    if (row?.matchupPeriodId !== weekNum) continue;
+    if (row.home?.teamId != null) boxByTeamId[row.home.teamId] = row.home;
+    if (row.away?.teamId != null) boxByTeamId[row.away.teamId] = row.away;
+  }
+
+  const matchups = (matchupSchedule || []).filter(m => m.matchupPeriodId === weekNum && m.home && m.away);
+  if (matchups.length === 0) return null;
+
+  const allGamesComplete = matchups.every(m =>
+    m.home?.totalPoints > 0 && m.away?.totalPoints > 0 && m.winner !== 'UNDECIDED'
+  );
+  if (!allGamesComplete) return null;
+
+  const weekTrophies = { week: weekNum, matchups: [], trophies: [] };
+
+  let highScore = { team: "", score: 0 };
+  let lowScore = { team: "", score: Infinity };
+  let biggestBlowout = { winner: "", loser: "", margin: 0 };
+  let closestWin = { winner: "", loser: "", margin: Infinity };
+  let bestManager = { teams: [], percentage: -1 };
+  let worstManager = { teams: [], percentage: 100, benchPoints: 0 };
+  let luckiestWin = null;
+  let unluckyLoss = null;
+  let __overT = { team: "", delta: -Infinity, actual: 0, proj: 0 };
+  let __underT = { team: "", delta: Infinity, actual: 0, proj: 0 };
+
+  const teamScores = [];
+  const teamOptimalScores = {};
+
+  matchups.forEach(matchup => {
+    const homeScore = matchup.home.totalPoints || 0;
+    const awayScore = matchup.away.totalPoints || 0;
+    const homeTeam = teamNames[matchup.home.teamId];
+    const awayTeam = teamNames[matchup.away.teamId];
+
+    const homeBox = boxByTeamId[matchup.home.teamId] || matchup.home;
+    const awayBox = boxByTeamId[matchup.away.teamId] || matchup.away;
+
+    const homeOptimal = calculateOptimalScore(homeBox);
+    const awayOptimal = calculateOptimalScore(awayBox);
+    teamOptimalScores[matchup.home.teamId] = homeOptimal;
+    teamOptimalScores[matchup.away.teamId] = awayOptimal;
+
+    weekTrophies.matchups.push({
+      home: homeTeam, away: awayTeam,
+      homeScore: homeScore.toFixed(2), awayScore: awayScore.toFixed(2)
+    });
+
+    const homeProj = ht_teamProjection(homeBox, weekNum);
+    const awayProj = ht_teamProjection(awayBox, weekNum);
+    const homeDelta = homeScore - homeProj;
+    const awayDelta = awayScore - awayProj;
+
+    if (homeDelta > __overT.delta) __overT = { team: homeTeam, delta: homeDelta, actual: homeScore, proj: homeProj };
+    if (awayDelta > __overT.delta) __overT = { team: awayTeam, delta: awayDelta, actual: awayScore, proj: awayProj };
+    if (homeDelta < __underT.delta) __underT = { team: homeTeam, delta: homeDelta, actual: homeScore, proj: homeProj };
+    if (awayDelta < __underT.delta) __underT = { team: awayTeam, delta: awayDelta, actual: awayScore, proj: awayProj };
+
+    [{ team: homeTeam, score: homeScore }, { team: awayTeam, score: awayScore }].forEach(({ team, score }) => {
+      if (score > highScore.score) highScore = { team, score };
+      if (score < lowScore.score && score > 0) lowScore = { team, score };
+    });
+
+    const winner = homeScore > awayScore ? homeTeam : awayTeam;
+    const loser = homeScore > awayScore ? awayTeam : homeTeam;
+    const margin = Math.abs(homeScore - awayScore);
+    if (margin > biggestBlowout.margin) biggestBlowout = { winner, loser, margin };
+    if (margin < closestWin.margin) closestWin = { winner, loser, margin };
+
+    teamScores.push({ team: homeTeam, score: homeScore, won: homeScore > awayScore });
+    teamScores.push({ team: awayTeam, score: awayScore, won: awayScore > homeScore });
+  });
+
+  // Lucky/Unlucky: all-play record for the week
+  const teamsThisWeek = teamScores.length;
+  const allPlay = teamScores.map(t => {
+    const wouldBeat = teamScores.reduce((acc, o) => acc + (t.score > o.score ? 1 : 0), 0);
+    const wouldLose = (teamsThisWeek - 1) - wouldBeat;
+    return { ...t, wouldBeat, wouldLose };
+  });
+
+  const winners = allPlay.filter(t => t.won);
+  const losers = allPlay.filter(t => !t.won);
+
+  const luckyWinners = winners.filter(w => w.wouldBeat < w.wouldLose);
+  if (luckyWinners.length > 0) {
+    const luckiest = luckyWinners.sort((a, b) => a.wouldBeat - b.wouldBeat)[0];
+    luckiestWin = { team: luckiest.team, wouldBeat: luckiest.wouldBeat, wouldLose: luckiest.wouldLose };
+  } else if (winners.length > 0) {
+    const allWinning = winners.sort((a, b) => {
+      if (a.wouldBeat !== b.wouldBeat) return a.wouldBeat - b.wouldBeat;
+      return a.score - b.score;
+    })[0];
+    luckiestWin = { team: allWinning.team, wouldBeat: allWinning.wouldBeat, wouldLose: allWinning.wouldLose, score: allWinning.score, allWinning: true };
+  }
+
+  const unluckyLosers = losers.filter(l => l.wouldBeat > l.wouldLose);
+  if (unluckyLosers.length > 0) {
+    const unluckiest = unluckyLosers.sort((a, b) => b.wouldBeat - a.wouldBeat)[0];
+    unluckyLoss = { team: unluckiest.team, wouldBeat: unluckiest.wouldBeat, wouldLose: unluckiest.wouldLose };
+  } else if (losers.length > 0) {
+    const bestLoser = losers.sort((a, b) => {
+      if (b.wouldBeat !== a.wouldBeat) return b.wouldBeat - a.wouldBeat;
+      return b.score - a.score;
+    })[0];
+    unluckyLoss = { team: bestLoser.team, wouldBeat: bestLoser.wouldBeat, wouldLose: bestLoser.wouldLose, score: bestLoser.score, allLosing: true };
+  }
+
+  // Best/Worst Manager: bench points left on the table
+  Object.entries(teamOptimalScores).forEach(([teamId, optimal]) => {
+    const box = boxByTeamId[teamId];
+    const actual = Number(box?.totalPoints || 0);
+    if (!(optimal > 0)) return;
+    const percentage = (actual / optimal) * 100;
+    const benchPoints = Math.max(0, optimal - actual);
+    const team = teamNames[teamId];
+
+    if (percentage > bestManager.percentage) {
+      bestManager = { teams: [team], percentage };
+    } else if (percentage === bestManager.percentage) {
+      bestManager.teams.push(team);
+    }
+
+    if (percentage < worstManager.percentage) {
+      worstManager = { teams: [team], percentage, benchPoints };
+    } else if (percentage === worstManager.percentage) {
+      worstManager.teams.push(team);
+    }
+  });
+
+  const sentence = (team, rest) => ({ team, value: `${team} ${rest}` });
+
+  if (highScore.team) weekTrophies.trophies.push({ emoji: "👑", title: "High score", ...sentence(highScore.team, `with ${highScore.score.toFixed(2)} points`) });
+  if (lowScore.score < Infinity) weekTrophies.trophies.push({ emoji: "💩", title: "Low score", ...sentence(lowScore.team, `with ${lowScore.score.toFixed(2)} points`) });
+  if (biggestBlowout.margin > 0) weekTrophies.trophies.push({ emoji: "😱", title: "Blow out", team: biggestBlowout.winner, value: `${biggestBlowout.winner} blew out ${biggestBlowout.loser} by ${biggestBlowout.margin.toFixed(2)} points` });
+  if (closestWin.margin < Infinity) weekTrophies.trophies.push({ emoji: "😅", title: "Close win", team: closestWin.winner, value: `${closestWin.winner} barely beat ${closestWin.loser} by ${closestWin.margin.toFixed(2)} points` });
+
+  if (luckiestWin) {
+    const value = luckiestWin.allWinning
+      ? `All winning teams had a winning record vs the league, but ${luckiestWin.team} had the worst record (${luckiestWin.wouldBeat}-${luckiestWin.wouldLose}) and scored only ${luckiestWin.score.toFixed(2)} points`
+      : `${luckiestWin.team} was ${luckiestWin.wouldBeat}-${luckiestWin.wouldLose} against the league, but still got the win`;
+    weekTrophies.trophies.push({ emoji: "🍀", title: "Lucky", team: luckiestWin.team, value });
+  }
+
+  if (unluckyLoss) {
+    const value = unluckyLoss.allLosing
+      ? `All losing teams had a losing record vs the league, but ${unluckyLoss.team} had the best record (${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose}) and scored ${unluckyLoss.score.toFixed(2)} points`
+      : `${unluckyLoss.team} was ${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose} against the league, but still took an L`;
+    weekTrophies.trophies.push({ emoji: "😡", title: "Unlucky", team: unluckyLoss.team, value });
+  }
+
+  if (__overT.team) weekTrophies.trophies.push({ emoji: "📈", title: "Overachiever", team: __overT.team, value: `${__overT.team} was ${__overT.delta.toFixed(2)} points over their projection (${__overT.actual.toFixed(2)} vs ${__overT.proj.toFixed(2)})` });
+  if (__underT.team) weekTrophies.trophies.push({ emoji: "📉", title: "Underachiever", team: __underT.team, value: `${__underT.team} was ${Math.abs(__underT.delta).toFixed(2)} points under their projection (${__underT.actual.toFixed(2)} vs ${__underT.proj.toFixed(2)})` });
+
+  if (bestManager.percentage > 0 && bestManager.teams.length > 0) {
+    const teamList = bestManager.teams.length === 1 ? bestManager.teams[0] : bestManager.teams.slice(0, -1).join(', ') + ' and ' + bestManager.teams[bestManager.teams.length - 1];
+    weekTrophies.trophies.push({ emoji: "🤖", title: "Best Manager", team: bestManager.teams, value: `${teamList} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!` });
+  }
+  if (worstManager.benchPoints > 0 && worstManager.teams.length > 0) {
+    const teamList = worstManager.teams.length === 1 ? worstManager.teams[0] : worstManager.teams.slice(0, -1).join(', ') + ' and ' + worstManager.teams[worstManager.teams.length - 1];
+    weekTrophies.trophies.push({ emoji: "🤡", title: "Worst Manager", team: worstManager.teams, value: `${teamList} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.` });
+  }
+
+  return weekTrophies;
+}
+
+// Recomputes the whole season's Trophy Case data (all completed weeks) and
+// aggregates the season-long trophy counts/leader stats, exactly matching
+// the logic in src/App.jsx's loadTrophies (post the 2026-09-22 fix where
+// counting uses each trophy's plain-text `team` field instead of trying to
+// read it back out of rendered text).
+async function computeTrophyCaseData(espnLeagueId, seasonId, teamNames, throughWeek) {
+  const trophiesData = [];
+
+  for (let week = 1; week <= throughWeek; week++) {
+    const snap = await getWeeklySnapshot(espnLeagueId, seasonId, week);
+    if (!snap) continue; // not captured yet - will pick it up next cycle
+    const wt = buildWeekTrophies(week, teamNames, snap.rawMatchupData?.schedule, snap.rawBoxscoreData?.schedule);
+    if (wt) trophiesData.push(wt);
+  }
+
+  trophiesData.sort((a, b) => a.week - b.week);
+
+  const trophyCounts = {};
+  const seasonStats = {
+    totalPoints: {}, blowoutMargins: {}, closeWinMargins: {},
+    luckyUnluckyRecords: {}, managerStats: {},
+    overTotals: {}, underTotals: {}, overCounts: {}, underCounts: {}
+  };
+
+  Object.values(teamNames).forEach(team => {
+    trophyCounts[team] = { "👑": 0, "💩": 0, "😱": 0, "😅": 0, "🍀": 0, "😡": 0, "📈": 0, "📉": 0, "🤖": 0, "🤡": 0 };
+    seasonStats.totalPoints[team] = 0;
+    seasonStats.blowoutMargins[team] = [];
+    seasonStats.closeWinMargins[team] = [];
+    seasonStats.luckyUnluckyRecords[team] = { wins: 0, losses: 0, vsW: 0, vsL: 0 };
+    seasonStats.managerStats[team] = { benchPoints: 0, percentages: [] };
+    seasonStats.overTotals[team] = 0;
+    seasonStats.underTotals[team] = 0;
+    seasonStats.overCounts[team] = 0;
+    seasonStats.underCounts[team] = 0;
+  });
+
+  for (const week of trophiesData) {
+    for (const t of (week.trophies || [])) {
+      const names = Array.isArray(t.team) ? t.team : (t.team ? [t.team] : []);
+      for (const name of names) {
+        if (name && trophyCounts[name] && t.emoji) {
+          if (t.emoji in trophyCounts[name]) trophyCounts[name][t.emoji] += 1;
+        }
+      }
+    }
+
+    for (const mu of (week.matchups || [])) {
+      const home = mu.home, away = mu.away;
+      const hs = parseFloat(mu.homeScore || 0);
+      const as = parseFloat(mu.awayScore || 0);
+      if (seasonStats.totalPoints[home] != null) seasonStats.totalPoints[home] += hs;
+      if (seasonStats.totalPoints[away] != null) seasonStats.totalPoints[away] += as;
+
+      const margin = Math.abs(hs - as);
+      if (hs > as) {
+        seasonStats.blowoutMargins[home]?.push(margin);
+        seasonStats.closeWinMargins[home]?.push(margin);
+      } else if (as > hs) {
+        seasonStats.blowoutMargins[away]?.push(margin);
+        seasonStats.closeWinMargins[away]?.push(margin);
+      }
+    }
+
+    const weekScores = [];
+    for (const mu of (week.matchups || [])) {
+      const hs = parseFloat(mu.homeScore || 0);
+      const as = parseFloat(mu.awayScore || 0);
+      weekScores.push({ team: mu.home, points: hs, won: hs > as });
+      weekScores.push({ team: mu.away, points: as, won: as > hs });
+    }
+    const teamsThisWeek = weekScores.length;
+    for (const t of weekScores) {
+      const wouldBeat = weekScores.reduce((acc, o) => acc + (t.points > o.points ? 1 : 0), 0);
+      const wouldLose = (teamsThisWeek - 1) - wouldBeat;
+      const rec = seasonStats.luckyUnluckyRecords[t.team];
+      if (!rec) continue;
+      rec.vsW += wouldBeat;
+      rec.vsL += wouldLose;
+      if (t.won) rec.wins += 1; else rec.losses += 1;
+    }
+
+    // Over/Under totals + manager stats, re-derived from the same stored
+    // snapshot's boxscore data used to build this week's trophies above.
+    const snap = await getWeeklySnapshot(espnLeagueId, seasonId, week.week);
+    const boxRows = snap?.rawBoxscoreData?.schedule || [];
+    for (const r of boxRows) {
+      if (r?.matchupPeriodId !== week.week) continue;
+      for (const side of ["home", "away"]) {
+        const s = r[side];
+        if (!s) continue;
+        const teamNameForSide = teamNames[s.teamId] || `Team ${s.teamId}`;
+        const actual = Number(s.totalPoints || 0);
+        const proj = ht_teamProjection(s, week.week);
+        const delta = actual - proj;
+        if (delta > 0) {
+          seasonStats.overTotals[teamNameForSide] = (seasonStats.overTotals[teamNameForSide] || 0) + delta;
+          seasonStats.overCounts[teamNameForSide] = (seasonStats.overCounts[teamNameForSide] || 0) + 1;
+        }
+        if (delta < 0) {
+          seasonStats.underTotals[teamNameForSide] = (seasonStats.underTotals[teamNameForSide] || 0) + (-delta);
+          seasonStats.underCounts[teamNameForSide] = (seasonStats.underCounts[teamNameForSide] || 0) + 1;
+        }
+
+        const optimal = calculateOptimalScore(s);
+        const bench = Math.max(0, optimal - actual);
+        if (seasonStats.managerStats[teamNameForSide]) {
+          seasonStats.managerStats[teamNameForSide].benchPoints += bench;
+          if (optimal > 0) seasonStats.managerStats[teamNameForSide].percentages.push((actual / optimal) * 100);
+        }
+      }
+    }
+  }
+
+  return {
+    trophiesData,
+    seasonStats,
+    trophyCounts,
+    throughWeek: trophiesData.length,
+    computedAt: new Date().toISOString()
+  };
+}
+
+// Called once per league per auto-refresh cycle (see runAutoRefreshForLeague
+// below). Cheap no-op most of the time: it only does the real work of
+// rebuilding the Trophy Case cache when there's a genuinely new completed
+// week available that the cache doesn't have yet - so in practice this
+// actually recomputes roughly once a week (right after that week's last
+// game finishes), not on some fixed clock.
+async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum) {
+  const cached = await getTrophyCaseCache(espnLeagueId, seasonId);
+
+  // Find the true number of completed weeks by checking which weeks
+  // already have a captured snapshot with all games decided - mirrors the
+  // client's own "allGamesComplete" check, using data that's already been
+  // fetched/stored earlier in this same refresh cycle (see
+  // captureWeeklySnapshot calls in runAutoRefreshForLeague), so this adds
+  // no extra ESPN requests. Also builds the teamId -> teamName map straight
+  // off whichever snapshot's own stored team list we find first, instead of
+  // needing that passed in separately.
+  let latestCompletedWeek = 0;
+  let teamNames = null;
+  for (let week = 1; week <= currentWeekNum; week++) {
+    const snap = await getWeeklySnapshot(espnLeagueId, seasonId, week);
+    if (!teamNames && Array.isArray(snap?.teams)) {
+      teamNames = Object.fromEntries(snap.teams.map(t => [t.teamId, t.teamName]));
+    }
+    const sched = snap?.rawMatchupData?.schedule || [];
+    const matchups = sched.filter(m => m.matchupPeriodId === week && m.home && m.away);
+    const complete = matchups.length > 0 && matchups.every(m =>
+      m.home?.totalPoints > 0 && m.away?.totalPoints > 0 && m.winner !== 'UNDECIDED'
+    );
+    if (complete) latestCompletedWeek = week;
+  }
+
+  if (!teamNames) return { recomputed: false, reason: "no team data available yet" };
+  if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet" };
+  if (cached && cached.throughWeek === latestCompletedWeek) {
+    return { recomputed: false, reason: "already up to date" };
+  }
+
+  const fresh = await computeTrophyCaseData(espnLeagueId, seasonId, teamNames, latestCompletedWeek);
+  await saveTrophyCaseCache(espnLeagueId, seasonId, fresh);
+  return { recomputed: true, throughWeek: fresh.throughWeek };
+}
+
 async function getTeamHistory(leagueId, seasonId, teamId) {
   if (DATABASE_URL) {
     const client = await pool.connect();
@@ -4163,6 +4698,18 @@ for (let week = 1; week <= currentWeekNum; week++) {
   } catch (snapErr) {
     logRefresh(`Failed to capture Week ${week} snapshot: ${snapErr.message}`, 'error');
   }
+}
+
+// Trophy Case cache: only actually does real work when a new week's
+// worth of games just finished (see refreshTrophyCaseCacheIfNeeded above) -
+// most cycles this is a fast no-op.
+try {
+  const tcResult = await refreshTrophyCaseCacheIfNeeded(leagueConfig.espnId, seasonId, currentWeekNum);
+  if (tcResult.recomputed) {
+    logRefresh(`Trophy Case cache rebuilt for ${leagueConfig.id} through week ${tcResult.throughWeek}`);
+  }
+} catch (tcErr) {
+  logRefresh(`Trophy Case cache refresh failed for ${leagueConfig.id}: ${tcErr.message}`, 'error');
 }
 
     if (report && report.totalsRows && report.totalsRows.length > 0) {

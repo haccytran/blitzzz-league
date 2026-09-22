@@ -4804,6 +4804,31 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
   );
 }
 
+// Bolds the team name(s) inside a trophy's plain-text `value` string.
+// Trophy values are always stored as plain strings now (not JSX) so they
+// can be saved as JSON in the server-side Trophy Case cache - this is the
+// one place, at render time, where the team name gets wrapped for the
+// "pop more" styling, whether the trophy came from that cache or was just
+// computed live from ESPN.
+function renderTrophyValue(trophy) {
+  const text = trophy?.value || "";
+  const names = Array.isArray(trophy?.team) ? trophy.team : (trophy?.team ? [trophy.team] : []);
+  if (names.length === 0 || !text) return text;
+
+  // Build one regex that matches any of the team name(s), longest first so
+  // a name that's a substring of another doesn't get matched partially.
+  const escaped = [...names].sort((a, b) => b.length - a.length)
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`(${escaped.join('|')})`, 'g');
+  const parts = text.split(re);
+
+  return parts.map((part, i) =>
+    names.includes(part)
+      ? <span key={i} className="trophy-team-name">{part}</span>
+      : <React.Fragment key={i}>{part}</React.Fragment>
+  );
+}
+
 function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
 
@@ -4830,6 +4855,38 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
     setError("");
 
     try {
+      // 2026-09-22: try the server's pre-computed Trophy Case cache first.
+      // The server rebuilds this automatically in the background once a
+      // week's games are all final (see refreshTrophyCaseCacheIfNeeded in
+      // server.mjs) - so on a normal page load we can usually skip the
+      // whole "fetch every week from ESPN and recalculate every trophy"
+      // process below entirely and just use this saved copy. If nothing's
+      // cached yet (brand new season, or the very first refresh hasn't run)
+      // this 404s and we fall straight through to the live computation
+      // exactly as before, so nothing breaks either way.
+      try {
+        const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+        const cacheResp = await fetch(`${baseURL}/api/leagues/${config.id}/trophy-case-cache/${espn.seasonId}`);
+        if (cacheResp.ok) {
+          const cached = await cacheResp.json();
+          if (cached && Array.isArray(cached.trophiesData)) {
+            setWeeklyTrophies(cached.trophiesData);
+            if (cached.trophiesData.length > 0) {
+              setExpandedWeeks(new Set([cached.trophiesData[cached.trophiesData.length - 1].week]));
+            }
+            setSeasonStats(cached.seasonStats || {});
+            setTrophyCounts(cached.trophyCounts || {});
+            setError("");
+            setLoading(false);
+            return; // done - no ESPN calls needed
+          }
+        }
+      } catch (cacheErr) {
+        // Cache lookup failing (network hiccup, etc.) is not fatal - just
+        // fall through to computing live from ESPN like before.
+        console.warn('Trophy Case cache lookup failed, computing live instead:', cacheErr);
+      }
+
       // First get team names
       // Routed through our own server (with auth=1, so it attaches your ESPN
       // login cookies) instead of hitting ESPN directly from the browser.
@@ -5151,15 +5208,18 @@ if (unluckyLosers.length > 0) {
   };
 }
 
-        // Build trophies
-        const TN = (n) => <span className="trophy-team-name">{n}</span>;
-
+        // Build trophies. IMPORTANT (2026-09-22): values are stored as plain
+        // strings, not JSX, on purpose - this same data now also gets saved
+        // as JSON in the server-side Trophy Case cache (see
+        // renderTrophyValue below for how team names still get bolded when
+        // this is displayed, whether it just came from ESPN live or from
+        // that cache).
         if (highScore.team) {
           weekTrophies.trophies.push({
             emoji: "👑",
             title: "High score",
             team: highScore.team,
-            value: <>{TN(highScore.team)} with {highScore.score.toFixed(2)} points</>
+            value: `${highScore.team} with ${highScore.score.toFixed(2)} points`
           });
         }
 
@@ -5168,7 +5228,7 @@ if (unluckyLosers.length > 0) {
             emoji: "💩",
             title: "Low score",
             team: lowScore.team,
-            value: <>{TN(lowScore.team)} with {lowScore.score.toFixed(2)} points</>
+            value: `${lowScore.team} with ${lowScore.score.toFixed(2)} points`
           });
         }
 
@@ -5177,7 +5237,7 @@ if (unluckyLosers.length > 0) {
             emoji: "😱",
             title: "Blow out",
             team: biggestBlowout.winner,
-            value: <>{TN(biggestBlowout.winner)} blew out {biggestBlowout.loser} by {biggestBlowout.margin.toFixed(2)} points</>
+            value: `${biggestBlowout.winner} blew out ${biggestBlowout.loser} by ${biggestBlowout.margin.toFixed(2)} points`
           });
         }
 
@@ -5186,14 +5246,14 @@ if (unluckyLosers.length > 0) {
             emoji: "😅",
             title: "Close win",
             team: closestWin.winner,
-            value: <>{TN(closestWin.winner)} barely beat {closestWin.loser} by {closestWin.margin.toFixed(2)} points</>
+            value: `${closestWin.winner} barely beat ${closestWin.loser} by ${closestWin.margin.toFixed(2)} points`
           });
         }
 
         if (luckiestWin) {
   const value = luckiestWin.allWinning
-    ? <>All winning teams had a winning record vs the league, but {TN(luckiestWin.team)} had the worst record ({luckiestWin.wouldBeat}-{luckiestWin.wouldLose}) and scored only {luckiestWin.score.toFixed(2)} points</>
-    : <>{TN(luckiestWin.team)} was {luckiestWin.wouldBeat}-{luckiestWin.wouldLose} against the league, but still got the win</>;
+    ? `All winning teams had a winning record vs the league, but ${luckiestWin.team} had the worst record (${luckiestWin.wouldBeat}-${luckiestWin.wouldLose}) and scored only ${luckiestWin.score.toFixed(2)} points`
+    : `${luckiestWin.team} was ${luckiestWin.wouldBeat}-${luckiestWin.wouldLose} against the league, but still got the win`;
 
   weekTrophies.trophies.push({
     emoji: "🍀",
@@ -5205,8 +5265,8 @@ if (unluckyLosers.length > 0) {
 
 if (unluckyLoss) {
   const value = unluckyLoss.allLosing
-    ? <>All losing teams had a losing record vs the league, but {TN(unluckyLoss.team)} had the best record ({unluckyLoss.wouldBeat}-{unluckyLoss.wouldLose}) and scored {unluckyLoss.score.toFixed(2)} points</>
-    : <>{TN(unluckyLoss.team)} was {unluckyLoss.wouldBeat}-{unluckyLoss.wouldLose} against the league, but still took an L</>;
+    ? `All losing teams had a losing record vs the league, but ${unluckyLoss.team} had the best record (${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose}) and scored ${unluckyLoss.score.toFixed(2)} points`
+    : `${unluckyLoss.team} was ${unluckyLoss.wouldBeat}-${unluckyLoss.wouldLose} against the league, but still took an L`;
 
   weekTrophies.trophies.push({
     emoji: "😡",
@@ -5222,8 +5282,7 @@ if (__overT.team) {
     emoji: "📈",
     title: "Overachiever",
     team: __overT.team,
-    value: <>{TN(__overT.team)} was {__overT.delta.toFixed(2)} points over their projection ({__overT.actual.toFixed(2)} vs {__overT.proj.toFixed(2)})</>
-    // If your code uses 'text' instead of 'value', change 'value:' to 'text:' here and below.
+    value: `${__overT.team} was ${__overT.delta.toFixed(2)} points over their projection (${__overT.actual.toFixed(2)} vs ${__overT.proj.toFixed(2)})`
   });
 }
 if (__underT.team) {
@@ -5231,7 +5290,7 @@ if (__underT.team) {
     emoji: "📉",
     title: "Underachiever",
     team: __underT.team,
-    value: <>{TN(__underT.team)} was {Math.abs(__underT.delta).toFixed(2)} points under their projection ({__underT.actual.toFixed(2)} vs {__underT.proj.toFixed(2)})</>
+    value: `${__underT.team} was ${Math.abs(__underT.delta).toFixed(2)} points under their projection (${__underT.actual.toFixed(2)} vs ${__underT.proj.toFixed(2)})`
   });
 }
 
@@ -5245,7 +5304,7 @@ if (__underT.team) {
     emoji: "🤖",
     title: "Best Manager",
     team: bestManager.teams,
-    value: <>{TN(teamList)} scored {bestManager.percentage.toFixed(1)}% of their optimal score!</>
+    value: `${teamList} scored ${bestManager.percentage.toFixed(1)}% of their optimal score!`
   });
 }
 
@@ -5258,7 +5317,7 @@ if (worstManager.benchPoints > 0 && worstManager.teams.length > 0) {
     emoji: "🤡",
     title: "Worst Manager",
     team: worstManager.teams,
-    value: <>{TN(teamList)} left {worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring {worstManager.percentage.toFixed(1)}% of their optimal score.</>
+    value: `${teamList} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.`
   });
 }
 
@@ -5656,7 +5715,7 @@ setTrophyCounts(trophyCounts);
                     <span style={{ fontSize: 24 }}>{trophy.emoji}</span>
                     <div>
                       <div className="trophy-title" style={{ fontWeight: 600, marginBottom: 2 }}>{trophy.title}</div>
-                      <div className="trophy-value" style={{ fontSize: 14, color: "#64748b" }}>{trophy.value}</div>
+                      <div className="trophy-value" style={{ fontSize: 14, color: "#64748b" }}>{renderTrophyValue(trophy)}</div>
                     </div>
                   </div>
                 ))}

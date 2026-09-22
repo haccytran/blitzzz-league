@@ -1764,7 +1764,7 @@ else if (week === 3) {
                     <span style={{
                       fontWeight: "bold",
                       color: "#0066cc",
-                      textShadow: "0 0 8px #ffff00, 0 0 12px #ffff00",
+                      textShadow: "0 0 4px rgba(255,194,14,0.5)",
                       fontSize: "16px"
                     }}>
                       {winner.teamName}

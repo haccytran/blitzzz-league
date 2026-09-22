@@ -5023,6 +5023,30 @@ app.get("/api/weekly-image/trophies.png", async (req, res) => {
   }
 });
 
+// 2026-09-22: Render's free tier spins the Python stats service down after
+// ~15 minutes with no traffic. The next request to it then has to wait for
+// a cold start (50+ seconds), which blows past callPythonService's timeout -
+// Power Rankings (and the other Python-backed features) would silently fall
+// back to old data instead of erroring loudly, which is exactly what made
+// the live site look "stuck" on an old week while localhost was fine.
+// Pinging its /health endpoint every 10 minutes keeps it warm so a real
+// user request never has to pay that cold-start cost. Only runs on Render -
+// there's nothing to keep warm when developing locally, since PYTHON_SERVICE_URL
+// already points at localhost:5001 there.
+if (process.env.RENDER) {
+  const PYTHON_KEEPALIVE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+  async function pingPythonService() {
+    try {
+      const response = await fetch(`${PYTHON_SERVICE_URL}/health`, { signal: AbortSignal.timeout(15000) });
+      console.log(`[PYTHON KEEPALIVE] ping ${response.ok ? 'ok' : `HTTP ${response.status}`}`);
+    } catch (e) {
+      console.log(`[PYTHON KEEPALIVE] ping failed: ${e.message}`);
+    }
+  }
+  pingPythonService(); // once at startup, then on the interval
+  setInterval(pingPythonService, PYTHON_KEEPALIVE_INTERVAL_MS);
+}
+
 // Start auto-refresh system
 startAutoRefresh();
 

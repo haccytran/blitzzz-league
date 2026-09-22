@@ -574,6 +574,7 @@ useEffect(() => {
   } else if (config.id === 'blitzzz') {
     document.body.classList.add('blitzzz-league');
   }
+document.body.classList.add('theme-chargers'); // <-- ADD THIS LINE TO TEST
 }, [config]);
 
 // Cleanup body class when component unmounts

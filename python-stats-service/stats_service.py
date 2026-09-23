@@ -1687,16 +1687,36 @@ def import_transactions():
 
         cookies = {"espn_s2": ESPN_S2, "SWID": SWID}
 
-        # Get transactions
-        params = {"view": "mTransactions2"}
-        response = requests.get(url, cookies=cookies, params=params)
-        
-        if response.status_code != 200:
-            return jsonify({"error": f"ESPN API returned {response.status_code}"}), 500
-        
-        api_data = response.json()
-        transactions = api_data.get('transactions', [])
-        
+        # 2026-09-23: found via the espn_api library's own transactions()
+        # method - ESPN's mTransactions2 view silently omits the
+        # "transactions" key entirely (still a 200 OK) unless this
+        # x-fantasy-filter header is present. That's why this route always
+        # looked "successful" while returning nothing. The filter also has
+        # to be sent per scoring period (week) - a single request without
+        # scoringPeriodId only returns whatever ESPN considers "current",
+        # which for a finished season is the last week - so this now loops
+        # over every week of the season and merges the results.
+        import json as _json
+        txn_types = ["FREEAGENT", "WAIVER"]
+        headers = {"x-fantasy-filter": _json.dumps({"transactions": {"filterType": {"value": txn_types}}})}
+
+        transactions = []
+        seen_txn_ids = set()
+        for week in range(1, 19):
+            params = {"view": "mTransactions2", "scoringPeriodId": week}
+            response = requests.get(url, cookies=cookies, params=params, headers=headers)
+            if response.status_code != 200:
+                continue
+            week_data = response.json()
+            for txn in week_data.get('transactions', []):
+                tid = txn.get('id')
+                if tid and tid not in seen_txn_ids:
+                    seen_txn_ids.add(tid)
+                    transactions.append(txn)
+
+        if not transactions:
+            return jsonify({"error": "ESPN returned zero transactions across all weeks - check that ESPN_S2/SWID are valid and this league had waiver activity that season"}), 500
+
         # Get player names from kona_player_info
         params = {"view": "kona_player_info"}
         player_response = requests.get(url, cookies=cookies, params=params)

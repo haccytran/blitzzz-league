@@ -3619,6 +3619,21 @@ async function getWeeklySnapshot(leagueId, seasonId, weekNumber) {
   }
 }
 
+// True only when a stored weekly snapshot has real, decided scores for
+// every matchup in that week - not just "a snapshot object exists". See
+// the 2026-09-22 note in runAutoRefreshForLeague's snapshot-capture loop
+// for why this matters: an early/partial capture (taken before that
+// week's games were actually played) looks like valid JSON but every
+// score sits at 0-0 with winner "UNDECIDED" forever unless this check
+// catches it and triggers a re-fetch.
+function isWeeklySnapshotComplete(snap, week) {
+  const sched = snap?.rawMatchupData?.schedule || [];
+  const matchups = sched.filter(m => m.matchupPeriodId === week && m.home && m.away);
+  return matchups.length > 0 && matchups.every(m =>
+    m.home?.totalPoints > 0 && m.away?.totalPoints > 0 && m.winner !== 'UNDECIDED'
+  );
+}
+
 async function getSeasonSnapshots(leagueId, seasonId) {
   if (DATABASE_URL) {
     const client = await pool.connect();
@@ -4898,9 +4913,25 @@ for (let week = 1; week <= currentWeekNum; week++) {
   try {
     if (week < currentWeekNum) {
       const existing = await getWeeklySnapshot(leagueConfig.espnId, seasonId, week);
-      if (existing) {
+      // 2026-09-22: found via the Trophy Case cache diagnostics - this used
+      // to skip re-fetching a past week just because SOME snapshot object
+      // existed for it, with no check that the snapshot actually has real
+      // data in it. A week whose very first capture happened to run before
+      // its games were played (e.g. right after a fresh deploy, or a gap
+      // in the refresh cycle) gets saved with every score sitting at 0-0
+      // and every matchup UNDECIDED - and then, because "existing" was
+      // truthy, it got skipped forever afterward and never fixed itself,
+      // even though the real scores had long since finished on ESPN. Now
+      // only skips when the stored snapshot is actually complete; an
+      // early/partial capture keeps getting retried every cycle until it
+      // succeeds, same as a week that's missing a snapshot entirely.
+      const existingIsComplete = isWeeklySnapshotComplete(existing, week);
+      if (existing && existingIsComplete) {
         logRefresh(`Week ${week} snapshot for ${leagueConfig.id} already captured - skipping re-fetch`);
         continue;
+      }
+      if (existing && !existingIsComplete) {
+        logRefresh(`Week ${week} snapshot for ${leagueConfig.id} exists but looks incomplete (0-0/undecided) - re-fetching`);
       }
     }
     await captureWeeklySnapshot({

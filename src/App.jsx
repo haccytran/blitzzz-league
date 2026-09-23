@@ -6397,7 +6397,9 @@ const loadPositionalRecords = async () => {
 {seasonRecords && (
   <div className="card" style={{ padding: 16, marginTop: 24 }}>
     <h2 style={{ marginBottom: 16 }}>Season Team Records</h2>
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+
+    {/* Desktop table */}
+    <table className="records-table-desktop" style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
           <th style={{ padding: '12px 8px', textAlign: 'left' }}>Record</th>
@@ -6427,6 +6429,36 @@ const loadPositionalRecords = async () => {
         </tr>
       </tbody>
     </table>
+
+    {/* Mobile grid - team name shown as a soft watermark behind the row
+        instead of its own column, so the Value/Year numbers always have
+        room to fit on screen without spilling past the card edge. */}
+    <div className="records-grid-mobile">
+      <div className="records-row">
+        <div className="records-label">Most Wins</div>
+        <div className="records-row-bg">{seasonRecords.mostWins?.teamName || 'N/A'}</div>
+        <div className="records-cells">
+          <div className="records-cell"><span className="records-cell-label">Wins</span>{seasonRecords.mostWins?.wins || 0}</div>
+          <div className="records-cell"><span className="records-cell-label">Year</span>{seasonRecords.mostWins?.year || 'N/A'}</div>
+        </div>
+      </div>
+      <div className="records-row">
+        <div className="records-label">Highest Score</div>
+        <div className="records-row-bg">{seasonRecords.highestScore?.teamName || 'N/A'}</div>
+        <div className="records-cells">
+          <div className="records-cell"><span className="records-cell-label">Points</span>{seasonRecords.highestScore?.score?.toFixed(2) || 0}</div>
+          <div className="records-cell"><span className="records-cell-label">Year / Wk</span>{seasonRecords.highestScore?.year || 'N/A'} (Wk {seasonRecords.highestScore?.week || 'N/A'})</div>
+        </div>
+      </div>
+      <div className="records-row">
+        <div className="records-label">Most Points For (Season)</div>
+        <div className="records-row-bg">{seasonRecords.mostPointsFor?.teamName || 'N/A'}</div>
+        <div className="records-cells">
+          <div className="records-cell"><span className="records-cell-label">Points</span>{seasonRecords.mostPointsFor?.points?.toFixed(2) || 0}</div>
+          <div className="records-cell"><span className="records-cell-label">Year</span>{seasonRecords.mostPointsFor?.year || 'N/A'}</div>
+        </div>
+      </div>
+    </div>
   </div>
 )}
 
@@ -6434,7 +6466,9 @@ const loadPositionalRecords = async () => {
 {positionalRecords && (
   <div className="card" style={{ padding: 16, marginTop: 24 }}>
     <h2 style={{ marginBottom: 16 }}>Season Positional Records</h2>
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+
+    {/* Desktop table */}
+    <table className="positional-table-desktop" style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
           <th style={{ padding: '12px 8px', textAlign: 'left' }}>Position</th>
@@ -6456,6 +6490,21 @@ const loadPositionalRecords = async () => {
         ))}
       </tbody>
     </table>
+
+    {/* Mobile grid - same "player name as watermark" treatment as above */}
+    <div className="positional-grid-mobile">
+      {['QB', 'RB', 'WR', 'TE', 'K', 'D/ST'].map(pos => (
+        <div className="positional-row" key={pos}>
+          <div className="positional-label">{pos}</div>
+          <div className="positional-row-bg">{positionalRecords[pos]?.player || 'N/A'}</div>
+          <div className="positional-cells">
+            <div className="positional-cell"><span className="positional-cell-label">Points</span>{positionalRecords[pos]?.points?.toFixed(2) || 0}</div>
+            <div className="positional-cell"><span className="positional-cell-label">Year</span>{positionalRecords[pos]?.year || 'N/A'}</div>
+            <div className="positional-cell"><span className="positional-cell-label">Week</span>{positionalRecords[pos]?.week || 'N/A'}</div>
+          </div>
+        </div>
+      ))}
+    </div>
   </div>
 )}
 

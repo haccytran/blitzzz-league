@@ -1465,14 +1465,121 @@ body.sculpin-league .sos-grid-mobile .sos-row-bg {
   }
 }
 
-/* Blitzzz luck index */
+/* Blitzzz luck index - 2026-09-23: was bright blue text with a double-
+   layered yellow glow (5px + 10px), same unreadable-on-mobile combo as the
+   old Power Rankings/SOS styling. Switched to solid gold with a single,
+   much softer glow layer, matching the fix already applied there. */
 body.blitzzz-league .luck-grid-mobile .luck-row-bg {
-  color: #0084ff !important;
-  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+  color: #ffb612 !important;
+  text-shadow: 0 0 3px rgba(255,182,18,0.35) !important;
 }
 
 /* Sculpin luck index */
 body.sculpin-league .luck-grid-mobile .luck-row-bg {
+  color: #2F241D !important;
+  text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
+}
+
+/* Nerd Data: Season Team Records + Season Positional Records mobile grids.
+   2026-09-23: these two tables were plain <table> with no mobile layout at
+   all, so on a narrow phone screen the columns just ran past the edge of
+   the card and got cut off. Same "name as a soft watermark behind the row"
+   treatment as the Luck Index / SOS tables above - pulling the long team
+   or player name out of the column grid is what actually frees up enough
+   width for the rest of the numbers to fit on screen. */
+.records-table-desktop, .positional-table-desktop {
+  display: table;
+  width: 100%;
+}
+.records-grid-mobile, .positional-grid-mobile {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .records-table-desktop, .positional-table-desktop {
+    display: none !important;
+  }
+
+  .records-grid-mobile, .positional-grid-mobile {
+    display: block;
+    font-size: 12px;
+  }
+
+  .records-grid-mobile .records-row,
+  .positional-grid-mobile .positional-row {
+    position: relative;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 10px 0;
+  }
+
+  .records-grid-mobile .records-label,
+  .positional-grid-mobile .positional-label {
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6b7280;
+    margin-bottom: 6px;
+  }
+
+  .records-grid-mobile .records-cells {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .positional-grid-mobile .positional-cells {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+  }
+
+  .records-grid-mobile .records-row-bg,
+  .positional-grid-mobile .positional-row-bg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    font-size: 10px;
+    font-weight: 600;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 4px;
+    letter-spacing: 1px;
+  }
+
+  .records-grid-mobile .records-cell,
+  .positional-grid-mobile .positional-cell {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 4px 2px;
+  }
+
+  .records-grid-mobile .records-cell-label,
+  .positional-grid-mobile .positional-cell-label {
+    display: block;
+    font-size: 9px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+}
+
+body.blitzzz-league .records-grid-mobile .records-row-bg,
+body.blitzzz-league .positional-grid-mobile .positional-row-bg {
+  color: #ffb612 !important;
+  text-shadow: 0 0 3px rgba(255,182,18,0.35) !important;
+}
+body.sculpin-league .records-grid-mobile .records-row-bg,
+body.sculpin-league .positional-grid-mobile .positional-row-bg {
   color: #2F241D !important;
   text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
 }

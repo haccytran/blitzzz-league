@@ -4870,9 +4870,17 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
         if (cacheResp.ok) {
           const cached = await cacheResp.json();
           if (cached && Array.isArray(cached.trophiesData)) {
-            setWeeklyTrophies(cached.trophiesData);
-            if (cached.trophiesData.length > 0) {
-              setExpandedWeeks(new Set([cached.trophiesData[cached.trophiesData.length - 1].week]));
+            // 2026-09-22: the server stores weeks in the order it computed
+            // them (oldest first). The live-computation path below always
+            // sorts newest-week-first before displaying (see
+            // trophiesData.sort((a, b) => b.week - a.week) further down) -
+            // this cache path was skipping that same sort, so the cached
+            // version showed Week 1 at the top instead of the most recent
+            // week. Sorting here too makes the cached and live paths match.
+            const sortedTrophies = [...cached.trophiesData].sort((a, b) => b.week - a.week);
+            setWeeklyTrophies(sortedTrophies);
+            if (sortedTrophies.length > 0) {
+              setExpandedWeeks(new Set([sortedTrophies[0].week]));
             }
             setSeasonStats(cached.seasonStats || {});
             setTrophyCounts(cached.trophyCounts || {});
@@ -6574,7 +6582,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
       <div className="card" style={{ padding: 16 }}>
         <div className="mb-4 text-sm text-gray-600"><div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
   <p><strong>Comprehensive Power Score:</strong> (Dominance × 0.8) + (Avg Score × 0.15) + (Avg Margin of Victory × 0.05), with each ingredient put on the same 0–100 scale first so the weights are meaningful</p>
-  <p><strong>Simple Power Score:</strong> (Points For × 2) + (Points For × Win %) + (Points For × All-Play Win %)</p></div>
+  <p><strong>Simple Power Score:</strong> (Avg Points Per Game × 0.5) + (Win % × 0.25) + (All-Play Win % × 0.25), with Avg Points Per Game put on a 0–100 scale first so it's comparable to the percentages</p></div>
 </div>
 
         {error && <div style={{ color: "#dc2626", marginBottom: 16 }}>{error}</div>}

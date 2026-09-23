@@ -868,9 +868,15 @@ const updatePayment = async (teamName, isPaid) => {
         let position = "";
 const slotId = e.lineupSlotId;
 
-if (slotId === 20) { // Bench
+if (slotId === 20 || slotId === 21) { // Bench or IR (2026-09-24: leagues added
+  // an IR slot this season - IR players need the same "figure out their real
+  // position from eligibleSlots" treatment bench players already got, or
+  // they'd get dropped/mislabeled entirely. This is the client-side "Import
+  // ESPN Teams" path in League Settings - separate code from the server's
+  // own background refresh, which got this same fix earlier but doesn't run
+  // when an admin clicks Import ESPN Teams directly.
   const eligible = p?.eligibleSlots || [];
-  
+
   // Check for pure TE first (has slot 6 but NOT slots 3 or 4)
   if (eligible.includes(6) && !eligible.includes(3) && !eligible.includes(4)) {
     position = "TE";
@@ -902,22 +908,26 @@ if (slotId === 20) { // Bench
 } else {
   position = slot;
 }
-        
-        return { 
-          name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(), 
-          slot, 
+
+        return {
+          name: fullName.replace(/\s*\([^)]*\)\s*/g, '').trim(),
+          slot,
           position
         };
       });
 
-      // Separate starters and bench
-      const starters = entries.filter(e => e.slot !== "Bench");
+      // Separate starters, bench, and IR.
+      // 2026-09-24: IR players used to fall through the cracks here too -
+      // same bug as the server-side refresh had. IR is now split into its
+      // own group and appended after the bench.
+      const starters = entries.filter(e => e.slot !== "Bench" && e.slot !== "IR");
       const bench = entries.filter(e => e.slot === "Bench");
-      
+      const ir = entries.filter(e => e.slot === "IR");
+
       // Define exact starter order
       const starterOrderWithCounts = [
         { pos: "QB", max: 1 },
-        { pos: "RB", max: 2 }, 
+        { pos: "RB", max: 2 },
         { pos: "RB/WR", max: 1 },
         { pos: "WR", max: 2 },
         { pos: "TE", max: 1 },
@@ -943,15 +953,24 @@ if (slotId === 20) { // Bench
           name: p.position ? `${p.name} (${p.position})` : p.name,
           slot: p.slot
         }));
-      
+
+      // Sort IR players and add position in parentheses, same as bench
+      const sortedIr = ir
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => ({
+          name: p.position ? `${p.name} (${p.position})` : p.name,
+          slot: p.slot
+        }));
+
       const finalEntries = [
         ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
-        ...sortedBench
+        ...sortedBench,
+        ...sortedIr
       ];
-      
-      return { 
-        teamName: teamsById[t.id] || `Team ${t.id}`, 
-        entries: finalEntries 
+
+      return {
+        teamName: teamsById[t.id] || `Team ${t.id}`,
+        entries: finalEntries
       };
     });
     
@@ -5894,10 +5913,12 @@ try {
 
   return (
     <div id="trophy-case-root" data-loaded={loading ? "false" : "true"}>
-    <Section title="🏆 Trophy Case" actions={      <button className="btn" style={btnSec} onClick={loadTrophies} disabled={loading}>
-        {loading ? "Loading..." : "Refresh"}
-      </button>
-    }>
+    {/* 2026-09-24: Refresh button removed at Hac's request - this always
+        reads the server's pre-computed cache first (see loadTrophies above)
+        and that cache rebuilds itself automatically in the background, so
+        clicking Refresh just re-fetched the exact same cached data every
+        time. Nothing was actually being refreshed. */}
+    <Section title="🏆 Trophy Case">
       {error && <div style={{ color: "#dc2626", marginBottom: 16 }}>{error}</div>}
       
       {weeklyTrophies.length === 0 && !loading && !error && (
@@ -6946,14 +6967,11 @@ const sortedRankings = [...rankings].sort((a, b) => {
 
   const remainingWeeks = Math.max(0, 14 - currentWeek);
 
+  // 2026-09-24: Refresh button removed at Hac's request - same reason as
+  // Trophy Case (see there): this always hits the server's own
+  // auto-rebuilding cache first, so it never actually refreshed anything live.
   return (
-    <Section title="Power Rankings" actions={
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" style={btnSec} onClick={loadPowerRankings} disabled={loading}>
-          {loading ? "Loading..." : "Refresh"}
-        </button>
-      </div>
-    }>
+    <Section title="Power Rankings">
       <div className="card" style={{ padding: 16 }}>
         <div className="mb-4 text-sm text-gray-600"><div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
   <p><strong>Comprehensive Power Score:</strong> (Dominance × 0.8) + (Avg Score × 0.15) + (Avg Margin of Victory × 0.05), with each ingredient put on the same 0–100 scale first so the weights are meaningful</p>

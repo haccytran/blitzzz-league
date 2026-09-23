@@ -2128,3 +2128,11 @@ body.theme-chargers .splash {
 .confirm-modal-actions .btn {
   min-width: 90px;
 }
+
+/* 2026-09-24: browser default visited-link purple, changed to orange at
+   Hac's request (e.g. the "$30 Weekly Challenge bonus" link on the payout
+   card once you've clicked it). Only :visited is touched - unvisited links
+   keep whatever color they already had. */
+a:visited {
+  color: #f97316;
+}

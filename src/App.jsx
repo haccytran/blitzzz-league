@@ -7487,7 +7487,11 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
                   onChange={() => isAdmin && togglePaid(m.id)}
                   disabled={!isAdmin}
                 />
-                <span style={{ textDecoration: cur.paid[m.id] ? "line-through" : "none" }}>{m.name}</span>
+                <span style={{
+                  textDecoration: cur.paid[m.id] ? "line-through" : "none",
+                  color: cur.paid[m.id] ? "#16a34a" : "#dc2626",
+                  fontWeight: 600
+                }}>{m.name}</span>
               </li>
             ))}
           </ul>

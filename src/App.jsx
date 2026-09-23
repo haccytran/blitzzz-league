@@ -1452,6 +1452,36 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
   );
 }
 
+// 2026-09-24: real Pacific-time date+time for a Recent Activity row, at
+// Hac's request - the server already tags every move with a raw epoch
+// (move.ts) alongside its PT-formatted display string, so this just
+// re-renders that epoch with an explicit America/Los_Angeles timezone and
+// the time included, instead of the date-only string used before.
+function formatActivityPT(ts) {
+  if (!ts) return "";
+  return new Date(ts).toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }) + " PT";
+}
+
+// 2026-09-24: Free Agent adds in white, Waiver adds in orange - Hac's
+// request, so a glance at Recent Activity shows which pickups actually
+// went through the waiver process vs a same-day free-agent grab.
+function MethodBadge({ method }) {
+  if (!method) return null;
+  const isWaiver = /waiver/i.test(method);
+  return (
+    <span style={{ color: isWaiver ? "#f97316" : "#ffffff", fontWeight: 600, fontSize: 12 }}>
+      {method}
+    </span>
+  );
+}
+
 function RecentActivityView({ espn, config, btnPri, btnSec, isAdmin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -1523,6 +1553,8 @@ for (let i = 0; i < sortedMoves.length; i++) {
       paired.add(matchIdx);
       pairedActivities.push({
         date: new Date(move.date).toLocaleDateString(),
+        ts: move.ts ?? new Date(move.date).getTime(),
+        method: move.method,
         team: move.team,
         player: move.player,
         action: "ADDED",
@@ -1533,6 +1565,8 @@ for (let i = 0; i < sortedMoves.length; i++) {
       });
       pairedActivities.push({
         date: new Date(move.date).toLocaleDateString(),
+        ts: sortedMoves[matchIdx].ts ?? new Date(move.date).getTime(),
+        method: sortedMoves[matchIdx].method,
         team: move.team,
         player: sortedMoves[matchIdx].player,
         action: "DROPPED",
@@ -1544,6 +1578,8 @@ for (let i = 0; i < sortedMoves.length; i++) {
     } else {
       pairedActivities.push({
         date: new Date(move.date).toLocaleDateString(),
+        ts: move.ts ?? new Date(move.date).getTime(),
+        method: move.method,
         team: move.team,
         player: move.player,
         action: "ADDED",
@@ -1555,6 +1591,8 @@ for (let i = 0; i < sortedMoves.length; i++) {
   } else {
     pairedActivities.push({
       date: new Date(move.date).toLocaleDateString(),
+      ts: move.ts ?? new Date(move.date).getTime(),
+      method: move.method,
       team: move.team,
       player: move.player,
       action: "DROPPED",
@@ -1632,11 +1670,11 @@ setActivities(pairedActivities);
               color: "#16a34a",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b>{activity.team}</b> ADDED <b>{activity.player}</b></span>
-              <span style={{ color: "#64748b" }}>{activity.date}</span>
+              <span><b>{activity.team}</b> ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} /></span>
+              <span style={{ color: "#64748b" }}>{formatActivityPT(activity.ts)}</span>
             </div>,
-            <div key={i + "drop"} style={{ 
-              padding: "8px", 
+            <div key={i + "drop"} style={{
+              padding: "8px",
               borderBottom: "1px solid #e2e8f0",
               display: "flex",
               justifyContent: "space-between",
@@ -1645,7 +1683,7 @@ setActivities(pairedActivities);
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
               <span><b>{nextActivity.team}</b> DROPPED <b>{nextActivity.player}</b></span>
-              <span style={{ color: "#64748b" }}>{nextActivity.date}</span>
+              <span style={{ color: "#64748b" }}>{formatActivityPT(nextActivity.ts)}</span>
             </div>
           );
           i++; // Skip next since we processed it
@@ -1663,8 +1701,8 @@ setActivities(pairedActivities);
               color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b>{activity.team}</b> {activity.action} <b>{activity.player}</b></span>
-              <span style={{ color: "#64748b" }}>{activity.date}</span>
+              <span><b>{activity.team}</b> {activity.action} <b>{activity.player}</b> {activity.action === "ADDED" && <MethodBadge method={activity.method} />}</span>
+              <span style={{ color: "#64748b" }}>{formatActivityPT(activity.ts)}</span>
             </div>
           );
           pairCounter++;

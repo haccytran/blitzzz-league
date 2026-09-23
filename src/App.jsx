@@ -6573,7 +6573,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
     }>
       <div className="card" style={{ padding: 16 }}>
         <div className="mb-4 text-sm text-gray-600"><div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
-  <p><strong>Comprehensive Power Score:</strong> (Dominance × 0.8) + (Avg Score × 0.15) + (Avg Margin of Victory × 0.05)</p>
+  <p><strong>Comprehensive Power Score:</strong> (Dominance × 0.8) + (Avg Score × 0.15) + (Avg Margin of Victory × 0.05), with each ingredient put on the same 0–100 scale first so the weights are meaningful</p>
   <p><strong>Simple Power Score:</strong> (Points For × 2) + (Points For × Win %) + (Points For × All-Play Win %)</p></div>
 </div>
 

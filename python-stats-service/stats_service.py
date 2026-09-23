@@ -80,36 +80,59 @@ def two_step_dominance(win_matrix):
     return dominance
 
 def power_points(dominance_matrix, teams_data, team_stats):
-    """Calculate power points from dominance matrix using ESPN formula"""
-    power_points_list = []
-    
+    """Calculate power points by blending dominance, average score, and
+    average margin of victory.
+
+    2026-09-22: these three ingredients are now normalized to a common
+    0-100 scale (min-max across this week's field of teams) BEFORE the
+    0.8/0.15/0.05 weights are applied. Previously they were combined raw,
+    while sitting on wildly different scales - dominance is typically a
+    small number (often single digits to low double digits for a 10-12
+    team league), while avg_score is a raw point total (100+). That meant
+    avg_score's sheer numeric size could swamp dominance's supposedly
+    dominant 80% weight, so the stated weights didn't actually reflect
+    what was driving the final ranking. Normalizing first (the same
+    min-max-to-0-100 technique already used in strength_of_schedule_endpoint
+    below, for consistency) makes the weights mean what they say.
+    """
+    raw = []
     for i, team_data in enumerate(teams_data):
         team_id = team_data['teamId']
         stats = team_stats[team_id]
-        
-        # Dominance score
+
         dominance = sum(dominance_matrix[i])
-        
-        # Average score
         avg_score = np.mean(stats['scores']) if stats['scores'] else 0
-        
-        # Average margin of victory
-        avg_mov = 0
-        if 'mov' in stats and stats['mov']:
-            avg_mov = np.mean(stats['mov'])
-        
-        # ESPN's power ranking formula
-        power = (dominance * 0.8) + (avg_score * 0.15) + (avg_mov * 0.05)
-        
-        power_points_list.append((power, team_id))
-    
+        avg_mov = np.mean(stats['mov']) if stats.get('mov') else 0
+
+        raw.append({'teamId': team_id, 'dominance': dominance, 'avg_score': avg_score, 'avg_mov': avg_mov})
+
+    def normalize(key):
+        values = [r[key] for r in raw]
+        lo, hi = min(values), max(values)
+        if hi == lo:
+            # Every team tied on this ingredient (e.g. week 1 before any
+            # games) - park everyone at the midpoint instead of dividing
+            # by zero or collapsing everyone to 0.
+            return {r['teamId']: 50.0 for r in raw}
+        return {r['teamId']: ((r[key] - lo) / (hi - lo)) * 100 for r in raw}
+
+    norm_dominance = normalize('dominance')
+    norm_avg_score = normalize('avg_score')
+    norm_avg_mov = normalize('avg_mov')
+
+    power_points_list = []
+    for r in raw:
+        tid = r['teamId']
+        power = (norm_dominance[tid] * 0.8) + (norm_avg_score[tid] * 0.15) + (norm_avg_mov[tid] * 0.05)
+        power_points_list.append((power, tid))
+
     # Sort by power (descending) and return as dict
     power_points_list.sort(key=lambda x: x[0], reverse=True)
-    
+
     power_dict = {}
     for power, team_id in power_points_list:
         power_dict[team_id] = power
-    
+
     return power_dict
 
 def calculate_team_power_rankings(league_id, year, current_week, espn_s2, swid, league_data=None, schedule_data=None):
@@ -526,13 +549,23 @@ def calculate_playoff_odds():
                 # Calculate mean from last 6 weeks or all available
                 recent_scores = scores[-6:] if len(scores) >= 6 else scores
                 avg_score = mean(recent_scores)
-                std_score = np.std(scores) if len(scores) > 1 else 15.0
-                
+                # 2026-09-22: this used to be np.std(scores) * 2 - an
+                # unexplained doubling of each team's real observed
+                # week-to-week spread with no documented reason. That
+                # inflated everyone's simulated variance, which compresses
+                # playoff odds toward "everyone still has a shot" more than
+                # the real data supports, and it never gets fixed below -
+                # see the shrinkage step after this loop for what replaces
+                # it, and why raw small-sample std needs a different fix
+                # (not doubling).
+                raw_std = np.std(scores) if len(scores) > 1 else None
+
                 team_stats[team_id] = {
                     "teamName": team_name,
                     "allScores": scores,
                     "avgScore": avg_score,
-                    "stdDev": std_score * 2,
+                    "rawStd": raw_std,
+                    "gamesPlayed": len(scores),
                     "currentWins": wins,
                     "currentLosses": losses,
                     "currentTies": ties,
@@ -544,7 +577,38 @@ def calculate_playoff_odds():
                     "projectedPF": 0,
                     "positionCounts": [0] * len(teams)
                 }
-        
+
+        # 2026-09-22: turn each team's rawStd into the stdDev the
+        # simulation actually uses, with shrinkage toward the league-wide
+        # average spread instead of the old flat "x2" fudge.
+        #
+        # Why this matters: early in a season (or for a team that's had an
+        # unusually consistent run of games so far) a team's own observed
+        # std, computed from only 2-3 real data points, is not a reliable
+        # estimate of its true week-to-week variance - it can come out
+        # tiny (if those few scores happened to be close together) or huge
+        # (if they weren't), and either way the simulation would trust it
+        # completely. The standard fix for a small, noisy sample is
+        # shrinkage/partial pooling: blend the team's own std with the
+        # league's average std, weighted by how many real games that team
+        # has actually played. SHRINKAGE_GAMES (4) sets how many "games
+        # worth" of the league-wide prior get mixed in - a team with 4
+        # games played gets an even 50/50 blend of its own std and the
+        # league average; a team with only 1-2 games leans heavily on the
+        # league average (appropriately distrusting its own tiny sample);
+        # a team with a full 14-game season leans almost entirely on its
+        # own real, well-established std. This is the same idea sports
+        # analytics sites use to regress small-sample stats toward a
+        # league mean rather than trusting them outright.
+        SHRINKAGE_GAMES = 4
+        known_stds = [s["rawStd"] for s in team_stats.values() if s["rawStd"] is not None]
+        league_avg_std = float(np.mean(known_stds)) if known_stds else 15.0
+
+        for stats in team_stats.values():
+            n = stats["gamesPlayed"]
+            own_std = stats["rawStd"] if stats["rawStd"] is not None else league_avg_std
+            stats["stdDev"] = ((n * own_std) + (SHRINKAGE_GAMES * league_avg_std)) / (n + SHRINKAGE_GAMES) if n > 0 else league_avg_std
+
         # Get remaining matchups (weeks AFTER current_week)
         remaining_matchups = []
         for matchup in schedule:

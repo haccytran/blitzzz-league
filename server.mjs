@@ -4268,6 +4268,15 @@ async function getPowerRankingsCache(leagueId, seasonId) {
 // file - see buildCookie()'s note on this being safe outside a real
 // request too), since there's no incoming browser request to read cookies
 // from here.
+// Bumped whenever the underlying power-rankings/playoff-odds math changes
+// (see stats_service.py's power_points() normalization fix and
+// calculate_playoff_odds()'s shrinkage fix, 2026-09-22) so a cache saved
+// under the OLD formula gets recomputed once, automatically, even though
+// the completed-week number itself hasn't changed. Without this, a stale
+// cache would otherwise keep serving pre-fix numbers until the next real
+// week finished.
+const POWER_RANKINGS_FORMULA_VERSION = 2;
+
 async function computePowerRankingsPageData(espnLeagueId, seasonId, throughWeek) {
   const espn_s2 = process.env.ESPN_S2;
   const swid = process.env.SWID;
@@ -4287,6 +4296,7 @@ async function computePowerRankingsPageData(espnLeagueId, seasonId, throughWeek)
     finalStandingsOdds: playoffOdds.map(team => ({ name: team.teamName, positions: team.positions })),
     strengthOfSchedule: sosRes?.strengthOfSchedule || [],
     throughWeek,
+    formulaVersion: POWER_RANKINGS_FORMULA_VERSION,
     computedAt: new Date().toISOString()
   };
 }
@@ -4294,13 +4304,15 @@ async function computePowerRankingsPageData(espnLeagueId, seasonId, throughWeek)
 // Same "only do real work when there's a genuinely new completed week"
 // pattern as refreshTrophyCaseCacheIfNeeded above - most cycles this is a
 // fast no-op, and the two caches always agree on the completed week
-// because they both call the same findLatestCompletedWeek() helper.
+// because they both call the same findLatestCompletedWeek() helper. Also
+// recomputes (once) whenever formulaVersion is out of date, independent
+// of the completed week - see POWER_RANKINGS_FORMULA_VERSION above.
 async function refreshPowerRankingsCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum) {
   const cached = await getPowerRankingsCache(espnLeagueId, seasonId);
   const { latestCompletedWeek } = await findLatestCompletedWeek(espnLeagueId, seasonId, currentWeekNum);
 
   if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet" };
-  if (cached && cached.throughWeek === latestCompletedWeek) {
+  if (cached && cached.throughWeek === latestCompletedWeek && cached.formulaVersion === POWER_RANKINGS_FORMULA_VERSION) {
     return { recomputed: false, reason: "already up to date" };
   }
 

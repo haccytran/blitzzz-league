@@ -4130,7 +4130,17 @@ async function findLatestCompletedWeek(espnLeagueId, seasonId, currentWeekNum) {
     // false means captureWeeklySnapshot never successfully ran for that
     // week; matchupCount 0 with hasSnapshot true means the snapshot
     // exists but its stored matchup data is empty/wrong shape.
-    weekDiagnostics.push({ week, hasSnapshot: !!snap, matchupCount: matchups.length, complete });
+    // Temporary (2026-09-22): when a week looks incomplete, show exactly
+    // which matchup(s) are stuck and why, instead of just the yes/no
+    // "complete" flag - this is how we caught captureWeeklySnapshot()
+    // locking in an early, partial capture of a week forever (see its
+    // "skip if a snapshot already exists" logic in runAutoRefreshForLeague).
+    const stuckMatchups = complete ? [] : matchups.map(m => ({
+      home: m.home?.teamId, homeScore: m.home?.totalPoints,
+      away: m.away?.teamId, awayScore: m.away?.totalPoints,
+      winner: m.winner
+    }));
+    weekDiagnostics.push({ week, hasSnapshot: !!snap, matchupCount: matchups.length, complete, stuckMatchups });
     if (complete) latestCompletedWeek = week;
   }
   return { latestCompletedWeek, teamNames, weekDiagnostics };

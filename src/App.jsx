@@ -6696,8 +6696,8 @@ const loadPositionalRecords = async () => {
     { label: 'Most Wins', team: sr.mostWins?.teamName, valueLabel: 'Wins', value: na(sr.mostWins?.wins ?? 0), year: `${na(sr.mostWins?.year)}` },
     { label: 'Highest Score', team: sr.highestScore?.teamName, valueLabel: 'Points', value: (sr.highestScore?.score ?? 0).toFixed(2), year: `${na(sr.highestScore?.year)} (Wk ${na(sr.highestScore?.week)})` },
     { label: 'Most Points For (Season)', team: sr.mostPointsFor?.teamName, valueLabel: 'Points', value: (sr.mostPointsFor?.points ?? 0).toFixed(2), year: `${na(sr.mostPointsFor?.year)}` },
-    { label: 'Biggest Blowout Ever', team: sr.biggestBlowout?.teamName, valueLabel: 'Margin', value: `+${(sr.biggestBlowout?.margin ?? 0).toFixed(2)}`, year: `${na(sr.biggestBlowout?.year)} (Wk ${na(sr.biggestBlowout?.week)})` },
-    { label: 'Ultimate Unlucky Loss', team: sr.luckyLoss?.teamName, valueLabel: 'Points (still lost)', value: (sr.luckyLoss?.score ?? 0).toFixed(2), year: `${na(sr.luckyLoss?.year)} (Wk ${na(sr.luckyLoss?.week)})` },
+    { label: 'Biggest Blowout Ever', team: sr.biggestBlowout?.teamName, valueLabel: 'Margin', value: `+${(sr.biggestBlowout?.margin ?? 0).toFixed(2)}`, year: `${na(sr.biggestBlowout?.year)} (Wk ${na(sr.biggestBlowout?.week)})`, opponent: sr.biggestBlowout?.opponentName ? `beat ${sr.biggestBlowout.opponentName} ${(sr.biggestBlowout?.score ?? 0).toFixed(2)} - ${(sr.biggestBlowout?.opponentScore ?? 0).toFixed(2)}` : null },
+    { label: 'Ultimate Unlucky Loss', team: sr.luckyLoss?.teamName, valueLabel: 'Points (still lost)', value: (sr.luckyLoss?.score ?? 0).toFixed(2), year: `${na(sr.luckyLoss?.year)} (Wk ${na(sr.luckyLoss?.week)})`, opponent: sr.luckyLoss?.opponentName ? `lost to ${sr.luckyLoss.opponentName} ${(sr.luckyLoss?.score ?? 0).toFixed(2)} - ${(sr.luckyLoss?.opponentScore ?? 0).toFixed(2)}` : null },
     { label: 'Worst Bench Week Ever', team: sr.worstBenchWeek?.teamName, valueLabel: 'Bench Pts', value: (sr.worstBenchWeek?.benchPoints ?? 0).toFixed(2), year: `${na(sr.worstBenchWeek?.year)} (Wk ${na(sr.worstBenchWeek?.week)})` },
     { label: 'Most Waiver Adds (Season)', team: sr.mostWaiverAdds?.teamName, valueLabel: 'Adds', value: na(sr.mostWaiverAdds?.adds ?? 0), year: `${na(sr.mostWaiverAdds?.year)}` },
     { label: 'Longest Win Streak', team: sr.longestWinStreak?.teamName, valueLabel: 'Games', value: na(sr.longestWinStreak?.length ?? 0), year: `${na(sr.longestWinStreak?.year)} (${streakSpan(sr.longestWinStreak)})` },
@@ -6723,7 +6723,10 @@ const loadPositionalRecords = async () => {
         {rows.map(r => (
           <tr key={r.label} style={{ borderBottom: '1px solid #f3f4f6' }}>
             <td style={{ padding: '12px 8px' }}>{r.label}</td>
-            <td style={{ padding: '12px 8px' }}>{r.team || 'N/A'}</td>
+            <td style={{ padding: '12px 8px' }}>
+              {r.team || 'N/A'}
+              {r.opponent && <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 400 }}>{r.opponent}</div>}
+            </td>
             <td style={{ padding: '12px 8px', textAlign: 'right' }}>{r.value}</td>
             <td style={{ padding: '12px 8px', textAlign: 'center' }}>{r.year}</td>
           </tr>
@@ -6738,7 +6741,10 @@ const loadPositionalRecords = async () => {
       {rows.map(r => (
         <div className="records-row" key={r.label}>
           <div className="records-label">{r.label}</div>
-          <div className="records-row-bg">{r.team || 'N/A'}</div>
+          <div className="records-row-bg">
+            {r.team || 'N/A'}
+            {r.opponent && <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 400 }}>{r.opponent}</div>}
+          </div>
           <div className="records-cells">
             <div className="records-cell"><span className="records-cell-label">{r.valueLabel}</span>{r.value}</div>
             <div className="records-cell"><span className="records-cell-label">Year</span>{r.year}</div>

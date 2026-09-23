@@ -1008,7 +1008,8 @@ def get_season_records():
         
         # Biggest blowout
         cur.execute("""
-            SELECT team_id, opponent_id, league_year, week, 
+            SELECT team_id, opponent_id, league_year, week,
+                   team_score, opponent_score,
                    (team_score - opponent_score) as margin
             FROM matchups
             WHERE outcome = 'W' AND league_id = %s
@@ -1044,6 +1045,11 @@ def get_season_records():
                 return None
             return team_names.get((row['team_id'], row['league_year']), f"Team {row['team_id']}")
 
+        def opp_name_for(row):
+            if not row or row.get('opponent_id') is None:
+                return None
+            return team_names.get((row['opponent_id'], row['league_year']), f"Team {row['opponent_id']}")
+
         # 2026-09-23: six new "fun" all-time records, added at Hac's request
         # because the original three (Most Wins / Highest Score / Most
         # Points For) were "pretty boring" on their own. Same (team_id,
@@ -1051,7 +1057,8 @@ def get_season_records():
 
         # The Ultimate Unlucky Loss - highest score ever put up IN A LOSS.
         cur.execute("""
-            SELECT team_id, league_year, week, team_score
+            SELECT team_id, opponent_id, league_year, week,
+                   team_score, opponent_score
             FROM matchups
             WHERE outcome = 'L' AND league_id = %s
             ORDER BY team_score DESC
@@ -1197,6 +1204,9 @@ def get_season_records():
                 'teamId': biggest_blowout['team_id'] if biggest_blowout else None,
                 'teamName': name_for(biggest_blowout),
                 'opponentId': biggest_blowout['opponent_id'] if biggest_blowout else None,
+                'opponentName': opp_name_for(biggest_blowout),
+                'opponentScore': float(biggest_blowout['opponent_score']) if biggest_blowout else 0,
+                'score': float(biggest_blowout['team_score']) if biggest_blowout else 0,
                 'year': biggest_blowout['league_year'] if biggest_blowout else None,
                 'week': biggest_blowout['week'] if biggest_blowout else None,
                 'margin': float(biggest_blowout['margin']) if biggest_blowout else 0
@@ -1212,6 +1222,9 @@ def get_season_records():
             'luckyLoss': {
                 'teamId': lucky_loss['team_id'] if lucky_loss else None,
                 'teamName': name_for(lucky_loss),
+                'opponentId': lucky_loss['opponent_id'] if lucky_loss else None,
+                'opponentName': opp_name_for(lucky_loss),
+                'opponentScore': float(lucky_loss['opponent_score']) if lucky_loss else 0,
                 'year': lucky_loss['league_year'] if lucky_loss else None,
                 'week': lucky_loss['week'] if lucky_loss else None,
                 'score': float(lucky_loss['team_score']) if lucky_loss else 0,
@@ -1755,12 +1768,13 @@ def import_transactions():
                 player_name = info['name']
                 
                 print(f"  -> Action: {action}, Position: {position}, Name: {player_name}")
-                
-                # Only track streaming positions: QB, K, D/ST
-                if position not in ['QB', 'K', 'D/ST']:
-                    print(f"  -> Skipped: Not a streaming position")
-                    continue
-                
+
+                # 2026-09-23: used to skip anything that wasn't QB/K/D-ST
+                # (this route was originally written just for streaming
+                # analysis). That silently threw away every RB/WR/TE add,
+                # which made this an unreliable source for a real "most
+                # waiver adds" leaderboard. Now it records every add/drop.
+
                 try:
                     cur.execute("""
                         INSERT INTO transactions 

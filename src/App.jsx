@@ -2628,23 +2628,47 @@ function determineHighestDST(boxscoreData, teamNames, weekNumber) {
 // 2026-08-25 when the challenge list was hardcoded into WEEKLY_CHALLENGES above - see the
 // comment above that constant for why and how to make changes in a future season.
 
+// 2026-09-24: a plain, in-app confirmation popup - used in place of the
+// browser's own window.confirm() on the two dues checklists below. A
+// browser confirm() dialog offers a "Don't allow this page to prompt
+// again" checkbox after it's been triggered a few times, which would let
+// someone silently turn off the whole safety check Hac asked for. This
+// component looks similar but is just normal page content, so that
+// browser opt-out checkbox can never appear.
+function ConfirmModal({ open, message, onConfirm, onCancel }) {
+  if (!open) return null;
+  return (
+    <div className="confirm-modal-overlay" onClick={onCancel}>
+      <div className="confirm-modal-box" onClick={(e) => e.stopPropagation()}>
+        <p className="confirm-modal-message">{message}</p>
+        <div className="confirm-modal-actions">
+          <button className="btn" onClick={onCancel}>Cancel</button>
+          <button className="btn primary" onClick={onConfirm}>OK</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // DUES PAYMENT TRACKER
 
 function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDuesPayments, btnPri, btnSec }) {
  const displayYear = new Date().getFullYear();
+  // 2026-09-24: holds the pending toggle {teamName, isPaid} while the
+  // ConfirmModal is up - null means no modal showing. Declared before the
+  // early return below since hooks can't be conditional.
+  const [pendingToggle, setPendingToggle] = useState(null);
   if (!report || !report.totalsRows) return null;
 
   const seasonKey = String(seasonId);
   const currentPayments = (data.duesPayments && data.duesPayments[seasonKey]) || {};
 
-  const updatePayment = async (teamName, isPaid) => {
+  const requestToggle = (teamName, isPaid) => {
     if (!isAdmin) return;
+    setPendingToggle({ teamName, isPaid });
+  };
 
-    // 2026-09-24: confirm before toggling, at Hac's request - a mis-tap
-    // while scrolling on mobile used to silently flip a team's paid
-    // status with no way to notice until later.
-    if (!window.confirm(`Mark ${teamName} as ${isPaid ? "PAID" : "NOT PAID"}?`)) return;
-
+  const applyPayment = async (teamName, isPaid) => {
     const updates = { ...currentPayments, [teamName]: isPaid };
     
     // Optimistically update local state
@@ -2769,7 +2793,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
                 <input
                   type="checkbox"
                   checked={!!currentPayments[row.name]}
-                  onChange={(e) => updatePayment(row.name, e.target.checked)}
+                  onChange={(e) => requestToggle(row.name, e.target.checked)}
                   disabled={!isAdmin}
                 />
               </td>
@@ -2808,7 +2832,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
               <input
                 type="checkbox"
                 checked={isPaid}
-                onChange={(e) => updatePayment(row.name, e.target.checked)}
+                onChange={(e) => requestToggle(row.name, e.target.checked)}
                 className="dues-mobile-checkbox"
               />
             ) : (
@@ -2833,11 +2857,21 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
     );
   })}
 </div>
+      <ConfirmModal
+        open={!!pendingToggle}
+        message={pendingToggle ? `Mark ${pendingToggle.teamName} as ${pendingToggle.isPaid ? "PAID" : "NOT PAID"}?` : ""}
+        onCancel={() => setPendingToggle(null)}
+        onConfirm={() => {
+          const { teamName, isPaid } = pendingToggle;
+          setPendingToggle(null);
+          applyPayment(teamName, isPaid);
+        }}
+      />
     </div>
   );
 }
 
-function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns, updateDuesPayments, btnPri, btnSec 
+function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapshot, isAdmin, data, setData, seasonYear, updateBuyIns, updateDuesPayments, btnPri, btnSec
 }) {
 
   useEffect(() => {
@@ -7412,6 +7446,9 @@ function WaiverForm({ members, onAdd, disabled }) {
 function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIns }) {
   const BUYIN = 200;
   const displayYear = new Date().getFullYear();
+  // 2026-09-24: holds the pending toggle {id, name, willBePaid} while the
+  // ConfirmModal is up - null means no modal showing.
+  const [pendingToggle, setPendingToggle] = useState(null);
 
   const seasonKey = "current"; // Always use current season, not year-specific
   const cur = (data.buyins && data.buyins[seasonKey]) || {
@@ -7462,10 +7499,11 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
 
   // 2026-09-24: confirm before toggling, at Hac's request - same reason
   // as the Waiver Dues Checklist above (accidental mobile scroll-taps).
+  // Uses the in-app ConfirmModal instead of window.confirm() so the
+  // browser's own "don't allow this page to prompt again" checkbox can
+  // never appear and silently disable this safety check.
   const togglePaid = (id, name) => {
-    const willBePaid = !cur.paid[id];
-    if (!window.confirm(`Mark ${name} as ${willBePaid ? "PAID" : "NOT PAID"}?`)) return;
-    patch({ paid: { ...cur.paid, [id]: willBePaid } });
+    setPendingToggle({ id, name, willBePaid: !cur.paid[id] });
   };
   const markAll = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
   const resetAll = () => patch({ paid: {} });
@@ -7526,6 +7564,16 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
           </ul>
         </div>
       )}
+      <ConfirmModal
+        open={!!pendingToggle}
+        message={pendingToggle ? `Mark ${pendingToggle.name} as ${pendingToggle.willBePaid ? "PAID" : "NOT PAID"}?` : ""}
+        onCancel={() => setPendingToggle(null)}
+        onConfirm={() => {
+          const { id, willBePaid } = pendingToggle;
+          setPendingToggle(null);
+          patch({ paid: { ...cur.paid, [id]: willBePaid } });
+        }}
+      />
     </div>
   );
 }

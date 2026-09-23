@@ -4116,7 +4116,54 @@ function buildWeekTrophies(weekNum, teamNames, matchupSchedule, boxscoreSchedule
     weekTrophies.trophies.push({ emoji: "🤡", title: "Worst Manager", team: worstManager.teams, value: `${teamList} left ${worstManager.benchPoints.toFixed(2)} points on their bench. Only scoring ${worstManager.percentage.toFixed(1)}% of their optimal score.` });
   }
 
+  // 2026-09-22: the Naughty List (starters who didn't play/scored 0) used to
+  // only exist as its own live /weekly-awards lookup (python-stats-service's
+  // get_weekly_awards) that the client called separately per week - so even
+  // after the rest of Trophy Case got cached, this part still hit ESPN live
+  // every time. Ported that same logic here (identical rule: a starting
+  // slot, i.e. lineupSlotId < 20 or the FLEX slot 23, with no points scored
+  // this week = inactive) so it's computed once, from the same boxscore
+  // snapshot already sitting in memory for the trophies above, and gets
+  // saved as part of this week's cached data instead of being fetched again
+  // on every page load.
+  weekTrophies.naughtyList = buildNaughtyList(weekNum, teamNames, boxscoreSchedule);
+
   return weekTrophies;
+}
+
+function buildNaughtyList(weekNum, teamNames, boxscoreSchedule) {
+  const naughtyList = [];
+  for (const matchup of (boxscoreSchedule || [])) {
+    if (matchup?.matchupPeriodId !== weekNum) continue;
+    for (const side of ["home", "away"]) {
+      const teamData = matchup[side];
+      if (!teamData) continue;
+      const teamId = teamData.teamId;
+      const roster = teamData?.rosterForCurrentScoringPeriod?.entries || [];
+      const inactivePlayers = [];
+      for (const entry of roster) {
+        const slotId = entry?.lineupSlotId;
+        if (slotId == null || (slotId >= 20 && slotId !== 23)) continue; // bench/IR, except FLEX (23)
+        const player = entry?.playerPoolEntry?.player || {};
+        const playerName = player.fullName || "Unknown";
+        const stats = Array.isArray(player.stats) ? player.stats : [];
+        const scoredPoints = stats.some(s => s?.scoringPeriodId === weekNum && Number(s?.appliedTotal || 0) > 0);
+        if (!scoredPoints) {
+          inactivePlayers.push({ name: playerName, status: "Did not play" });
+        }
+      }
+      if (inactivePlayers.length > 0) {
+        naughtyList.push({
+          teamId,
+          teamName: teamNames[teamId] || `Team ${teamId}`,
+          inactivePlayers,
+          inactiveCount: inactivePlayers.length
+        });
+      }
+    }
+  }
+  naughtyList.sort((a, b) => b.inactiveCount - a.inactiveCount);
+  return naughtyList;
 }
 
 // Recomputes the whole season's Trophy Case data (all completed weeks) and
@@ -4238,9 +4285,19 @@ async function computeTrophyCaseData(espnLeagueId, seasonId, teamNames, throughW
     seasonStats,
     trophyCounts,
     throughWeek: trophiesData.length,
+    cacheVersion: TROPHY_CASE_CACHE_VERSION,
     computedAt: new Date().toISOString()
   };
 }
+
+// 2026-09-22: bumped whenever what gets computed/stored in the Trophy Case
+// cache changes shape (e.g. adding the Naughty List to it below) - forces
+// one recompute so already-cached seasons pick up the change immediately,
+// the same trick POWER_RANKINGS_FORMULA_VERSION uses for that cache.
+// Without this, a season that was already cached before some future change
+// would keep serving its old cached shape until its next real week
+// finished (or someone happened to hit the manual rebuild link).
+const TROPHY_CASE_CACHE_VERSION = 2;
 
 // Shared by both the Trophy Case cache and the Power Rankings/Playoff
 // Odds/Strength of Schedule cache below: finds the true number of
@@ -4299,7 +4356,7 @@ async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWee
 
   if (!teamNames) return { recomputed: false, reason: "no team data available yet", weekDiagnostics };
   if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet", weekDiagnostics };
-  if (cached && cached.throughWeek === latestCompletedWeek) {
+  if (cached && cached.throughWeek === latestCompletedWeek && cached.cacheVersion === TROPHY_CASE_CACHE_VERSION) {
     return { recomputed: false, reason: "already up to date", weekDiagnostics };
   }
 

@@ -4837,36 +4837,28 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
             setError("");
             setLoading(false);
 
-            // 2026-09-22: the Naughty List (inactive/benched starters) was
-            // never part of the server-side Trophy Case cache - it's its
-            // own separate per-week lookup (see processWeek's naughty-list
-            // fetch further below), not something the cache-check above
-            // just fetched. Taking the early "return" here skipped this
-            // entirely once the cache started actually being hit, which is
-            // why it stopped showing up. Firing these off in parallel here
-            // restores it without giving up the speed of the cache hit -
-            // this is a handful of light lookups, not the full trophy
-            // recomputation the cache was built to avoid.
-            const baseURL2 = import.meta.env.DEV ? 'http://localhost:8787' : '';
-            await Promise.all(sortedTrophies.map(async (wk) => {
-              try {
-                const naughtyResponse = await fetch(
-                  `${baseURL2}/api/leagues/${config.id}/weekly-awards/${espn.seasonId}?week=${wk.week}`
-                );
-                const naughtyData = await naughtyResponse.json();
-                setNaughtyLists(prev => ({ ...prev, [wk.week]: naughtyData.naughtyList || [] }));
-                if (naughtyData.naughtyList && naughtyData.naughtyList.length > 0) {
-                  setAllNaughtyEntries(prev => [
-                    ...prev,
-                    ...naughtyData.naughtyList.map(entry => ({ ...entry, week: wk.week }))
-                  ]);
-                }
-              } catch (naughtyErr) {
-                console.error(`Failed to load naughty list for week ${wk.week}:`, naughtyErr);
+            // 2026-09-22: the Naughty List (inactive/benched starters) is
+            // now computed server-side too (see buildNaughtyList in
+            // server.mjs) and saved right alongside each cached week's
+            // trophies - so it's read straight out of the same cache
+            // response above instead of a separate live per-week fetch.
+            // Older cached seasons without a naughtyList field yet (from
+            // before this was added) just get an empty list here until
+            // their cache is next rebuilt - see TROPHY_CASE_CACHE_VERSION
+            // in server.mjs, which forces exactly that rebuild once.
+            const newNaughtyLists = {};
+            const newNaughtyEntries = [];
+            for (const wk of sortedTrophies) {
+              const list = wk.naughtyList || [];
+              newNaughtyLists[wk.week] = list;
+              if (list.length > 0) {
+                newNaughtyEntries.push(...list.map(entry => ({ ...entry, week: wk.week })));
               }
-            }));
+            }
+            setNaughtyLists(newNaughtyLists);
+            setAllNaughtyEntries(newNaughtyEntries);
 
-            return; // done - no further ESPN calls needed
+            return; // done - no ESPN calls needed at all
           }
         }
       } catch (cacheErr) {

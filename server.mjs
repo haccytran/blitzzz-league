@@ -1316,10 +1316,26 @@ app.get("/api/leagues/:leagueId/trophy-case-cache/:seasonId/rebuild", async (req
     };
 
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
-    const currentWeekNum = leagueWeekOf(new Date(), seasonId).week || 0;
+
+    // 2026-09-22: don't use leagueWeekOf() here - that relies on a cached
+    // "week anchor" that only gets set/corrected during the normal
+    // scheduled background refresh cycle (see __serverWeekAnchor in
+    // runAutoRefreshForLeague). Calling this route on demand, right after a
+    // fresh deploy before that cycle has run yet, meant the anchor was
+    // still empty and leagueWeekOf() silently fell back to the old
+    // "guess based on the calendar date" formula - which is exactly the
+    // kind of guess this project moved away from elsewhere (see the "what
+    // week is it" fix in the project notes). Ask ESPN directly instead,
+    // the same authoritative field the Trophy Case page itself already
+    // trusts (status.currentMatchupPeriod) - one cheap extra ESPN call,
+    // but a correct one every time, deploy or no deploy.
+    const settingsJson = await espnFetch({
+      leagueId: espnLeagueId, seasonId, view: "mSettings", req: { headers: {} }, requireCookie: true
+    });
+    const currentWeekNum = Math.min(14, settingsJson?.status?.currentMatchupPeriod || 0);
 
     const result = await refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum);
-    res.json(result);
+    res.json({ ...result, currentWeekNum });
   } catch (error) {
     console.error('Manual Trophy Case cache rebuild failed:', error);
     res.status(500).json({ error: error.message });

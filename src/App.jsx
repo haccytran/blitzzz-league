@@ -1679,40 +1679,39 @@ setActivities(pairedActivities);
         const activity = activities[i];
         const nextActivity = activities[i + 1];
         
-        // Check if this is part of a pair
-        if (activity.action === "ADDED" && 
-            nextActivity && 
-            nextActivity.action === "DROPPED" && 
-            nextActivity.team === activity.team && 
-            nextActivity.date === activity.date) {
-          // This is a pair
+        // 2026-09-24: check whether this ADD/DROP is a genuine same-moment
+        // swap using isPaired/pairWith (set earlier from an exact
+        // timestamp match, see matchIdx above) instead of comparing
+        // activity.date - that field had already been truncated to a
+        // date-only string by this point, so two unrelated transactions
+        // from the same team on the same day (different times) were
+        // incorrectly rendered as if they were one grouped swap. Hac
+        // caught this from the highlighting making unrelated rows look
+        // connected.
+        if (activity.action === "ADDED" &&
+            activity.isPaired &&
+            nextActivity &&
+            nextActivity.action === "DROPPED" &&
+            nextActivity.isPaired &&
+            nextActivity.team === activity.team &&
+            nextActivity.pairWith === activity.player &&
+            activity.pairWith === nextActivity.player) {
+          // This is a genuine pair - one card, one shared timestamp (both
+          // sides of a real swap happen at the same instant, so showing it
+          // twice was redundant - Hac's request).
           const isShaded = pairCounter % 2 === 0;
           renderedActivities.push(
             <div key={i} style={{
               padding: "8px",
               borderBottom: "1px solid #e2e8f0",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              fontSize: 14,
-              color: "#16a34a",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b style={{ color: "#0080C6" }}>{activity.team}</b> ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} bidAmount={activity.bidAmount} /></span>
-              <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={activity.ts} /></span>
-            </div>,
-            <div key={i + "drop"} style={{
-              padding: "8px",
-              borderBottom: "1px solid #e2e8f0",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              fontSize: 14,
-              color: "#dc2626",
-              backgroundColor: isShaded ? "#fffbeb" : "transparent"
-            }}>
-              <span><b style={{ color: "#0080C6" }}>{nextActivity.team}</b> DROPPED <b>{nextActivity.player}</b></span>
-              <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={nextActivity.ts} /></span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <b style={{ color: "#0080C6", fontSize: 14 }}>{activity.team}</b>
+                <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={activity.ts} /></span>
+              </div>
+              <div style={{ fontSize: 14, color: "#16a34a" }}>ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} bidAmount={activity.bidAmount} /></div>
+              <div style={{ fontSize: 14, color: "#dc2626" }}>DROPPED <b>{nextActivity.player}</b></div>
             </div>
           );
           i++; // Skip next since we processed it

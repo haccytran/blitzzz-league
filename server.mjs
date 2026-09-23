@@ -1293,6 +1293,39 @@ app.get("/api/leagues/:leagueId/snapshot/:seasonId/:weekNumber", async (req, res
   }
 });
 
+// Manual, one-off way to build the Trophy Case cache right now instead of
+// waiting for the next scheduled background refresh (which normally
+// happens automatically every ~30 minutes in-season). Handy right after
+// deploying this feature for the first time, so you don't have to wait.
+// This is completely safe to visit any time: it just calls the exact same
+// refreshTrophyCaseCacheIfNeeded() function the automatic background job
+// already calls on its own schedule - it can never get out of sync with
+// it or "double build" anything. If the cache is already current for the
+// latest completed week, it does nothing and just reports that. It only
+// reads already-fetched ESPN data (via the weekly snapshots) and writes to
+// the Trophy Case cache - it can't touch dues, transactions, rosters, or
+// anything money-related. No admin login needed to visit it, same as the
+// GET route right below it that just reads the cache.
+app.get("/api/leagues/:leagueId/trophy-case-cache/:seasonId/rebuild", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+
+    const leagueConfigs = {
+      'blitzzz': '226912',
+      'sculpin': '58645'
+    };
+
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+    const currentWeekNum = leagueWeekOf(new Date(), seasonId).week || 0;
+
+    const result = await refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum);
+    res.json(result);
+  } catch (error) {
+    console.error('Manual Trophy Case cache rebuild failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get the pre-computed Trophy Case cache for a season, if one has been
 // built yet. This is what src/App.jsx's Trophy Case page reads FIRST,
 // instead of recalculating every trophy from scratch on every page load -

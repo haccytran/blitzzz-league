@@ -3419,9 +3419,17 @@ for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
   for (const [team, count] of m.entries()) {
     // If it's a playoff week, no charges apply
     const owes = playoffWeeks.includes(w) ? 0 : Math.max(0, count - 2) * 5;
-    entries.push({ name: team, count, owes });      const t = totals.get(team) || { adds:0, owes:0 };
-      t.adds += count; 
-      t.owes += owes; 
+    // 2026-09-24: "billable" adds are just owes/5 - the actual adds that
+    // cost the team $5 each, per the "first two free per week, then $5
+    // each" rule. This is separate from the plain add COUNT (which
+    // includes the free ones too, and previously was what got mislabeled
+    // "billable adds" on the Dues page - see App.jsx's Billable Adds
+    // column/mobile card for where this is displayed).
+    const billable = owes / 5;
+    entries.push({ name: team, count, owes, billable });      const t = totals.get(team) || { adds:0, owes:0, billable:0 };
+      t.adds += count;
+      t.owes += owes;
+      t.billable += billable;
       totals.set(team, t);
     }
     entries.sort((a,b)=> a.name.localeCompare(b.name));
@@ -3435,7 +3443,8 @@ for (const w of [...perWeek.keys()].sort((a,b)=>a-b)) {
     return {
       name: teamName,
       adds: existing ? existing.adds : 0,
-      owes: existing ? existing.owes : 0
+      owes: existing ? existing.owes : 0,
+      billable: existing ? existing.billable : 0
     };
   }).sort((a,b)=> b.owes - a.owes || a.name.localeCompare(b.name));
       

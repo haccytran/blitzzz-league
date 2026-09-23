@@ -2751,6 +2751,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
             <th style={th}>Paid</th>
             <th style={th}>Team</th>
             <th style={{...th, color: "#dc2626"}}>Billable Adds</th>
+<th style={th}>Total Adds</th>
 <th style={{...th, color: "#16a34a"}}>Owes</th>
           </tr>
         </thead>
@@ -2767,12 +2768,17 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
                   disabled={!isAdmin}
                 />
               </td>
-              <td style={{ 
-                ...td, 
-                textDecoration: currentPayments[row.name] ? "line-through" : "none" 
+              <td style={{
+                ...td,
+                textDecoration: currentPayments[row.name] ? "line-through" : "none"
               }}>
                 {row.name}
               </td>
+              {/* 2026-09-24: "Billable Adds" is the adds that actually cost
+                  $5 each (owes / 5) - row.adds is the TOTAL add count
+                  (free + billable), which is now its own "Total Adds"
+                  column instead of being mislabeled as billable. */}
+              <td style={td}>{row.billable ?? 0}</td>
               <td style={td}>{row.adds}</td>
               <td style={{...td, color: row.owes > 0 ? "#16a34a" : "#000000", fontWeight: row.owes > 0 ? "bold" : "normal"}}>${row.owes}</td>
             </tr>
@@ -2815,7 +2821,9 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
             </span>
           </div>
         </div>
-        <div className="dues-mobile-adds">{row.adds} billable add{row.adds === 1 ? "" : "s"}</div>
+        <div className="dues-mobile-adds">
+          {row.billable ?? 0} billable add{(row.billable ?? 0) === 1 ? "" : "s"}, {row.adds} total add{row.adds === 1 ? "" : "s"}
+        </div>
       </div>
     );
   })}
@@ -2836,14 +2844,24 @@ function DuesView({ report, lastSynced, loadOfficialReport, updateOfficialSnapsh
   return (
     <Section title="Dues (Official Snapshot)" actions={
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className="btn" style={btnSec} onClick={() => loadOfficialReport(false)}>Refresh Snapshot</button>
+        {/* 2026-09-24: "Refresh Snapshot" removed for non-admins at Hac's
+            request. It never pulled anything new from ESPN (that's what
+            "Update Official Snapshot" does, and that's already
+            admin-only) - it just re-fetched the same already-saved report
+            the page loads automatically anyway (see the useEffect right
+            above this). For a non-admin it looked like a "get the latest
+            numbers" button but was actually a no-op, which was confusing
+            without any real benefit - so it's now admin-only too, where
+            it's still occasionally useful for re-pulling the snapshot
+            without triggering a full ESPN re-sync. */}
+        {isAdmin && <button className="btn" style={btnSec} onClick={() => loadOfficialReport(false)}>Refresh Snapshot</button>}
         {isAdmin && <button className="btn" style={btnPri} onClick={updateOfficialSnapshot}>Update Official Snapshot</button>}
-        
+
         {report && (
           <>
 {isAdmin && (
             <button className="btn" style={btnSec} onClick={() => {
-              const rows = [["Team", "Adds", "Owes"], ...report.totalsRows.map(r => [r.name, r.adds, `${r.owes}`])];
+              const rows = [["Team", "Billable Adds", "Total Adds", "Owes"], ...report.totalsRows.map(r => [r.name, r.billable ?? 0, r.adds, `${r.owes}`])];
               downloadCSV("dues_totals.csv", rows);
             }}>Download CSV (totals)</button>
 )}

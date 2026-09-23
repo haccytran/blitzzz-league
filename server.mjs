@@ -490,11 +490,72 @@ app.get("/api/league-data", async (req, res) => {
   }
 });
 
+/* =========================================================
+   DRAFT RECAP CACHE (2026-09-23, item 6 of Hac's batch)
+   The /api/draft route below does a LOT of work every time it's called -
+   it fetches the whole draft from ESPN, then resolves every drafted
+   player's name one-by-one (in batches of 20, with a pause between
+   batches) against a separate ESPN athletes API. A completed draft never
+   changes, so there's no reason to redo all of that every time someone
+   opens the Draft Recap page - this caches the final, fully-resolved
+   {picks} response and serves that on every later request instead.
+
+   Storage: reuses the existing weekly_snapshots table with sentinel
+   week_number = -3 (0 = Trophy Case, -1 = Power Rankings/Playoff
+   Odds/SOS, -2 = Weekly Challenges - so -3 is the next free slot).
+   ========================================================= */
+async function getDraftCache(leagueId, seasonId) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT snapshot_data FROM weekly_snapshots WHERE league_id = $1 AND season_id = $2 AND week_number = -3',
+        [leagueId, seasonId]
+      );
+      return result.rows.length > 0 ? result.rows[0].snapshot_data : null;
+    } finally {
+      client.release();
+    }
+  } else {
+    return await readJson(`draftcache_${leagueId}_${seasonId}.json`, null);
+  }
+}
+
+async function saveDraftCache(leagueId, seasonId, cache) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO weekly_snapshots (league_id, season_id, week_number, snapshot_data)
+        VALUES ($1, $2, -3, $3)
+        ON CONFLICT (league_id, season_id, week_number)
+        DO UPDATE SET snapshot_data = $3, created_at = CURRENT_TIMESTAMP
+      `, [leagueId, seasonId, JSON.stringify(cache)]);
+    } finally {
+      client.release();
+    }
+  } else {
+    await writeJson(`draftcache_${leagueId}_${seasonId}.json`, cache);
+  }
+}
+
 app.get("/api/draft", async (req, res) => {
   try {
-    const { leagueId, seasonId } = req.query;
+    const { leagueId, seasonId, refresh } = req.query;
     if (!leagueId || !seasonId) {
       return res.status(400).json({ error: "Missing leagueId or seasonId" });
+    }
+
+    // Serve the saved copy when we have one, unless the caller explicitly
+    // asked to bypass it (the frontend's "Refresh" button sends
+    // refresh=1). A brand new/incomplete draft (no picks yet) is
+    // deliberately NOT cached below, so this will keep recomputing live
+    // until the draft actually has picks in it.
+    if (refresh !== "1") {
+      const cached = await getDraftCache(leagueId, seasonId);
+      if (cached) {
+        return res.json(cached);
+      }
     }
 
     // Get NFL teams for D/ST names (same as your console script)
@@ -587,7 +648,16 @@ nameById[id] = position ? `${name} (${position})` : name;
       playerName: pick.playerName || nameById[pick.playerId] || `Player ${pick.playerId}`
     }));
 
-    res.json({ picks });
+    const result = { picks };
+
+    // Only cache once the draft actually has picks - an empty/future draft
+    // should keep checking live instead of getting stuck cached as empty.
+    if (picks.length > 0) {
+      saveDraftCache(leagueId, seasonId, result).catch(err =>
+        console.error('Failed to save Draft Recap cache:', err));
+    }
+
+    res.json(result);
   } catch (error) {
     console.error('Draft fetch error:', error);
     res.status(500).json({ error: "Failed to fetch draft data" });
@@ -1397,6 +1467,57 @@ app.get("/api/leagues/:leagueId/trophy-case-cache/:seasonId", async (req, res) =
     }
   } catch (error) {
     console.error('Failed to retrieve Trophy Case cache:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get the saved Weekly Challenges cache for a season, if one has been
+// built yet (see saveWeeklyChallengesCache()/getWeeklyChallengesCache()
+// above). WeeklyView/HallOfFameView's Weekly Challenges section reads
+// this FIRST and only falls back to recalculating live from the ESPN API
+// when there's nothing here yet or the saved copy doesn't cover the
+// weeks that are currently revealed.
+app.get("/api/leagues/:leagueId/weekly-challenges-cache/:seasonId", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+
+    const cache = await getWeeklyChallengesCache(espnLeagueId, seasonId);
+
+    if (cache) {
+      res.json(cache);
+    } else {
+      // Nothing saved yet - the frontend computes live and posts it here
+      // afterward, so this is safe.
+      res.status(404).json({ error: "Weekly Challenges cache not built yet" });
+    }
+  } catch (error) {
+    console.error('Failed to retrieve Weekly Challenges cache:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Save the computed Weekly Challenges winners for a season. Called by the
+// browser right after it finishes computing them live, so the NEXT
+// visitor (or this same browser on its next visit) can just read this
+// saved copy instead of hitting the ESPN API and recalculating from
+// scratch every time.
+app.post("/api/leagues/:leagueId/weekly-challenges-cache/:seasonId", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+
+    const { winners, throughWeek } = req.body || {};
+    if (!winners || typeof winners !== 'object') {
+      return res.status(400).json({ error: "Missing 'winners' in request body" });
+    }
+
+    await saveWeeklyChallengesCache(espnLeagueId, seasonId, { winners, throughWeek: throughWeek || 0, savedAt: new Date().toISOString() });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to save Weekly Challenges cache:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -3835,6 +3956,58 @@ async function getTrophyCaseCache(leagueId, seasonId) {
     }
   } else {
     return await readJson(`trophycase_${leagueId}_${seasonId}.json`, null);
+  }
+}
+
+/* =========================================================
+   WEEKLY CHALLENGES CACHE (2026-09-22, item 4 of Hac's batch)
+   The Weekly Challenge winner-determination logic itself stays exactly
+   where it was (client-side, in App.jsx) - it's ~1300 lines across a
+   dozen functions and the safest way to avoid changing who wins what is
+   to not touch that math at all. Instead: once a browser computes the
+   winners for a season, it POSTs the result here so every OTHER visitor
+   (and future page loads) can just read the saved copy instead of
+   recalculating from the ESPN API every single time.
+
+   Storage: reuses the existing weekly_snapshots table with sentinel
+   week_number = -2 (real weeks are always >= 1, Trophy Case uses 0,
+   Power Rankings/Playoff Odds/SOS uses -1 - so -2 can't collide with
+   any of those). Falls back to a JSON file on disk when there's no
+   database configured, same as every other cache in this file.
+   ========================================================= */
+
+async function saveWeeklyChallengesCache(leagueId, seasonId, cache) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO weekly_snapshots (league_id, season_id, week_number, snapshot_data)
+        VALUES ($1, $2, -2, $3)
+        ON CONFLICT (league_id, season_id, week_number)
+        DO UPDATE SET snapshot_data = $3, created_at = CURRENT_TIMESTAMP
+      `, [leagueId, seasonId, JSON.stringify(cache)]);
+    } finally {
+      client.release();
+    }
+  } else {
+    await writeJson(`weeklychallenges_${leagueId}_${seasonId}.json`, cache);
+  }
+}
+
+async function getWeeklyChallengesCache(leagueId, seasonId) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT snapshot_data FROM weekly_snapshots WHERE league_id = $1 AND season_id = $2 AND week_number = -2',
+        [leagueId, seasonId]
+      );
+      return result.rows.length > 0 ? result.rows[0].snapshot_data : null;
+    } finally {
+      client.release();
+    }
+  } else {
+    return await readJson(`weeklychallenges_${leagueId}_${seasonId}.json`, null);
   }
 }
 

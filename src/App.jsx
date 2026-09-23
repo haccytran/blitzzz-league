@@ -1085,7 +1085,7 @@ async function loadOfficialReport(silent=false){
   hoodtrophies: <TrophyCaseView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} />,
   halloffame: <HallOfFameView config={config} apiCallLeague={apiCallLeague} btnPri={btnPri} btnSec={btnSec} />,
 
-  ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} btnPri={btnPri} btnSec={btnSec} /> }),
+  ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
   activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
   transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} espn={espn} btnPri={btnPri} btnSec={btnSec} />,
@@ -1691,7 +1691,7 @@ const WEEKLY_CHALLENGES = [
   { week: 13, title: "Hero to Zero", text: "Biggest NEGATIVE team points differential from the prior week to this week" },
 ];
 
-function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear, espn, btnPri, btnSec }) {
+function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, seasonYear, espn, config, btnPri, btnSec }) {
   const [weeklyWinners, setWeeklyWinners] = useState({});
   const [loading, setLoading] = useState(false);
   const [manualWinners, setManualWinners] = useState({});
@@ -1700,13 +1700,11 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
   const nowWeek = leagueWeekOf(new Date(), seasonYear).week || 0;
 
   // Load weekly challenge winners
-  const loadWeeklyChallengeWinners = async () => {
+  const loadWeeklyChallengeWinners = async (forceRecompute) => {
   if (!espn.leagueId || !espn.seasonId) return;
-  
+
   setLoading(true);
   try {
-    const winners = {};
-
     // 2026-08-25: reveal a week's winner starting Tuesday at midnight PT
     // (one minute after Monday 11:59pm) - Monday Night Football is
     // historically the last game of the fantasy week, so by Tuesday we
@@ -1716,6 +1714,33 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
     // start on the exact date it assumed.
     await loadEspnWeekAnchor(espn.leagueId, espn.seasonId);
     const anchor = __espnWeekAnchor[espn.seasonId];
+    const revealedThroughWeek = anchor ? anchor.week - 1 : 0; // last week that's safe to show
+
+    // 2026-09-22: try the server's saved Weekly Challenges cache first, so
+    // we don't recompute from the ESPN API (and re-run ~1300 lines of
+    // winner-determination logic) on every single page load. Skipped when
+    // the user hits "Refresh Winners" (forceRecompute), or if the cache
+    // doesn't yet cover every week that's currently revealed - either way
+    // we fall straight through to the exact same live computation as
+    // before, so nothing about who wins what ever changes.
+    if (!forceRecompute && config?.id) {
+      try {
+        const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+        const cacheResp = await fetch(`${baseURL}/api/leagues/${config.id}/weekly-challenges-cache/${espn.seasonId}`);
+        if (cacheResp.ok) {
+          const cached = await cacheResp.json();
+          if (cached && cached.winners && cached.throughWeek >= revealedThroughWeek) {
+            setWeeklyWinners(cached.winners);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (e) {
+        // cache fetch failed - fall through to live computation below
+      }
+    }
+
+    const winners = {};
 
     // Process weeks 1-13
     for (let week = 1; week <= 13; week++) {
@@ -1730,7 +1755,7 @@ function WeeklyView({ isAdmin, data, addWeekly, deleteWeekly, editWeekly, season
         if (week >= anchor.week) continue;
 
         let winner = null;
-        
+
         // Week 10 (Over-Achiever) - use projection API
         if (week === 10) {
   winner = await determineOverachiever(week, espn.leagueId, espn.seasonId, ht_projectedForWeek, ht_teamProjection);
@@ -1744,7 +1769,7 @@ else if (week === 3) {
         else {
           winner = await determineWeeklyWinner(week, espn.leagueId, espn.seasonId);
         }
-        
+
         if (winner) {
           winners[week] = winner;
         }
@@ -1752,8 +1777,24 @@ else if (week === 3) {
         console.error(`Failed to determine Week ${week} winner:`, error);
       }
     }
-    
+
     setWeeklyWinners(winners);
+
+    // 2026-09-22: now that we just computed these live, save them to the
+    // server so the next visitor (or our own next page load) can skip
+    // straight to the cache above instead of redoing all this work.
+    if (config?.id && Object.keys(winners).length > 0) {
+      try {
+        const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+        fetch(`${baseURL}/api/leagues/${config.id}/weekly-challenges-cache/${espn.seasonId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ winners, throughWeek: revealedThroughWeek })
+        }).catch(() => {});
+      } catch (e) {
+        // best-effort - a failed cache save should never break the page
+      }
+    }
   } catch (error) {
     console.error('Failed to load weekly winners:', error);
   }
@@ -1779,7 +1820,7 @@ else if (week === 3) {
     <div id="weekly-challenges-root" data-loaded={loading ? "false" : "true"}>
     <Section title="Weekly Challenges" actions={
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" style={btnSec} onClick={loadWeeklyChallengeWinners} disabled={loading}>
+        <button className="btn" style={btnSec} onClick={() => loadWeeklyChallengeWinners(true)} disabled={loading}>
           {loading ? "Loading..." : "Refresh Winners"}
         </button>
       </div>
@@ -2691,8 +2732,9 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <h3 style={{ marginTop: 0 }}>{seasonId} Waiver Dues Checklist{"\u2705"}</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span className="badge">
-            ${paidAmount} / ${totalOwed} collected ({paidCount} / {report.totalsRows.length} paid)
+          <span className="badge dues-collected-badge">
+            ${paidAmount} / ${totalOwed} COLLECTED<br />
+            ({paidCount} / {report.totalsRows.length} paid)
           </span>
           {isAdmin && (
             <>
@@ -2708,7 +2750,7 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
           <tr>
             <th style={th}>Paid</th>
             <th style={th}>Team</th>
-            <th style={{...th, color: "#dc2626"}}>Adds</th>
+            <th style={{...th, color: "#dc2626"}}>Billable Adds</th>
 <th style={{...th, color: "#16a34a"}}>Owes</th>
           </tr>
         </thead>
@@ -2737,29 +2779,46 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
           ))}
         </tbody>
       </table>
-{/* Mobile-friendly card layout */}
-<div className="mobile-list">
-  {report.totalsRows.map(row => (
-    <div key={row.name} className="card" style={{ padding: 8, marginBottom: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <input
-            type="checkbox"
-            checked={!!currentPayments[row.name]}
-            onChange={(e) => updatePayment(row.name, e.target.checked)}
-            disabled={!isAdmin}
-            style={{ marginRight: 8 }}
-          />
-          <span style={{ textDecoration: currentPayments[row.name] ? "line-through" : "none" }}>
-            {row.name}
-          </span>
+{/* Mobile-friendly card layout.
+    2026-09-23: redesigned at Hac's request - non-commissioners were
+    seeing a disabled (but still checkbox-shaped) checkbox next to every
+    team, which looked broken/editable even though tapping it did
+    nothing. Non-admins now get a plain paid/unpaid status pill instead
+    of any checkbox at all - nothing on the card looks tappable unless
+    you're actually the commissioner. */}
+<div className="mobile-list dues-mobile-list">
+  {report.totalsRows.map(row => {
+    const isPaid = !!currentPayments[row.name];
+    return (
+      <div key={row.name} className={`card dues-mobile-card${isPaid ? " dues-mobile-card-paid" : ""}`}>
+        <div className="dues-mobile-row">
+          <div className="dues-mobile-team">
+            {isAdmin ? (
+              <input
+                type="checkbox"
+                checked={isPaid}
+                onChange={(e) => updatePayment(row.name, e.target.checked)}
+                className="dues-mobile-checkbox"
+              />
+            ) : (
+              <span className={`dues-status-pill${isPaid ? " dues-status-pill-paid" : ""}`}>
+                {isPaid ? "Paid" : "Unpaid"}
+              </span>
+            )}
+            <span className="dues-mobile-team-name" style={{ textDecoration: isPaid ? "line-through" : "none" }}>
+              {row.name}
+            </span>
+          </div>
+          <div className="dues-mobile-amount">
+            <span className="dues-mobile-owes" style={{ color: row.owes > 0 ? "#16a34a" : "#64748b" }}>
+              ${row.owes}
+            </span>
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: "#64748b" }}>
-  {row.adds} adds • <span style={{ color: row.owes > 0 ? "#16a34a" : "#64748b", fontWeight: row.owes > 0 ? "bold" : "normal" }}>${row.owes}</span>
-</div>
+        <div className="dues-mobile-adds">{row.adds} billable add{row.adds === 1 ? "" : "s"}</div>
       </div>
-    </div>
-  ))}
+    );
+  })}
 </div>
     </div>
   );
@@ -3276,7 +3335,7 @@ function DraftsView({ espn, btnPri, btnSec }) {
   const [error, setError] = useState("");
   const [draftData, setDraftData] = useState(null);
 
-  const loadDraftData = async () => {
+  const loadDraftData = async (forceRefresh) => {
   if (!espn.leagueId || !espn.seasonId) {
     setError("Set League ID and Season in League Settings first.");
     return;
@@ -3284,20 +3343,24 @@ function DraftsView({ espn, btnPri, btnSec }) {
 
   setLoading(true);
   setError("");
-  
+
   try {
     // Get team names
-    const teamJson = await fetchEspnJson({ 
-      leagueId: espn.leagueId, 
-      seasonId: espn.seasonId, 
-      view: "mTeam" 
+    const teamJson = await fetchEspnJson({
+      leagueId: espn.leagueId,
+      seasonId: espn.seasonId,
+      view: "mTeam"
     });
     const teamNames = Object.fromEntries(
       (teamJson?.teams || []).map(t => [t.id, teamName(t)])
     );
 
-    // Get draft data - use direct API call instead of apiCall
-    const response = await fetch(API(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}`));
+    // 2026-09-23: the server now caches the whole draft-with-resolved-
+    // player-names response (see saveDraftCache/getDraftCache in
+    // server.mjs) - a completed draft never changes, so there's no reason
+    // to re-fetch and re-resolve every player's name on every page load.
+    // The "Refresh" button passes forceRefresh=true to bypass that cache.
+    const response = await fetch(API(`/api/draft?leagueId=${espn.leagueId}&seasonId=${espn.seasonId}${forceRefresh ? '&refresh=1' : ''}`));
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${await response.text()}`);
     }
@@ -3346,7 +3409,7 @@ function DraftsView({ espn, btnPri, btnSec }) {
             {draftData.totalPicks} picks across {teamNames.length} teams
           </span>
         )}
-        <button className="btn" style={btnSec} onClick={loadDraftData}>
+        <button className="btn" style={btnSec} onClick={() => loadDraftData(true)}>
           {loading ? "Loading..." : "Refresh"}
         </button>
       </div>
@@ -3403,6 +3466,13 @@ function Rosters({ leagueId, seasonId, apiCallLeague, btnPri, btnSec }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [teams, setTeams] = useState([]);
+  // 2026-09-23: mobile team picker (item 10 of Hac's batch) - "" means
+  // "BLITZZZ LEAGUE" / show every team, exactly like before this was
+  // added. Picking a team name from the dropdown filters the list below
+  // to just that one team. Desktop is untouched (the dropdown is hidden
+  // above 767px via .rosters-team-picker in styles.css - it always shows
+  // every team there, same as before).
+  const [selectedTeam, setSelectedTeam] = useState("");
 
   const positionOrder = ["QB", "RB", "RB/WR", "WR", "TE", "FLEX", "D/ST", "K", "Bench"];
 
@@ -3480,13 +3550,35 @@ useEffect(() => {
     setLoading(false);
   })();
 }, [leagueId, seasonId]);
+
+  // Reset back to "show everyone" whenever the roster list itself changes
+  // (new season loaded, etc.) so the dropdown never gets stuck pointed at
+  // a team that's no longer in the list.
+  useEffect(() => {
+    setSelectedTeam("");
+  }, [teams]);
+
+  const visibleTeams = selectedTeam ? teams.filter(t => t.teamName === selectedTeam) : teams;
+
   return (
     <Section title="Rosters" actions={<span className="badge">Cached from Import</span>}>
       {!seasonId && <p style={{ color: "#64748b" }}>Set your ESPN Season in <b>League Settings</b>.</p>}
       {loading && <p>Loading rosters…</p>}
       {error && <p style={{ color: "#dc2626" }}>{error}</p>}
+      {!loading && teams.length > 0 && (
+        <select
+          className="input rosters-team-picker"
+          value={selectedTeam}
+          onChange={(e) => setSelectedTeam(e.target.value)}
+        >
+          <option value="">BLITZZZ LEAGUE</option>
+          {teams.map(team => (
+            <option key={team.teamName} value={team.teamName}>{team.teamName}</option>
+          ))}
+        </select>
+      )}
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
-        {teams.map(team => (
+        {visibleTeams.map(team => (
           <div key={team.teamName} className="card" style={{ padding: 16 }}>
             <h3 style={{ marginTop: 0 }}>{team.teamName}</h3>
             <ul style={{ margin: 0, paddingLeft: 16 }}>
@@ -4650,6 +4742,27 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
     }
     (async () => {
       setChallengesLoading(true);
+
+      // 2026-09-22: a Hall of Fame season is always fully in the past, so
+      // ALL 13 weeks are permanently settled the first time anyone computes
+      // them - try the server's saved cache first and skip recalculating
+      // from ESPN entirely when it's already there.
+      if (config?.id) {
+        try {
+          const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+          const cacheResp = await fetch(`${baseURL}/api/leagues/${config.id}/weekly-challenges-cache/${seasonId}`);
+          if (cacheResp.ok) {
+            const cached = await cacheResp.json();
+            if (cached && cached.winners && cached.throughWeek >= 13) {
+              if (alive) { setChallengeWinners(cached.winners); setChallengesLoading(false); }
+              return;
+            }
+          }
+        } catch (e) {
+          // cache fetch failed - fall through to live computation below
+        }
+      }
+
       const winners = {};
       for (let week = 1; week <= 13; week++) {
         try {
@@ -4670,6 +4783,22 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
         }
       }
       if (alive) { setChallengeWinners(winners); setChallengesLoading(false); }
+
+      // Save what we just computed so the next time anyone opens this
+      // season's Weekly Challenges tab, it's read from the cache above
+      // instead of being recalculated from scratch.
+      if (config?.id && Object.keys(winners).length > 0) {
+        try {
+          const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+          fetch(`${baseURL}/api/leagues/${config.id}/weekly-challenges-cache/${seasonId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ winners, throughWeek: 13 })
+          }).catch(() => {});
+        } catch (e) {
+          // best-effort
+        }
+      }
     })();
     return () => { alive = false; };
   }, [leagueId, seasonId, showChallenges]);
@@ -4856,6 +4985,12 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
   const [trophyCounts, setTrophyCounts] = useState({});
   const [seasonStats, setSeasonStats] = useState({});
+  // 2026-09-23: which column the Trophy Leaderboard is currently sorted by.
+  // 'total' (the default) means "most trophies overall"; anything else is
+  // one of the trophy emojis, meaning "click a trophy, see who's won that
+  // one most". Shared between the desktop table and the mobile grid below
+  // so clicking either one keeps them in sync.
+  const [trophySortKey, setTrophySortKey] = useState('total');
   // 2026-09-22: loadTrophies gets called more than once in quick succession
   // (once when this view first mounts, again once the real league/season
   // finishes loading a moment later) and each call is its own independent
@@ -5827,66 +5962,79 @@ try {
         </React.Fragment>
       ))}
 {/* Trophy Count Table */}
-{Object.keys(trophyCounts).length > 0 && (
+{Object.keys(trophyCounts).length > 0 && (() => {
+  const TROPHY_EMOJIS = ["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"];
+  const totalFor = (counts) => Object.values(counts).reduce((sum, count) => sum + count, 0);
+  // 2026-09-23: sortable Trophy Leaderboard - click "Team" to go back to
+  // "most trophies overall", or click any trophy emoji to see who's won
+  // THAT specific trophy the most, most to least. trophySortKey (state,
+  // declared near the top of this component) remembers which column is
+  // active so the desktop table and mobile grid below always agree.
+  const sortedEntries = Object.entries(trophyCounts).sort(([teamA, countsA], [teamB, countsB]) => {
+    const valA = trophySortKey === 'total' ? totalFor(countsA) : (countsA[trophySortKey] || 0);
+    const valB = trophySortKey === 'total' ? totalFor(countsB) : (countsB[trophySortKey] || 0);
+    if (valB !== valA) return valB - valA; // most first
+    return totalFor(countsB) - totalFor(countsA); // tie-break on overall total
+  });
+  const headerStyle = (key) => ({
+    cursor: 'pointer',
+    userSelect: 'none',
+    ...(trophySortKey === key ? { color: '#ffb612', textDecoration: 'underline' } : {})
+  });
+
+  return (
   <div id="trophy-leaderboard" className="card" style={{ padding: 16, marginTop: 16 }}>
-    <h3 style={{ marginBottom: 16 }}>🏆 Trophy Leaderboard</h3>
+    <h3 style={{ marginBottom: 4 }}>🏆 Trophy Leaderboard</h3>
+    <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>Click a trophy to sort by who's won it the most</div>
     <div style={{ overflowX: 'auto' }}>
       {/* Desktop Table */}
       <table className="trophy-table-desktop">
         <thead>
           <tr>
-            <th>Team</th>
-            {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-              <th key={emoji}>{emoji}</th>
+            <th style={headerStyle('total')} onClick={() => setTrophySortKey('total')} title="Sort by most trophies overall">Team</th>
+            {TROPHY_EMOJIS.map(emoji => (
+              <th key={emoji} style={headerStyle(emoji)} onClick={() => setTrophySortKey(emoji)} title="Sort by this trophy">{emoji}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {Object.entries(trophyCounts)
-  .sort(([teamA, countsA], [teamB, countsB]) => {
-    const totalA = Object.values(countsA).reduce((sum, count) => sum + count, 0);
-    const totalB = Object.values(countsB).reduce((sum, count) => sum + count, 0);
-    return totalB - totalA; // Sort descending (most trophies first)
-  })
-  .map(([team, counts]) => (
+          {sortedEntries.map(([team, counts]) => (
             <tr key={team}>
               <td>{team}</td>
-              {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-                <td key={emoji}>{counts[emoji] || 0}</td>
+              {TROPHY_EMOJIS.map(emoji => (
+                <td key={emoji} style={trophySortKey === emoji ? { fontWeight: 'bold', color: '#ffb612' } : undefined}>{counts[emoji] || 0}</td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
-      
+
       {/* Mobile Grid */}
 <div className="trophy-grid-mobile">
-  {/* Header row - emojis only */}
+  {/* Header row - emojis only, also clickable */}
   <div className="trophy-header">
-    {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-      <div key={emoji}>{emoji}</div>
+    {TROPHY_EMOJIS.map(emoji => (
+      <div key={emoji} style={headerStyle(emoji)} onClick={() => setTrophySortKey(emoji)}>{emoji}</div>
     ))}
   </div>
-  
+
   {/* Data rows with background team names */}
-  {Object.entries(trophyCounts)
-  .sort(([teamA, countsA], [teamB, countsB]) => {
-    const totalA = Object.values(countsA).reduce((sum, count) => sum + count, 0);
-    const totalB = Object.values(countsB).reduce((sum, count) => sum + count, 0);
-    return totalB - totalA; // Sort descending (most trophies first)
-  })
-  .map(([team, counts]) => (
+  {sortedEntries.map(([team, counts]) => (
     <div key={team} className="trophy-row">
       <div className="trophy-row-bg">{team}</div>
-      {["👑", "💩", "😱", "😅", "🍀", "😡", "📈", "📉", "🤖", "🤡"].map(emoji => (
-        <div key={emoji} className="trophy-cell">{counts[emoji] || 0}</div>
+      {TROPHY_EMOJIS.map(emoji => (
+        <div key={emoji} className="trophy-cell" style={trophySortKey === emoji ? { fontWeight: 'bold', color: '#ffb612' } : undefined}>{counts[emoji] || 0}</div>
       ))}
     </div>
   ))}
 </div>
     </div>
+    {trophySortKey !== 'total' && (
+      <button className="btn" style={{ ...btnSec, marginTop: 12 }} onClick={() => setTrophySortKey('total')}>Reset sort (most trophies overall)</button>
+    )}
   </div>
-)}
+  );
+})()}
 {/* Season Leaders */}
 {Object.keys(seasonStats?.totalPoints ?? {}).length > 0 && (
   <div className="card" style={{ padding: 16, marginTop: 16 }}>

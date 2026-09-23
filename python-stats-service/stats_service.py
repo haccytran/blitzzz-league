@@ -1044,6 +1044,122 @@ def get_season_records():
                 return None
             return team_names.get((row['team_id'], row['league_year']), f"Team {row['team_id']}")
 
+        # 2026-09-23: six new "fun" all-time records, added at Hac's request
+        # because the original three (Most Wins / Highest Score / Most
+        # Points For) were "pretty boring" on their own. Same (team_id,
+        # league_year) key pattern as everything above.
+
+        # The Ultimate Unlucky Loss - highest score ever put up IN A LOSS.
+        cur.execute("""
+            SELECT team_id, league_year, week, team_score
+            FROM matchups
+            WHERE outcome = 'L' AND league_id = %s
+            ORDER BY team_score DESC
+            LIMIT 1
+        """, (league_id,))
+        lucky_loss = cur.fetchone()
+
+        # Worst single week on the bench - not a season total, one week's
+        # worth of points left sitting on the bench.
+        cur.execute("""
+            SELECT team_id, league_year, week, SUM(points) as bench_points
+            FROM player_stats
+            WHERE slot = 'Bench' AND league_id = %s
+            GROUP BY team_id, league_year, week
+            ORDER BY bench_points DESC
+            LIMIT 1
+        """, (league_id,))
+        worst_bench_week = cur.fetchone()
+
+        # Most waiver/free-agent adds in a single season.
+        cur.execute("""
+            SELECT team_id, league_year, COUNT(*) as add_count
+            FROM transactions
+            WHERE transaction_type = 'ADD' AND league_id = %s
+            GROUP BY team_id, league_year
+            ORDER BY add_count DESC
+            LIMIT 1
+        """, (league_id,))
+        most_waiver_adds = cur.fetchone()
+
+        # Longest win streak / longest losing streak ever, and the best
+        # all-play winning percentage in a single season - none of these
+        # are a simple SQL aggregate (they depend on week-to-week order, or
+        # on every team's score in a given week), so they're worked out
+        # here in Python from the same matchups rows instead.
+        cur.execute("""
+            SELECT team_id, league_year, week, team_score, outcome
+            FROM matchups
+            WHERE league_id = %s AND outcome IN ('W', 'L')
+            ORDER BY team_id, league_year, week
+        """, (league_id,))
+        all_matchups = cur.fetchall()
+
+        # --- streaks ---
+        best_win_streak = {'length': 0}
+        best_lose_streak = {'length': 0}
+        cur_key = None
+        cur_outcome = None
+        cur_len = 0
+        cur_start_week = None
+
+        def maybe_record_streak(key, outcome, length, start_week, end_week):
+            nonlocal best_win_streak, best_lose_streak
+            target = best_win_streak if outcome == 'W' else best_lose_streak
+            if length > target.get('length', 0):
+                target.clear()
+                target.update({
+                    'teamId': key[0], 'year': key[1],
+                    'length': length, 'startWeek': start_week, 'endWeek': end_week
+                })
+
+        for row in all_matchups:
+            key = (row['team_id'], row['league_year'])
+            if key != cur_key or row['outcome'] != cur_outcome:
+                if cur_key is not None:
+                    maybe_record_streak(cur_key, cur_outcome, cur_len, cur_start_week, cur_week_seen)
+                cur_key = key
+                cur_outcome = row['outcome']
+                cur_len = 1
+                cur_start_week = row['week']
+            else:
+                cur_len += 1
+            cur_week_seen = row['week']
+        if cur_key is not None:
+            maybe_record_streak(cur_key, cur_outcome, cur_len, cur_start_week, cur_week_seen)
+
+        # --- best all-play season ---
+        # For every (year, week), rank every team's score against every
+        # other team that same week - "how many teams would this score
+        # have beaten" - then add that up across the whole season. A team
+        # that's actually dominant wins a lot even against a brutal
+        # schedule; this is the all-play win% that measures that,
+        # independent of who they happened to be paired against.
+        by_year_week = {}
+        for row in all_matchups:
+            yw = (row['league_year'], row['week'])
+            by_year_week.setdefault(yw, []).append((row['team_id'], row['team_score']))
+
+        all_play_totals = {}  # (team_id, year) -> {wins, games}
+        for (year, week), entries in by_year_week.items():
+            for team_id, score in entries:
+                wins_this_week = sum(1 for other_id, other_score in entries if other_id != team_id and score > other_score)
+                key = (team_id, year)
+                bucket = all_play_totals.setdefault(key, {'wins': 0, 'games': 0, 'weeks': 0})
+                bucket['wins'] += wins_this_week
+                bucket['games'] += (len(entries) - 1)
+                bucket['weeks'] += 1
+
+        best_all_play = None
+        # Require at least 8 scored weeks so one early-season fluke week
+        # against a small field can't win this outright.
+        for (team_id, year), bucket in all_play_totals.items():
+            if bucket['weeks'] < 8 or bucket['games'] == 0:
+                continue
+            pct = bucket['wins'] / bucket['games']
+            if best_all_play is None or pct > best_all_play['pct']:
+                best_all_play = {'teamId': team_id, 'year': year, 'pct': pct, 'wins': bucket['wins'], 'games': bucket['games']}
+
         cur.close()
         conn.close()
 
@@ -1092,6 +1208,56 @@ def get_season_records():
                 'week': lowest_score['week'] if lowest_score else None,
                 'score': float(lowest_score['team_score']) if lowest_score else 0,
                 'value': float(lowest_score['team_score']) if lowest_score else 0
+            },
+            'luckyLoss': {
+                'teamId': lucky_loss['team_id'] if lucky_loss else None,
+                'teamName': name_for(lucky_loss),
+                'year': lucky_loss['league_year'] if lucky_loss else None,
+                'week': lucky_loss['week'] if lucky_loss else None,
+                'score': float(lucky_loss['team_score']) if lucky_loss else 0,
+                'value': float(lucky_loss['team_score']) if lucky_loss else 0
+            },
+            'worstBenchWeek': {
+                'teamId': worst_bench_week['team_id'] if worst_bench_week else None,
+                'teamName': name_for(worst_bench_week),
+                'year': worst_bench_week['league_year'] if worst_bench_week else None,
+                'week': worst_bench_week['week'] if worst_bench_week else None,
+                'benchPoints': float(worst_bench_week['bench_points']) if worst_bench_week else 0,
+                'value': float(worst_bench_week['bench_points']) if worst_bench_week else 0
+            },
+            'mostWaiverAdds': {
+                'teamId': most_waiver_adds['team_id'] if most_waiver_adds else None,
+                'teamName': name_for(most_waiver_adds),
+                'year': most_waiver_adds['league_year'] if most_waiver_adds else None,
+                'adds': most_waiver_adds['add_count'] if most_waiver_adds else 0,
+                'value': most_waiver_adds['add_count'] if most_waiver_adds else 0
+            },
+            'longestWinStreak': {
+                'teamId': best_win_streak.get('teamId'),
+                'teamName': team_names.get((best_win_streak.get('teamId'), best_win_streak.get('year'))) if best_win_streak.get('length') else None,
+                'year': best_win_streak.get('year'),
+                'startWeek': best_win_streak.get('startWeek'),
+                'endWeek': best_win_streak.get('endWeek'),
+                'length': best_win_streak.get('length', 0),
+                'value': best_win_streak.get('length', 0)
+            },
+            'longestLoseStreak': {
+                'teamId': best_lose_streak.get('teamId'),
+                'teamName': team_names.get((best_lose_streak.get('teamId'), best_lose_streak.get('year'))) if best_lose_streak.get('length') else None,
+                'year': best_lose_streak.get('year'),
+                'startWeek': best_lose_streak.get('startWeek'),
+                'endWeek': best_lose_streak.get('endWeek'),
+                'length': best_lose_streak.get('length', 0),
+                'value': best_lose_streak.get('length', 0)
+            },
+            'bestAllPlaySeason': {
+                'teamId': best_all_play['teamId'] if best_all_play else None,
+                'teamName': team_names.get((best_all_play['teamId'], best_all_play['year'])) if best_all_play else None,
+                'year': best_all_play['year'] if best_all_play else None,
+                'wins': best_all_play['wins'] if best_all_play else 0,
+                'games': best_all_play['games'] if best_all_play else 0,
+                'pct': round(best_all_play['pct'] * 100, 1) if best_all_play else 0,
+                'value': round(best_all_play['pct'] * 100, 1) if best_all_play else 0
             }
         }
 

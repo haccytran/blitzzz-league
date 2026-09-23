@@ -6459,7 +6459,33 @@ const loadPositionalRecords = async () => {
     </div>
 
 {/* Season Team Records Table */}
-{seasonRecords && (
+{seasonRecords && (() => {
+  // 2026-09-23: the original three records (Most Wins / Highest Score /
+  // Most Points For) were "pretty boring" on their own (Hac's words) -
+  // this adds seven more fun/extreme ones, all computed server-side in
+  // stats_service.py's /season-records route. Built as one array so the
+  // desktop table and the mobile grid below are both just a .map() over
+  // it, instead of hand-writing ~20 near-identical blocks.
+  const sr = seasonRecords;
+  const na = (v) => (v === null || v === undefined ? 'N/A' : v);
+  const streakSpan = (s) => (s?.startWeek && s?.endWeek)
+    ? (s.startWeek === s.endWeek ? `Wk ${s.startWeek}` : `Wk ${s.startWeek}-${s.endWeek}`)
+    : 'N/A';
+
+  const rows = [
+    { label: 'Most Wins', team: sr.mostWins?.teamName, valueLabel: 'Wins', value: na(sr.mostWins?.wins ?? 0), year: `${na(sr.mostWins?.year)}` },
+    { label: 'Highest Score', team: sr.highestScore?.teamName, valueLabel: 'Points', value: (sr.highestScore?.score ?? 0).toFixed(2), year: `${na(sr.highestScore?.year)} (Wk ${na(sr.highestScore?.week)})` },
+    { label: 'Most Points For (Season)', team: sr.mostPointsFor?.teamName, valueLabel: 'Points', value: (sr.mostPointsFor?.points ?? 0).toFixed(2), year: `${na(sr.mostPointsFor?.year)}` },
+    { label: 'Biggest Blowout Ever', team: sr.biggestBlowout?.teamName, valueLabel: 'Margin', value: `+${(sr.biggestBlowout?.margin ?? 0).toFixed(2)}`, year: `${na(sr.biggestBlowout?.year)} (Wk ${na(sr.biggestBlowout?.week)})` },
+    { label: 'Ultimate Unlucky Loss', team: sr.luckyLoss?.teamName, valueLabel: 'Points (still lost)', value: (sr.luckyLoss?.score ?? 0).toFixed(2), year: `${na(sr.luckyLoss?.year)} (Wk ${na(sr.luckyLoss?.week)})` },
+    { label: 'Worst Bench Week Ever', team: sr.worstBenchWeek?.teamName, valueLabel: 'Bench Pts', value: (sr.worstBenchWeek?.benchPoints ?? 0).toFixed(2), year: `${na(sr.worstBenchWeek?.year)} (Wk ${na(sr.worstBenchWeek?.week)})` },
+    { label: 'Most Waiver Adds (Season)', team: sr.mostWaiverAdds?.teamName, valueLabel: 'Adds', value: na(sr.mostWaiverAdds?.adds ?? 0), year: `${na(sr.mostWaiverAdds?.year)}` },
+    { label: 'Longest Win Streak', team: sr.longestWinStreak?.teamName, valueLabel: 'Games', value: na(sr.longestWinStreak?.length ?? 0), year: `${na(sr.longestWinStreak?.year)} (${streakSpan(sr.longestWinStreak)})` },
+    { label: 'Longest Losing Streak', team: sr.longestLoseStreak?.teamName, valueLabel: 'Games', value: na(sr.longestLoseStreak?.length ?? 0), year: `${na(sr.longestLoseStreak?.year)} (${streakSpan(sr.longestLoseStreak)})` },
+    { label: 'Best All-Play Season', team: sr.bestAllPlaySeason?.teamName, valueLabel: 'All-Play %', value: `${sr.bestAllPlaySeason?.pct ?? 0}%`, year: `${na(sr.bestAllPlaySeason?.year)} (${na(sr.bestAllPlaySeason?.wins)}-${na((sr.bestAllPlaySeason?.games ?? 0) - (sr.bestAllPlaySeason?.wins ?? 0))})` },
+  ];
+
+  return (
   <div className="card" style={{ padding: 16, marginTop: 24 }}>
     <h2 style={{ marginBottom: 16 }}>Season Team Records</h2>
 
@@ -6474,58 +6500,35 @@ const loadPositionalRecords = async () => {
         </tr>
       </thead>
       <tbody>
-        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-          <td style={{ padding: '12px 8px' }}>Most Wins</td>
-          <td style={{ padding: '12px 8px' }}>{seasonRecords.mostWins?.teamName || 'N/A'}</td>
-          <td style={{ padding: '12px 8px', textAlign: 'right' }}>{seasonRecords.mostWins?.wins || 0}</td>
-          <td style={{ padding: '12px 8px', textAlign: 'center' }}>{seasonRecords.mostWins?.year || 'N/A'}</td>
-        </tr>
-        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-          <td style={{ padding: '12px 8px' }}>Highest Score</td>
-          <td style={{ padding: '12px 8px' }}>{seasonRecords.highestScore?.teamName || 'N/A'}</td>
-          <td style={{ padding: '12px 8px', textAlign: 'right' }}>{seasonRecords.highestScore?.score?.toFixed(2) || 0}</td>
-          <td style={{ padding: '12px 8px', textAlign: 'center' }}>{seasonRecords.highestScore?.year || 'N/A'} (Week {seasonRecords.highestScore?.week || 'N/A'})</td>
-        </tr>
-        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-          <td style={{ padding: '12px 8px' }}>Most Points For (Season)</td>
-          <td style={{ padding: '12px 8px' }}>{seasonRecords.mostPointsFor?.teamName || 'N/A'}</td>
-          <td style={{ padding: '12px 8px', textAlign: 'right' }}>{seasonRecords.mostPointsFor?.points?.toFixed(2) || 0}</td>
-          <td style={{ padding: '12px 8px', textAlign: 'center' }}>{seasonRecords.mostPointsFor?.year || 'N/A'}</td>
-        </tr>
+        {rows.map(r => (
+          <tr key={r.label} style={{ borderBottom: '1px solid #f3f4f6' }}>
+            <td style={{ padding: '12px 8px' }}>{r.label}</td>
+            <td style={{ padding: '12px 8px' }}>{r.team || 'N/A'}</td>
+            <td style={{ padding: '12px 8px', textAlign: 'right' }}>{r.value}</td>
+            <td style={{ padding: '12px 8px', textAlign: 'center' }}>{r.year}</td>
+          </tr>
+        ))}
       </tbody>
     </table>
 
-    {/* Mobile grid - team name shown as a soft watermark behind the row
-        instead of its own column, so the Value/Year numbers always have
-        room to fit on screen without spilling past the card edge. */}
+    {/* Mobile grid - team name shown as its own line instead of its own
+        column, so the Value/Year numbers always have room to fit on
+        screen without spilling past the card edge. */}
     <div className="records-grid-mobile">
-      <div className="records-row">
-        <div className="records-label">Most Wins</div>
-        <div className="records-row-bg">{seasonRecords.mostWins?.teamName || 'N/A'}</div>
-        <div className="records-cells">
-          <div className="records-cell"><span className="records-cell-label">Wins</span>{seasonRecords.mostWins?.wins || 0}</div>
-          <div className="records-cell"><span className="records-cell-label">Year</span>{seasonRecords.mostWins?.year || 'N/A'}</div>
+      {rows.map(r => (
+        <div className="records-row" key={r.label}>
+          <div className="records-label">{r.label}</div>
+          <div className="records-row-bg">{r.team || 'N/A'}</div>
+          <div className="records-cells">
+            <div className="records-cell"><span className="records-cell-label">{r.valueLabel}</span>{r.value}</div>
+            <div className="records-cell"><span className="records-cell-label">Year</span>{r.year}</div>
+          </div>
         </div>
-      </div>
-      <div className="records-row">
-        <div className="records-label">Highest Score</div>
-        <div className="records-row-bg">{seasonRecords.highestScore?.teamName || 'N/A'}</div>
-        <div className="records-cells">
-          <div className="records-cell"><span className="records-cell-label">Points</span>{seasonRecords.highestScore?.score?.toFixed(2) || 0}</div>
-          <div className="records-cell"><span className="records-cell-label">Year / Wk</span>{seasonRecords.highestScore?.year || 'N/A'} (Wk {seasonRecords.highestScore?.week || 'N/A'})</div>
-        </div>
-      </div>
-      <div className="records-row">
-        <div className="records-label">Most Points For (Season)</div>
-        <div className="records-row-bg">{seasonRecords.mostPointsFor?.teamName || 'N/A'}</div>
-        <div className="records-cells">
-          <div className="records-cell"><span className="records-cell-label">Points</span>{seasonRecords.mostPointsFor?.points?.toFixed(2) || 0}</div>
-          <div className="records-cell"><span className="records-cell-label">Year</span>{seasonRecords.mostPointsFor?.year || 'N/A'}</div>
-        </div>
-      </div>
+      ))}
     </div>
   </div>
-)}
+  );
+})()}
 
 {/* Season Positional Records Table */}
 {positionalRecords && (

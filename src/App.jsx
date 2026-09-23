@@ -1457,16 +1457,36 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
 // (move.ts) alongside its PT-formatted display string, so this just
 // re-renders that epoch with an explicit America/Los_Angeles timezone and
 // the time included, instead of the date-only string used before.
-function formatActivityPT(ts) {
+function formatActivityDate(ts) {
   if (!ts) return "";
   return new Date(ts).toLocaleString("en-US", {
     timeZone: "America/Los_Angeles",
     month: "numeric",
     day: "numeric",
-    year: "numeric",
+    year: "numeric"
+  });
+}
+function formatActivityTime(ts) {
+  if (!ts) return "";
+  return new Date(ts).toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
     hour: "numeric",
     minute: "2-digit"
-  }) + " PT";
+  });
+}
+// 2026-09-24: date and time as separate pieces (no comma between them, no
+// "PT" suffix - Hac's request) so styles.css's .activity-time rule can put
+// the time on its own, smaller line on mobile only, without touching
+// desktop at all.
+function ActivityTimestamp({ ts }) {
+  if (!ts) return null;
+  return (
+    <span className="activity-timestamp">
+      <span className="activity-date">{formatActivityDate(ts)}</span>
+      {" "}
+      <span className="activity-time">{formatActivityTime(ts)}</span>
+    </span>
+  );
 }
 
 // 2026-09-24: Free Agent adds in white, Waiver adds in orange - Hac's
@@ -1668,29 +1688,31 @@ setActivities(pairedActivities);
           // This is a pair
           const isShaded = pairCounter % 2 === 0;
           renderedActivities.push(
-            <div key={i} style={{ 
-              padding: "8px", 
+            <div key={i} style={{
+              padding: "8px",
               borderBottom: "1px solid #e2e8f0",
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "flex-start",
               fontSize: 14,
               color: "#16a34a",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b>{activity.team}</b> ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} bidAmount={activity.bidAmount} /></span>
-              <span style={{ color: "#64748b" }}>{formatActivityPT(activity.ts)}</span>
+              <span><b style={{ color: "#0080C6" }}>{activity.team}</b> ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} bidAmount={activity.bidAmount} /></span>
+              <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={activity.ts} /></span>
             </div>,
             <div key={i + "drop"} style={{
               padding: "8px",
               borderBottom: "1px solid #e2e8f0",
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "flex-start",
               fontSize: 14,
               color: "#dc2626",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b>{nextActivity.team}</b> DROPPED <b>{nextActivity.player}</b></span>
-              <span style={{ color: "#64748b" }}>{formatActivityPT(nextActivity.ts)}</span>
+              <span><b style={{ color: "#0080C6" }}>{nextActivity.team}</b> DROPPED <b>{nextActivity.player}</b></span>
+              <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={nextActivity.ts} /></span>
             </div>
           );
           i++; // Skip next since we processed it
@@ -1699,17 +1721,18 @@ setActivities(pairedActivities);
           // Solo transaction
           const isShaded = pairCounter % 2 === 0;
           renderedActivities.push(
-            <div key={i} style={{ 
-              padding: "8px", 
+            <div key={i} style={{
+              padding: "8px",
               borderBottom: "1px solid #e2e8f0",
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "flex-start",
               fontSize: 14,
               color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b>{activity.team}</b> {activity.action} <b>{activity.player}</b> {activity.action === "ADDED" && <MethodBadge method={activity.method} bidAmount={activity.bidAmount} />}</span>
-              <span style={{ color: "#64748b" }}>{formatActivityPT(activity.ts)}</span>
+              <span><b style={{ color: "#0080C6" }}>{activity.team}</b> {activity.action} <b>{activity.player}</b> {activity.action === "ADDED" && <MethodBadge method={activity.method} bidAmount={activity.bidAmount} />}</span>
+              <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={activity.ts} /></span>
             </div>
           );
           pairCounter++;

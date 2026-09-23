@@ -2154,3 +2154,18 @@ a:visited {
     display: inline-block;
   }
 }
+
+/* 2026-09-24: Recent Activity timestamps, at Hac's request - smaller on
+   mobile only (desktop keeps its existing size), with the time dropping to
+   its own line under the date instead of "date, time" on one crowded line.
+   .activity-timestamp already sits right-aligned via its parent row's
+   flex/space-between + text-align:right, so this only changes size/layout,
+   never which edge it hugs. */
+@media (max-width: 767px) {
+  .activity-timestamp {
+    font-size: 11px;
+  }
+  .activity-time {
+    display: block;
+  }
+}

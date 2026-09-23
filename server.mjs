@@ -4610,7 +4610,10 @@ async function getPowerRankingsCache(leagueId, seasonId) {
 // the completed-week number itself hasn't changed. Without this, a stale
 // cache would otherwise keep serving pre-fix numbers until the next real
 // week finished.
-const POWER_RANKINGS_FORMULA_VERSION = 4;
+// 2026-09-24: bumped again for calculate_playoff_odds()'s new avgScore
+// shrinkage (early-season scoring averages regressed toward the league
+// mean) - same reasoning as above.
+const POWER_RANKINGS_FORMULA_VERSION = 5;
 
 async function computePowerRankingsPageData(espnLeagueId, seasonId, throughWeek) {
   const espn_s2 = process.env.ESPN_S2;

@@ -6585,7 +6585,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
                   {sortedRankings.map((team) => (
                     <tr key={team.teamName} style={{ borderBottom: "1px solid #f1f5f9" }}>
                       <td style={{ padding: "12px 8px", fontWeight: "bold" }}>{team.rank}</td>
-                      <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
+                      <td className="power-team-name-gold" style={{ padding: "12px 8px" }}>{team.teamName}</td>
                       <td style={{ padding: "12px 8px", textAlign: "right", fontWeight: "bold", color: "#16a34a" }}>
                         {team.comprehensivePowerScore}
                       </td>
@@ -6652,9 +6652,9 @@ const sortedRankings = [...rankings].sort((a, b) => {
                   <tbody>
                     {playoffOdds.map(team => (
                       <tr key={team.teamName} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
-                        <td style={{ 
-                          padding: "12px 8px", 
+                        <td className="power-team-name-gold" style={{ padding: "12px 8px" }}>{team.teamName}</td>
+                        <td style={{
+                          padding: "12px 8px",
                           textAlign: "right",
                           fontWeight: "bold",
                           color: team.playoffOdds > 75 ? "#16a34a" : team.playoffOdds > 25 ? "#f59e0b" : "#dc2626"
@@ -6718,7 +6718,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
                   <tbody>
                     {finalStandingsOdds.map(team => (
                       <tr key={team.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "8px", position: "sticky", left: 0, background: "white", zIndex: 1, fontWeight: 500 }}>
+                        <td className="power-team-name-gold" style={{ padding: "8px", position: "sticky", left: 0, background: "white", zIndex: 1, fontWeight: 500 }}>
                           {team.name}
                         </td>
                         {team.positions.map((pos, index) => (
@@ -6821,7 +6821,7 @@ const sortedRankings = [...rankings].sort((a, b) => {
                         
                         return (
                           <tr key={team.teamName} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                            <td style={{ padding: "12px 8px" }}>{team.teamName}</td>
+                            <td className="power-team-name-gold" style={{ padding: "12px 8px" }}>{team.teamName}</td>
                             <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.avgOpponentPPG}</td>
                             <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.opponentWinPct}%</td>
                             <td style={{ padding: "12px 8px", textAlign: "right" }}>{team.avgOpponentPowerRank}</td>

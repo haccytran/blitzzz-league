@@ -897,10 +897,13 @@ body.blitzzz-league .sidebar .brand-title {
   }
 }
 
-/* Blitzzz League Power Rankings */
+/* Blitzzz League Power Rankings - 2026-09-22: was bright blue text with a
+   double-layered yellow glow (5px + 10px), which got unreadable on small
+   mobile screens. Switched to solid Chargers gold with a single, much
+   softer glow layer instead. */
 body.blitzzz-league .rankings-grid-mobile .rankings-row-bg {
-  color: #0084ff !important;
-  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+  color: #ffb612 !important;
+  text-shadow: 0 0 3px rgba(255,182,18,0.35) !important;
 }
 
 /* Sculpin League Power Rankings */
@@ -1286,10 +1289,11 @@ body.sculpin-league .trophy-grid-mobile .trophy-row-bg {
   }
 }
 
-/* Blitzzz playoff odds */
+/* Blitzzz playoff odds - see the Power Rankings comment above for why this
+   moved from blue text/double glow to solid gold/single soft glow. */
 body.blitzzz-league .playoff-grid-mobile .playoff-row-bg {
-  color: #0084ff !important;
-  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+  color: #ffb612 !important;
+  text-shadow: 0 0 3px rgba(255,182,18,0.35) !important;
 }
 
 /* Sculpin playoff odds */
@@ -1365,10 +1369,11 @@ body.sculpin-league .playoff-grid-mobile .playoff-row-bg {
   }
 }
 
-/* Blitzzz SOS */
+/* Blitzzz SOS - see the Power Rankings comment above for why this moved
+   from blue text/double glow to solid gold/single soft glow. */
 body.blitzzz-league .sos-grid-mobile .sos-row-bg {
-  color: #0084ff !important;
-  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+  color: #ffb612 !important;
+  text-shadow: 0 0 3px rgba(255,182,18,0.35) !important;
 }
 
 /* Sculpin SOS */
@@ -1523,16 +1528,30 @@ body.sculpin-league .luck-grid-mobile .luck-row-bg {
   }
 }
 
-/* Blitzzz final standings */
+/* Blitzzz final standings - see the Power Rankings comment above for why
+   this moved from blue text/double glow to solid gold/single soft glow. */
 body.blitzzz-league .final-standings-grid-mobile .final-standings-row-bg {
-  color: #0084ff !important;
-  text-shadow: 0 0 5px #ffcc00, 0 0 10px #ffcc00 !important;
+  color: #ffb612 !important;
+  text-shadow: 0 0 3px rgba(255,182,18,0.35) !important;
 }
 
 /* Sculpin final standings */
 body.sculpin-league .final-standings-grid-mobile .final-standings-row-bg {
   color: #2F241D !important;
   text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
+}
+
+/* 2026-09-22: team names on the DESKTOP Power Rankings / Playoff Odds /
+   Strength of Schedule / Final Standings Odds tables - previously plain
+   default-color text. Colored to match each league's theme (no glow needed
+   here since desktop has plenty of room and isn't crowded like mobile). */
+body.blitzzz-league .power-team-name-gold {
+  color: #ffb612 !important;
+  font-weight: 600;
+}
+body.sculpin-league .power-team-name-gold {
+  color: #FFC425 !important;
+  font-weight: 600;
 }
 /* Mobile-friendly polls */
 @media (max-width: 767px) {

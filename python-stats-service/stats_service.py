@@ -1677,11 +1677,16 @@ def import_transactions():
         # Fetch transactions from ESPN
         url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{league_id}"
         
-        ESPN_S2 = os.getenv('ESPN_S2', data.get('espn_s2', ''))
+        # 2026-09-23: this cookie is stored URL-encoded, same as every other
+        # route in this file - it needs unquote() or ESPN silently treats
+        # the request as logged-out (200 OK, but zero transactions) instead
+        # of erroring, which is why this route looked "successful" while
+        # actually returning nothing.
+        ESPN_S2 = unquote(os.getenv('ESPN_S2', data.get('espn_s2', '')))
         SWID = os.getenv('SWID', data.get('swid', ''))
-        
+
         cookies = {"espn_s2": ESPN_S2, "SWID": SWID}
-        
+
         # Get transactions
         params = {"view": "mTransactions2"}
         response = requests.get(url, cookies=cookies, params=params)

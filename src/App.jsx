@@ -3677,7 +3677,8 @@ useEffect(() => {
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
         {visibleTeams.map(team => (
           <div key={team.teamName} className="card" style={{ padding: 16 }}>
-            <h3 style={{ marginTop: 0 }}>{team.teamName}</h3>
+            {/* 2026-09-24: team name in Chargers gold, at Hac's request. */}
+            <h3 style={{ marginTop: 0, color: "#FFC20E" }}>{team.teamName}</h3>
             <ul style={{ margin: 0, paddingLeft: 16 }}>
   {team.entries.map((e, i) => {
     const isFirstBench = e.slot === "Bench" && (i === 0 || team.entries[i-1]?.slot !== "Bench");
@@ -3695,12 +3696,15 @@ useEffect(() => {
 )}
         {isFirstIR && (
   <li style={{ margin: "8px 0", padding: 0, listStyle: "none" }}>
+    {/* 2026-09-24: "INJURED RESERVE" label text removed at Hac's request -
+        the red divider line above the IR players stays as the visual cue. */}
     <hr style={{ border: "none", borderTop: "2px solid #dc2626", margin: "4px 0 2px" }} />
-    <div style={{ fontSize: 11, fontWeight: 700, color: "#dc2626", letterSpacing: "0.03em" }}>INJURED RESERVE</div>
   </li>
 )}
         <li style={{ marginBottom: 4 }}>
-          <b>{e.slot}</b> — {e.name}
+          {/* 2026-09-24: position label white (red for IR specifically),
+              player name powder blue - Hac's request. */}
+          <b style={{ color: e.slot === "IR" ? "#dc2626" : "#ffffff" }}>{e.slot}</b> — <span style={{ color: "#0080C6" }}>{e.name}</span>
         </li>
       </React.Fragment>
     );
@@ -5076,6 +5080,12 @@ function Award({ children }) {
 function Team({ children }) {
   return <strong style={{ color: "#ffffff" }}>{children}</strong>;
 }
+// 2026-09-24: wraps a Season Leaders row's leading emoji so it can be sized
+// up on desktop only via .season-leader-emoji in styles.css, while staying
+// the same size it already was on mobile - Hac's request.
+function Emoji({ children }) {
+  return <span className="season-leader-emoji">{children}</span>;
+}
 
 function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
 // === ADD: tiny helpers for projections (safe names to avoid collisions) ===
@@ -6103,7 +6113,7 @@ try {
           <tr>
             <th style={headerStyle('total')} onClick={() => setTrophySortKey('total')} title="Sort by most trophies overall">Team</th>
             {TROPHY_EMOJIS.map(emoji => (
-              <th key={emoji} style={headerStyle(emoji)} onClick={() => setTrophySortKey(emoji)} title="Sort by this trophy">{emoji}</th>
+              <th key={emoji} className="trophy-header-emoji-desktop" style={headerStyle(emoji)} onClick={() => setTrophySortKey(emoji)} title="Sort by this trophy">{emoji}</th>
             ))}
           </tr>
         </thead>
@@ -6275,32 +6285,32 @@ try {
   const rows = [];
 
   if (highLeader) rows.push(
-    <div key="hi">👑 The current <Award>Highest Scorer</Award> king is <Team>{highLeader}</Team> with a total of {Number(totalPts[highLeader]||0).toFixed(2)} points</div>
+    <div key="hi"><Emoji>👑</Emoji> The current <Award>Highest Scorer</Award> king is <Team>{highLeader}</Team> with a total of {Number(totalPts[highLeader]||0).toFixed(2)} points</div>
   );
 
   if (lowLeader) rows.push(
-    <div key="lo">💩 The current <Award>Lowest Scorer</Award> peasant is <Team>{lowLeader}</Team> with a total of {Number(totalPts[lowLeader]||0).toFixed(2)} points</div>
+    <div key="lo"><Emoji>💩</Emoji> The current <Award>Lowest Scorer</Award> peasant is <Team>{lowLeader}</Team> with a total of {Number(totalPts[lowLeader]||0).toFixed(2)} points</div>
   );
 
   if (blowLeader) rows.push(
-    <div key="bl">😱 The current <Award>Blow Out</Award> leader is <Team>{blowLeader}</Team> who has blown out their opponents by an average of {avg(blow[blowLeader]||[]).toFixed(2)} points</div>
+    <div key="bl"><Emoji>😱</Emoji> The current <Award>Blow Out</Award> leader is <Team>{blowLeader}</Team> who has blown out their opponents by an average of {avg(blow[blowLeader]||[]).toFixed(2)} points</div>
   );
 
   if (closeLeader) rows.push(
-    <div key="cw">😅 The current <Award>Close Wins</Award> title holder is <Team>{closeLeader}</Team> who has won by an average of {avg(close[closeLeader]||[]).toFixed(2)} points</div>
+    <div key="cw"><Emoji>😅</Emoji> The current <Award>Close Wins</Award> title holder is <Team>{closeLeader}</Team> who has won by an average of {avg(close[closeLeader]||[]).toFixed(2)} points</div>
   );
 
   if (luckyLeader) {
     const r = luck[luckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
     rows.push(
-      <div key="lc">🍀 <Team>{luckyLeader}</Team> should buy lotto tickets, they are currently {r.vsW}-{r.vsL} against the league yet won {r.wins} of {r.wins + r.losses} matchups</div>
+      <div key="lc"><Emoji>🍀</Emoji> <Team>{luckyLeader}</Team> should buy lotto tickets, they are currently {r.vsW}-{r.vsL} against the league yet won {r.wins} of {r.wins + r.losses} matchups</div>
     );
   }
 
   if (unluckyLeader) {
     const r = luck[unluckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
     rows.push(
-      <div key="ul">😡 <Team>{unluckyLeader}</Team> should file a complaint with the schedule maker, they are currently {r.vsW}-{r.vsL} against the league but lost {r.losses} of {r.wins + r.losses} matchups</div>
+      <div key="ul"><Emoji>😡</Emoji> <Team>{unluckyLeader}</Team> should file a complaint with the schedule maker, they are currently {r.vsW}-{r.vsL} against the league but lost {r.losses} of {r.wins + r.losses} matchups</div>
     );
   }
 
@@ -6309,7 +6319,7 @@ try {
     const count = (overCounts[overLeader] ?? getCount(overLeader,"📈")) || 0;
     const average = count ? (total / count) : 0;
     rows.push(
-      <div key="ov">📈 The biggest <Award>Overachiever</Award> is <Team>{overLeader}</Team> scoring a total of {total.toFixed(2)} points over their projections and averaging {average.toFixed(2)} points over their projection each game</div>
+      <div key="ov"><Emoji>📈</Emoji> The biggest <Award>Overachiever</Award> is <Team>{overLeader}</Team> scoring a total of {total.toFixed(2)} points over their projections and averaging {average.toFixed(2)} points over their projection each game</div>
     );
   }
 
@@ -6318,7 +6328,7 @@ try {
     const count = (underCounts[underLeader] ?? getCount(underLeader,"📉")) || 0;
     const average = count ? (total / count) : 0;
     rows.push(
-      <div key="un">📉 The biggest <Award>Underachiever</Award> is <Team>{underLeader}</Team> scoring a total of {total.toFixed(2)} points under their projections and averaging {average.toFixed(2)} points under their projection each game</div>
+      <div key="un"><Emoji>📉</Emoji> The biggest <Award>Underachiever</Award> is <Team>{underLeader}</Team> scoring a total of {total.toFixed(2)} points under their projections and averaging {average.toFixed(2)} points under their projection each game</div>
     );
   }
 
@@ -6326,7 +6336,7 @@ try {
     const m = mgr[bestMgrLeader]||{benchPoints:0,percentages:[]};
     const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
     rows.push(
-      <div key="bm">🤖 The <Award>Best Manager</Award> so far is <Team>{bestMgrLeader}</Team>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and have scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+      <div key="bm"><Emoji>🤖</Emoji> The <Award>Best Manager</Award> so far is <Team>{bestMgrLeader}</Team>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and have scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
     );
   }
 
@@ -6334,7 +6344,7 @@ try {
     const m = mgr[worstMgrLeader]||{benchPoints:0,percentages:[]};
     const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
     rows.push(
-      <div key="wm">🤡 The <Award>Worst Manager</Award> so far is <Team>{worstMgrLeader}</Team>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+      <div key="wm"><Emoji>🤡</Emoji> The <Award>Worst Manager</Award> so far is <Team>{worstMgrLeader}</Team>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
     );
   }
 
@@ -6377,7 +6387,7 @@ if (posLeader && posMax > 0) {
   rows.push(
     <div key="meta-positive">
       <div style={{ fontSize: "1.1em" }}>
-          <div style={{ textAlign: "center" }}>🧲 The <Award>Trophy Magnet</Award> award goes to <Team>{posLeader}</Team>
+          <div style={{ textAlign: "center" }}><Emoji>🧲</Emoji> The <Award>Trophy Magnet</Award> award goes to <Team>{posLeader}</Team>
       </div></div>
 
       <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>
@@ -6395,7 +6405,7 @@ if (negLeader && negMax > 0) {
 <br />
       <div style={{ fontSize: "1.1em" }}>
   <div style={{ textAlign: "center" }}>
-        🥄 The <Award>Wooden Spoon</Award> award goes to <Team>{negLeader}</Team>
+        <Emoji>🥄</Emoji> The <Award>Wooden Spoon</Award> award goes to <Team>{negLeader}</Team>
       </div></div>
 
       <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>

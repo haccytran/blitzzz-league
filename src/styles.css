@@ -2136,3 +2136,21 @@ body.theme-chargers .splash {
 a:visited {
   color: #f97316;
 }
+
+/* 2026-09-24: bigger emojis on desktop only, at Hac's request - the Trophy
+   Case's Trophy Leaderboard column headers and the Season Leaders section's
+   leading emojis. Mobile (.trophy-header, which the mobile grid uses
+   instead of trophy-header-emoji-desktop, and season-leader-emoji's
+   unmatched default below) stays exactly as it was. */
+.season-leader-emoji {
+  font-size: 1em;
+}
+@media (min-width: 768px) {
+  .trophy-header-emoji-desktop {
+    font-size: 1.6em;
+  }
+  .season-leader-emoji {
+    font-size: 1.6em;
+    display: inline-block;
+  }
+}

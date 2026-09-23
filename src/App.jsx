@@ -1203,7 +1203,14 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           </div>
           
           {/* Navigation with mobile close functionality */}
-          <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          {/* 2026-09-23: Announcements hidden from the menu at Hac's request.
+              Nothing was deleted - the page and its data still work exactly
+              like before. To bring it back: delete the two comment-marker
+              lines directly above and below the NavBtn line right below
+              this note (leave the NavBtn line itself alone). */}
+          {/* HIDDEN-START */}
+          {/* <NavBtn id="announcements" label="📣 Announcements" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> */}
+          {/* HIDDEN-END */}
           <NavBtn id="hoodtrophies" label="🏆 Trophy Case" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="halloffame" label="🏛️ Hall of Fame" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           {config.id !== 'sculpin' && <NavBtn id="weekly" label="🗓️ Weekly Challenges" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>}
@@ -1217,9 +1224,20 @@ paydues: <PayDuesView data={data} updateBuyIns={updateBuyIns} setData={setData} 
           <NavBtn id="powerrankings" label="🏋️ Power Rankings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="nerddata" label="🤓 Nerd Data" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
           <NavBtn id="settings" label="⚙️ League Settings" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
-          <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          {/* 2026-09-23: Trading Block hidden from the menu at Hac's request
+              (same as Announcements above - nothing deleted, just remove
+              the two HIDDEN-START/HIDDEN-END comment lines to bring it
+              back). */}
+          {/* HIDDEN-START */}
+          {/* <NavBtn id="trading" label="🔁 Trading Block" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> */}
+          {/* HIDDEN-END */}
           <NavBtn id="paydues" label="💰 Pay Dues" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
-          <NavBtn id="polls" label="🗳️ Polls" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/>
+          {/* 2026-09-23: Polls hidden from the menu at Hac's request (same
+              deal - remove the two HIDDEN-START/HIDDEN-END comment lines to
+              bring it back). */}
+          {/* HIDDEN-START */}
+          {/* <NavBtn id="polls" label="🗳️ Polls" active={active} onClick={(id) => { setActive(id); closeSidebar(); }}/> */}
+          {/* HIDDEN-END */}
           
           <div style={{marginTop:12}}>
             {isAdmin
@@ -4540,6 +4558,13 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
   const [standings, setStandings] = useState([]);
   const [standingsLoading, setStandingsLoading] = useState(false);
   const [standingsError, setStandingsError] = useState("");
+  // 2026-09-23: on a narrow phone screen this table is wider than the card
+  // and has to scroll sideways to see Points For/Against - it already could
+  // scroll, but nothing told the viewer that, so it just looked cut off.
+  // This ref lets us nudge the table right and back once the data shows up,
+  // as a little "hey, there's more over here" hint (see the useEffect
+  // right below where standings gets set).
+  const standingsScrollRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -4587,6 +4612,28 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
     })();
     return () => { alive = false; };
   }, [leagueId, seasonId]);
+
+  // 2026-09-23: once the Final Standings table has data, auto-peek it to
+  // the right and back on mobile so it's obvious there are more columns to
+  // scroll to (Points For/Against) instead of it just looking cut off.
+  // Desktop never triggers this since the table isn't scrollable there in
+  // the first place (window.innerWidth check below).
+  useEffect(() => {
+    if (!standings.length) return;
+    if (typeof window === "undefined" || window.innerWidth > 767) return;
+    const el = standingsScrollRef.current;
+    if (!el) return;
+    const timer = setTimeout(() => {
+      const maxScroll = el.scrollWidth - el.clientWidth;
+      if (maxScroll <= 0) return; // nothing to scroll - table already fits
+      el.scrollTo({ left: maxScroll, behavior: "smooth" });
+      const backTimer = setTimeout(() => {
+        el.scrollTo({ left: 0, behavior: "smooth" });
+      }, 700);
+      return () => clearTimeout(backTimer);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [standings]);
 
   const champion = standings.find(t => t.finalRank === 1);
 
@@ -4684,7 +4731,9 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
           {standings.length > 0 && (
             <>
               <h3>Final Standings</h3>
-              <div style={{ overflowX: "auto" }}>
+              <div className="hof-standings-scroll-hint">Points For and Points Against are off to the right - swipe to see them →</div>
+              <div className="hof-standings-scroll-wrap">
+                <div style={{ overflowX: "auto" }} ref={standingsScrollRef}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0" }}>
@@ -4707,6 +4756,7 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </>
           )}
@@ -4777,6 +4827,17 @@ function renderTrophyValue(trophy) {
       ? <span key={i} className="trophy-team-name">{part}</span>
       : <React.Fragment key={i}>{part}</React.Fragment>
   );
+}
+
+// 2026-09-23: tiny text-color helpers for the Season Leaders section below -
+// "Award" wraps a trophy/award name (e.g. "Highest Scorer") in orange, and
+// "Team" wraps a team name in bold white so it actually pops off the dark
+// card background instead of blending in with the rest of the sentence.
+function Award({ children }) {
+  return <strong style={{ color: "#ffb612" }}>{children}</strong>;
+}
+function Team({ children }) {
+  return <strong style={{ color: "#ffffff" }}>{children}</strong>;
 }
 
 function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
@@ -5949,35 +6010,39 @@ try {
   });
 
   // ---------- rows (with your requested wording) ----------
+  // 2026-09-23: award/trophy name in orange, team name in white (bolder pop
+  // against the dark cards) - Award and Team are two little helper
+  // components so every row below just wraps its text the same simple way
+  // instead of repeating this style object everywhere.
   const rows = [];
 
   if (highLeader) rows.push(
-    <div key="hi">👑 The current <strong>Highest Scorer</strong> king is <strong>{highLeader}</strong> with a total of {Number(totalPts[highLeader]||0).toFixed(2)} points</div>
+    <div key="hi">👑 The current <Award>Highest Scorer</Award> king is <Team>{highLeader}</Team> with a total of {Number(totalPts[highLeader]||0).toFixed(2)} points</div>
   );
 
   if (lowLeader) rows.push(
-    <div key="lo">💩 The current <strong>Lowest Scorer</strong> peasant is <strong>{lowLeader}</strong> with a total of {Number(totalPts[lowLeader]||0).toFixed(2)} points</div>
+    <div key="lo">💩 The current <Award>Lowest Scorer</Award> peasant is <Team>{lowLeader}</Team> with a total of {Number(totalPts[lowLeader]||0).toFixed(2)} points</div>
   );
 
   if (blowLeader) rows.push(
-    <div key="bl">😱 The current <strong>Blow Out</strong> leader is <strong>{blowLeader}</strong> who has blown out their opponents by an average of {avg(blow[blowLeader]||[]).toFixed(2)} points</div>
+    <div key="bl">😱 The current <Award>Blow Out</Award> leader is <Team>{blowLeader}</Team> who has blown out their opponents by an average of {avg(blow[blowLeader]||[]).toFixed(2)} points</div>
   );
 
   if (closeLeader) rows.push(
-    <div key="cw">😅 The current <strong>Close Wins</strong> title holder is <strong>{closeLeader}</strong> who has won by an average of {avg(close[closeLeader]||[]).toFixed(2)} points</div>
+    <div key="cw">😅 The current <Award>Close Wins</Award> title holder is <Team>{closeLeader}</Team> who has won by an average of {avg(close[closeLeader]||[]).toFixed(2)} points</div>
   );
 
   if (luckyLeader) {
     const r = luck[luckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
     rows.push(
-      <div key="lc">🍀 <strong>{luckyLeader}</strong> should buy lotto tickets, they are currently {r.vsW}-{r.vsL} against the league yet won {r.wins} of {r.wins + r.losses} matchups</div>
+      <div key="lc">🍀 <Team>{luckyLeader}</Team> should buy lotto tickets, they are currently {r.vsW}-{r.vsL} against the league yet won {r.wins} of {r.wins + r.losses} matchups</div>
     );
   }
 
   if (unluckyLeader) {
     const r = luck[unluckyLeader]||{vsW:0,vsL:0,wins:0,losses:0};
     rows.push(
-      <div key="ul">😡 <strong>{unluckyLeader}</strong> should file a complaint with the schedule maker, they are currently {r.vsW}-{r.vsL} against the league but lost {r.losses} of {r.wins + r.losses} matchups</div>
+      <div key="ul">😡 <Team>{unluckyLeader}</Team> should file a complaint with the schedule maker, they are currently {r.vsW}-{r.vsL} against the league but lost {r.losses} of {r.wins + r.losses} matchups</div>
     );
   }
 
@@ -5986,7 +6051,7 @@ try {
     const count = (overCounts[overLeader] ?? getCount(overLeader,"📈")) || 0;
     const average = count ? (total / count) : 0;
     rows.push(
-      <div key="ov">📈 The biggest <strong>Overachiever</strong> is <strong>{overLeader}</strong> scoring a total of {total.toFixed(2)} points over their projections and averaging {average.toFixed(2)} points over their projection each game</div>
+      <div key="ov">📈 The biggest <Award>Overachiever</Award> is <Team>{overLeader}</Team> scoring a total of {total.toFixed(2)} points over their projections and averaging {average.toFixed(2)} points over their projection each game</div>
     );
   }
 
@@ -5995,7 +6060,7 @@ try {
     const count = (underCounts[underLeader] ?? getCount(underLeader,"📉")) || 0;
     const average = count ? (total / count) : 0;
     rows.push(
-      <div key="un">📉 The biggest <strong>Underachiever</strong> is <strong>{underLeader}</strong> scoring a total of {total.toFixed(2)} points under their projections and averaging {average.toFixed(2)} points under their projection each game</div>
+      <div key="un">📉 The biggest <Award>Underachiever</Award> is <Team>{underLeader}</Team> scoring a total of {total.toFixed(2)} points under their projections and averaging {average.toFixed(2)} points under their projection each game</div>
     );
   }
 
@@ -6003,7 +6068,7 @@ try {
     const m = mgr[bestMgrLeader]||{benchPoints:0,percentages:[]};
     const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
     rows.push(
-      <div key="bm">🤖 The <strong>Best Manager</strong> so far is <strong>{bestMgrLeader}</strong>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and have scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+      <div key="bm">🤖 The <Award>Best Manager</Award> so far is <Team>{bestMgrLeader}</Team>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and have scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
     );
   }
 
@@ -6011,7 +6076,7 @@ try {
     const m = mgr[worstMgrLeader]||{benchPoints:0,percentages:[]};
     const avgPct = m.percentages.length ? (m.percentages.reduce((s,x)=>s+x,0)/m.percentages.length) : 0;
     rows.push(
-      <div key="wm">🤡 The <strong>Worst Manager</strong> so far is <strong>{worstMgrLeader}</strong>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
+      <div key="wm">🤡 The <Award>Worst Manager</Award> so far is <Team>{worstMgrLeader}</Team>, they've left a total of {Number(m.benchPoints||0).toFixed(2)} points on their bench this season, and scored an average of {avgPct.toFixed(1)}% of their optimal score every week</div>
     );
   }
 
@@ -6054,7 +6119,7 @@ if (posLeader && posMax > 0) {
   rows.push(
     <div key="meta-positive">
       <div style={{ fontSize: "1.1em" }}>
-          <div style={{ textAlign: "center" }}>🧲 The <strong>Trophy Magnet</strong> award goes to <strong>{posLeader}</strong>
+          <div style={{ textAlign: "center" }}>🧲 The <Award>Trophy Magnet</Award> award goes to <Team>{posLeader}</Team>
       </div></div>
 
       <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>
@@ -6072,7 +6137,7 @@ if (negLeader && negMax > 0) {
 <br />
       <div style={{ fontSize: "1.1em" }}>
   <div style={{ textAlign: "center" }}>
-        🥄 The <strong>Wooden Spoon</strong> award goes to <strong>{negLeader}</strong>
+        🥄 The <Award>Wooden Spoon</Award> award goes to <Team>{negLeader}</Team>
       </div></div>
 
       <div style={{ fontSize: "1.1em", marginTop: 3, lineHeight: 1.4 }}>

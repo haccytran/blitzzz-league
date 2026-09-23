@@ -1519,45 +1519,44 @@ body.sculpin-league .luck-grid-mobile .luck-row-bg {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #6b7280;
-    margin-bottom: 6px;
+    margin-bottom: 2px;
+  }
+
+  /* 2026-09-23: this used to float on top of the row as an absolutely
+     positioned "watermark", the same trick the Luck Index table above uses.
+     That works fine there because Luck Index's cells are just one line of
+     text each - but these two tables stack a small label (e.g. "POINTS")
+     above the actual value in every cell, so the floating name landed
+     right in the middle of that stack and visually collided with it (the
+     "Josh Allen" over "YEAR" overlap). Simplest fix: stop floating it and
+     just give the name its own normal line, directly under the small
+     grey label above. Nothing to overlap this way. */
+  .records-grid-mobile .records-row-bg,
+  .positional-grid-mobile .positional-row-bg {
+    display: block;
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 4px;
+    margin-bottom: 8px;
   }
 
   .records-grid-mobile .records-cells {
-    position: relative;
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0;
   }
   .positional-grid-mobile .positional-cells {
-    position: relative;
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     gap: 0;
   }
 
-  .records-grid-mobile .records-row-bg,
-  .positional-grid-mobile .positional-row-bg {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    text-align: center;
-    font-size: 10px;
-    font-weight: 600;
-    z-index: 0;
-    pointer-events: none;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    padding: 0 4px;
-    letter-spacing: 1px;
-  }
-
   .records-grid-mobile .records-cell,
   .positional-grid-mobile .positional-cell {
-    position: relative;
-    z-index: 1;
     text-align: center;
     padding: 4px 2px;
   }
@@ -1582,6 +1581,38 @@ body.sculpin-league .records-grid-mobile .records-row-bg,
 body.sculpin-league .positional-grid-mobile .positional-row-bg {
   color: #2F241D !important;
   text-shadow: 0 0 5px #FFC425, 0 0 10px #FFC425 !important;
+}
+
+/* Hall of Fame: Final Standings table scroll hint (mobile).
+   2026-09-23: this table was always horizontally scrollable on a phone
+   (Points For/Against just sit past the right edge), but nothing showed
+   that - it just looked cut off. Adds a text hint plus a soft fade on the
+   right edge of the scroll area as a visual cue there's more to see; the
+   actual "nudge it right and back" auto-scroll is done in JS, right where
+   Final Standings loads. */
+.hof-standings-scroll-hint {
+  display: none;
+}
+.hof-standings-scroll-wrap {
+  position: relative;
+}
+@media (max-width: 767px) {
+  .hof-standings-scroll-hint {
+    display: block;
+    font-size: 12px;
+    color: #94a3b8;
+    margin: -4px 0 8px 0;
+  }
+  .hof-standings-scroll-wrap::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 24px;
+    background: linear-gradient(to right, transparent, rgba(0,0,0,0.15));
+    pointer-events: none;
+  }
 }
 
 /* Final Standings Odds mobile grid */

@@ -4074,6 +4074,7 @@ async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWee
   // needing that passed in separately.
   let latestCompletedWeek = 0;
   let teamNames = null;
+  const weekDiagnostics = [];
   for (let week = 1; week <= currentWeekNum; week++) {
     const snap = await getWeeklySnapshot(espnLeagueId, seasonId, week);
     if (!teamNames && Array.isArray(snap?.teams)) {
@@ -4084,18 +4085,24 @@ async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWee
     const complete = matchups.length > 0 && matchups.every(m =>
       m.home?.totalPoints > 0 && m.away?.totalPoints > 0 && m.winner !== 'UNDECIDED'
     );
+    // Temporary diagnostic (2026-09-22): shows exactly why a given week
+    // isn't counted "complete" yet, instead of guessing - hasSnapshot
+    // false means captureWeeklySnapshot never successfully ran for that
+    // week; matchupCount 0 with hasSnapshot true means the snapshot
+    // exists but its stored matchup data is empty/wrong shape.
+    weekDiagnostics.push({ week, hasSnapshot: !!snap, matchupCount: matchups.length, complete });
     if (complete) latestCompletedWeek = week;
   }
 
-  if (!teamNames) return { recomputed: false, reason: "no team data available yet" };
-  if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet" };
+  if (!teamNames) return { recomputed: false, reason: "no team data available yet", weekDiagnostics };
+  if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet", weekDiagnostics };
   if (cached && cached.throughWeek === latestCompletedWeek) {
-    return { recomputed: false, reason: "already up to date" };
+    return { recomputed: false, reason: "already up to date", weekDiagnostics };
   }
 
   const fresh = await computeTrophyCaseData(espnLeagueId, seasonId, teamNames, latestCompletedWeek);
   await saveTrophyCaseCache(espnLeagueId, seasonId, fresh);
-  return { recomputed: true, throughWeek: fresh.throughWeek };
+  return { recomputed: true, throughWeek: fresh.throughWeek, weekDiagnostics };
 }
 
 async function getTeamHistory(leagueId, seasonId, teamId) {

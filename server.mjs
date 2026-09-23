@@ -101,6 +101,24 @@ pool.on('connect', (client) => {
       )
     `);
 
+    // 2026-09-22: permanent cache for raw ESPN API responses tied to a
+    // PAST, completed season (Hall of Fame) - such a season's data can
+    // never change again, so once we've fetched it from ESPN once there's
+    // no reason to ever ask ESPN for it again. Keyed by whatever combination
+    // of ESPN "view" params + week was requested (cache_key), since the
+    // Hall of Fame page asks for several different view combos per season.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS espn_raw_cache (
+        id SERIAL PRIMARY KEY,
+        league_id VARCHAR(50) NOT NULL,
+        season_id VARCHAR(20) NOT NULL,
+        cache_key VARCHAR(200) NOT NULL,
+        response_data JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(league_id, season_id, cache_key)
+      )
+    `);
+
     // League records table (for tracking all-time bests)
     await client.query(`
       CREATE TABLE IF NOT EXISTS league_records (
@@ -2452,15 +2470,93 @@ app.get("/api/espn", async (req, res) => {
     const { leagueId, seasonId, view, scoringPeriodId, auth } = req.query;
     console.log(`[Server ESPN] Fetching ${view} for league ${leagueId}, season ${seasonId}${scoringPeriodId ? `, SP ${scoringPeriodId}` : ''}`);
     const startTime = Date.now();
-    
+
     const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
-    
+
     const elapsed = Date.now() - startTime;
     console.log(`[Server ESPN] Success ${view}: ${elapsed}ms`);
     res.json(json);
-  } catch (e) { 
+  } catch (e) {
     console.error(`[Server ESPN] Failed ${req.query.view}:`, e.message);
-    res.status(502).send(String(e.message || e)); 
+    res.status(502).send(String(e.message || e));
+  }
+});
+
+// 2026-09-22: permanent ESPN response cache for Hall of Fame's past,
+// completed seasons - see the espn_raw_cache table above. Same request
+// shape as /api/espn (leagueId, seasonId, view, scoringPeriodId, auth) plus
+// this always assumes the caller only sends `permanent=1` for a season
+// that's genuinely over (the client only does this from the Hall of Fame
+// page, whose year picker already excludes the current season - see
+// HallOfFameView's defaultYear/yearOptions comment in App.jsx). If it's
+// cached, we skip ESPN entirely; otherwise we fetch live exactly like
+// /api/espn and then save the result before responding, so every visit
+// after the first one for that season is instant.
+function espnCacheKey(view, scoringPeriodId) {
+  const viewList = (Array.isArray(view) ? view : [view]).slice().sort();
+  return `${viewList.join("+")}${scoringPeriodId ? `:sp${scoringPeriodId}` : ""}`;
+}
+
+async function getEspnRawCache(leagueId, seasonId, cacheKey) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT response_data FROM espn_raw_cache WHERE league_id = $1 AND season_id = $2 AND cache_key = $3',
+        [leagueId, seasonId, cacheKey]
+      );
+      return result.rows.length > 0 ? result.rows[0].response_data : null;
+    } finally {
+      client.release();
+    }
+  } else {
+    return await readJson(`espncache_${leagueId}_${seasonId}_${cacheKey.replace(/[^a-zA-Z0-9+_-]/g, "_")}.json`, null);
+  }
+}
+
+async function saveEspnRawCache(leagueId, seasonId, cacheKey, data) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO espn_raw_cache (league_id, season_id, cache_key, response_data)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (league_id, season_id, cache_key)
+        DO UPDATE SET response_data = $4, created_at = CURRENT_TIMESTAMP
+      `, [leagueId, seasonId, cacheKey, JSON.stringify(data)]);
+    } finally {
+      client.release();
+    }
+  } else {
+    await writeJson(`espncache_${leagueId}_${seasonId}_${cacheKey.replace(/[^a-zA-Z0-9+_-]/g, "_")}.json`, data);
+  }
+}
+
+app.get("/api/espn-cached", async (req, res) => {
+  const { leagueId, seasonId, view, scoringPeriodId, auth, permanent } = req.query;
+  try {
+    if (permanent !== "1") {
+      // Safety net: without permanent=1 this route behaves exactly like
+      // /api/espn (no caching) rather than silently caching something it
+      // shouldn't.
+      const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
+      return res.json(json);
+    }
+
+    const cacheKey = espnCacheKey(view, scoringPeriodId);
+    const cached = await getEspnRawCache(leagueId, seasonId, cacheKey);
+    if (cached) {
+      console.log(`[ESPN Cache] Hit for league ${leagueId}, season ${seasonId}, ${cacheKey}`);
+      return res.json(cached);
+    }
+
+    console.log(`[ESPN Cache] Miss for league ${leagueId}, season ${seasonId}, ${cacheKey} - fetching from ESPN`);
+    const json = await espnFetch({ leagueId, seasonId, view, scoringPeriodId, req, requireCookie: auth === "1" });
+    await saveEspnRawCache(leagueId, seasonId, cacheKey, json);
+    res.json(json);
+  } catch (e) {
+    console.error(`[ESPN Cache] Failed ${req.query.view}:`, e.message);
+    res.status(502).send(String(e.message || e));
   }
 });
 

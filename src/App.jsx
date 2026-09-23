@@ -204,7 +204,7 @@ function fmtShort(d){ return toPT(d).toLocaleDateString(undefined,{month:"short"
    ========================= */
 function teamName(t){ return (t.location && t.nickname) ? `${t.location} ${t.nickname}` : (t.name || `Team ${t.id}`); }
 
-async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, matchupPeriodId, auth = false }) {
+async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, matchupPeriodId, auth = false, permanent = false }) {
   if (!leagueId || !seasonId || !view) throw new Error("Missing leagueId/seasonId/view");
   const sp = scoringPeriodId ? `&scoringPeriodId=${scoringPeriodId}` : "";
   const mp = matchupPeriodId ? `&matchupPeriodId=${matchupPeriodId}` : "";
@@ -214,7 +214,14 @@ async function fetchEspnJson({ leagueId, seasonId, view, scoringPeriodId, matchu
   // wants several views requested together for some data (particularly
   // older, completed seasons), not one at a time.
   const viewParam = (Array.isArray(view) ? view : [view]).map(v => `view=${v}`).join("&");
-  const url = API(`/api/espn?leagueId=${leagueId}&seasonId=${seasonId}&${viewParam}${sp}${mp}${au}`);
+  // 2026-09-22: `permanent: true` (only ever passed for Hall of Fame's past,
+  // completed seasons) routes through /api/espn-cached instead of /api/espn -
+  // the server computes it once from ESPN and stores it forever, since a
+  // finished season's data can never change. Current/in-progress seasons
+  // never pass this flag, so their live behavior is untouched.
+  const endpoint = permanent ? "/api/espn-cached" : "/api/espn";
+  const permParam = permanent ? "&permanent=1" : "";
+  const url = API(`${endpoint}?leagueId=${leagueId}&seasonId=${seasonId}&${viewParam}${sp}${mp}${au}${permParam}`);
   
   console.log(`[ESPN API] Fetching: ${view}${scoringPeriodId ? ` (SP ${scoringPeriodId})` : ""}${matchupPeriodId ? ` (MP ${matchupPeriodId})` : ""}`);
   const startTime = Date.now();
@@ -1817,24 +1824,19 @@ else if (week === 3) {
 // DETERMINE WEEKLY WINNER
 
 // DETERMINE WEEKLY WINNER
-async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
+async function determineWeeklyWinner(weekNumber, leagueId, seasonId, permanent = false) {
   try {
     // Get team names with better error handling and data structure
-    const teamResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!teamResponse.ok) {
-      throw new Error(`Team data fetch failed: ${teamResponse.status}`);
-    }
-    
-    const teamData = await teamResponse.json();
+    // 2026-09-22: routed through fetchEspnJson (our own server) instead of a
+    // direct browser->ESPN fetch. When `permanent` is true (Hall of Fame,
+    // viewing a past completed season) that goes through the server's
+    // permanent cache instead of hitting ESPN live every page load - see
+    // fetchEspnJson's comment above. Live/current-season callers don't pass
+    // `permanent`, so their behavior (and ESPN calls) is unchanged.
+    const teamData = await fetchEspnJson({ leagueId, seasonId, view: "mTeam", permanent });
+
     console.log('Team data for weekly challenges:', teamData); // Debug log
-    
+
     const teamNames = {};
     if (teamData.teams) {
       teamData.teams.forEach(team => {
@@ -1856,26 +1858,10 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
     console.log('Final team names mapping:', teamNames); // Debug log
 
     // Get matchup data for team-level challenges
-    const matchupResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    const matchupData = await matchupResponse.json();
+    const matchupData = await fetchEspnJson({ leagueId, seasonId, view: "mMatchup", permanent });
 
     // Get detailed player data for player-level challenges
-    const boxscoreResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mBoxscore&scoringPeriodId=${weekNumber}`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    const boxscoreData = await boxscoreResponse.json();
+    const boxscoreData = await fetchEspnJson({ leagueId, seasonId, view: "mBoxscore", scoringPeriodId: weekNumber, permanent });
 
     // Determine winner based on week number
     switch (weekNumber) {
@@ -1910,7 +1896,7 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
         return determineBenchWarmer(boxscoreData, teamNames, weekNumber);
 
       case 13: // Hero to Zero - Biggest point drop from the prior week to this week
-        return determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId);
+        return determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId, permanent);
 
       case 3: // Bulls-Eye - Manual selection required (uses projection API - see loadWeeklyChallengeWinners)
       case 10: // Over-Achiever - Manual selection required (uses projection API - see loadWeeklyChallengeWinners)
@@ -1927,29 +1913,13 @@ async function determineWeeklyWinner(weekNumber, leagueId, seasonId) {
 
 
 // Week 10: Over-Achiever - biggest positive difference from projection
-async function determineOverachiever(weekNumber, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection) {
+async function determineOverachiever(weekNumber, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection, permanent = false) {
   try {
     console.log(`[OVERACHIEVER] Starting calculation for Week ${weekNumber}`);
-    
-    const [teamResponse, boxscoreResponse] = await Promise.all([
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      }),
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      })
-    ]);
-    
-    if (!teamResponse.ok || !boxscoreResponse.ok) {
-      console.error(`[OVERACHIEVER] API error - Team: ${teamResponse.status}, Boxscore: ${boxscoreResponse.status}`);
-      throw new Error(`ESPN API error`);
-    }
-    
+
     const [teamData, boxscoreData] = await Promise.all([
-      teamResponse.json(),
-      boxscoreResponse.json()
+      fetchEspnJson({ leagueId, seasonId, view: "mTeam", permanent }),
+      fetchEspnJson({ leagueId, seasonId, view: ["mMatchup", "mBoxscore"], scoringPeriodId: weekNumber, permanent })
     ]);
 
     console.log(`[OVERACHIEVER] Fetched data for week ${weekNumber}`);
@@ -2022,31 +1992,15 @@ async function determineOverachiever(weekNumber, leagueId, seasonId, ht_projecte
 }
 
 // Week 3: Bulls-Eye - Team closest to their projected point total
-async function determineBullseye(weekNumber, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection) {
+async function determineBullseye(weekNumber, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection, permanent = false) {
   try {
     console.log(`[BULLS-EYE] Starting calculation for Week ${weekNumber}`);
-    
-    const [teamResponse, boxscoreResponse] = await Promise.all([
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mTeam`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      }),
-      fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup&view=mBoxscore&scoringPeriodId=${weekNumber}`, {
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      })
-    ]);
-    
-    if (!teamResponse.ok || !boxscoreResponse.ok) {
-      console.error(`[BULLS-EYE] API error - Team: ${teamResponse.status}, Boxscore: ${boxscoreResponse.status}`);
-      throw new Error(`ESPN API error`);
-    }
-    
+
     const [teamData, boxscoreData] = await Promise.all([
-      teamResponse.json(),
-      boxscoreResponse.json()
+      fetchEspnJson({ leagueId, seasonId, view: "mTeam", permanent }),
+      fetchEspnJson({ leagueId, seasonId, view: ["mMatchup", "mBoxscore"], scoringPeriodId: weekNumber, permanent })
     ]);
-    
+
     console.log(`[BULLS-EYE] Fetched data for week ${weekNumber}`);
     console.log(`[BULLS-EYE] Schedule length: ${boxscoreData?.schedule?.length || 0}`);
     
@@ -2316,20 +2270,12 @@ function determineHighestWRRB(boxscoreData, teamNames, weekNumber) {
 
 // Hero to Zero - Biggest point drop from the prior week to this week (now week 13 - was hard-coded
 // to Week 6 -> Week 7 before the 2026 reorder; fixed to use weekNumber so it works on any week)
-async function determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId) {
+async function determineHeroToZero(matchupData, teamNames, weekNumber, leagueId, seasonId, permanent = false) {
   try {
     const prevWeekNumber = weekNumber - 1;
 
     // Get the prior week's scores
-    const prevWeekResponse = await fetch(`https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/${seasonId}/segments/0/leagues/${leagueId}?view=mMatchup`, {
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-
-    const prevWeekData = await prevWeekResponse.json();
+    const prevWeekData = await fetchEspnJson({ leagueId, seasonId, view: "mMatchup", permanent });
 
     // Build the prior week's scores by team
     const prevWeekScores = {};
@@ -4609,7 +4555,8 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
         const teamJson = await fetchEspnJson({
           leagueId, seasonId,
           view: ["mTeam", "mRoster", "mSettings", "mMatchup", "mStandings"],
-          auth: true
+          auth: true,
+          permanent: true
         });
         const teams = (teamJson?.teams || []).map(t => ({
           id: t.id,
@@ -4660,12 +4607,15 @@ function HallOfFameView({ config, apiCallLeague, btnPri, btnSec }) {
       for (let week = 1; week <= 13; week++) {
         try {
           let winner = null;
+          // permanent: true - this is Hall of Fame, always a past completed
+          // season, so the server caches this ESPN data forever instead of
+          // re-fetching it every time this tab is opened.
           if (week === 10) {
-            winner = await determineOverachiever(week, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection);
+            winner = await determineOverachiever(week, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection, true);
           } else if (week === 3) {
-            winner = await determineBullseye(week, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection);
+            winner = await determineBullseye(week, leagueId, seasonId, ht_projectedForWeek, ht_teamProjection, true);
           } else {
-            winner = await determineWeeklyWinner(week, leagueId, seasonId);
+            winner = await determineWeeklyWinner(week, leagueId, seasonId, true);
           }
           if (winner) winners[week] = winner;
         } catch (err) {
@@ -5510,6 +5460,21 @@ if (delta < 0) {
 // At this point seasonStats is fully populated; keep your rendering as-is
 setSeasonStats(seasonStats);
 setTrophyCounts(trophyCounts);
+
+// 2026-09-22: we just fell through to a full live ESPN computation because
+// nothing was cached yet for this league+season (common for a Hall of Fame
+// season, since past years never had a chance to be cached until now).
+// Fire off a background "build the cache" request so the NEXT time this
+// season's Trophy Case is opened, it's instant instead of doing this same
+// slow live computation all over again. This is safe to call any time -
+// it's a no-op if a cache already exists and is current, and for the live
+// current season it just does the same thing the scheduled background job
+// already does periodically anyway. Deliberately not awaited: the page
+// already has what it needs and shouldn't wait on this.
+try {
+  const bgBaseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+  fetch(`${bgBaseURL}/api/leagues/${config.id}/trophy-case-cache/${espn.seasonId}/rebuild`).catch(() => {});
+} catch (_) { /* best-effort only */ }
     } catch (err) {
       console.error('Failed to load trophies:', err);
       setError("Failed to load trophy data: " + err.message);

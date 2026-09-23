@@ -4836,7 +4836,37 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
             setTrophyCounts(cached.trophyCounts || {});
             setError("");
             setLoading(false);
-            return; // done - no ESPN calls needed
+
+            // 2026-09-22: the Naughty List (inactive/benched starters) was
+            // never part of the server-side Trophy Case cache - it's its
+            // own separate per-week lookup (see processWeek's naughty-list
+            // fetch further below), not something the cache-check above
+            // just fetched. Taking the early "return" here skipped this
+            // entirely once the cache started actually being hit, which is
+            // why it stopped showing up. Firing these off in parallel here
+            // restores it without giving up the speed of the cache hit -
+            // this is a handful of light lookups, not the full trophy
+            // recomputation the cache was built to avoid.
+            const baseURL2 = import.meta.env.DEV ? 'http://localhost:8787' : '';
+            await Promise.all(sortedTrophies.map(async (wk) => {
+              try {
+                const naughtyResponse = await fetch(
+                  `${baseURL2}/api/leagues/${config.id}/weekly-awards/${espn.seasonId}?week=${wk.week}`
+                );
+                const naughtyData = await naughtyResponse.json();
+                setNaughtyLists(prev => ({ ...prev, [wk.week]: naughtyData.naughtyList || [] }));
+                if (naughtyData.naughtyList && naughtyData.naughtyList.length > 0) {
+                  setAllNaughtyEntries(prev => [
+                    ...prev,
+                    ...naughtyData.naughtyList.map(entry => ({ ...entry, week: wk.week }))
+                  ]);
+                }
+              } catch (naughtyErr) {
+                console.error(`Failed to load naughty list for week ${wk.week}:`, naughtyErr);
+              }
+            }));
+
+            return; // done - no further ESPN calls needed
           }
         }
       } catch (cacheErr) {

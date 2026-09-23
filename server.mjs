@@ -1375,6 +1375,52 @@ app.get("/api/leagues/:leagueId/trophy-case-cache/:seasonId", async (req, res) =
   }
 });
 
+// Get the pre-computed Power Rankings/Playoff Odds/Strength of Schedule
+// cache for a season, if one has been built yet. This is what the Power
+// Rankings page reads FIRST - see computePowerRankingsPageData()/
+// refreshPowerRankingsCacheIfNeeded() above for how it gets built
+// automatically, once a week's games are final.
+app.get("/api/leagues/:leagueId/power-rankings-cache/:seasonId", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+
+    const cache = await getPowerRankingsCache(espnLeagueId, seasonId);
+
+    if (cache) {
+      res.json(cache);
+    } else {
+      res.status(404).json({ error: "Power Rankings cache not built yet" });
+    }
+  } catch (error) {
+    console.error('Failed to retrieve Power Rankings cache:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Manual, one-off way to build the Power Rankings cache right now - same
+// idea as the Trophy Case rebuild route above (safe to visit any time, no
+// admin login needed, can't touch anything money-related).
+app.get("/api/leagues/:leagueId/power-rankings-cache/:seasonId/rebuild", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+
+    const settingsJson = await espnFetch({
+      leagueId: espnLeagueId, seasonId, view: "mSettings", req: { headers: {} }, requireCookie: true
+    });
+    const currentWeekNum = Math.min(14, settingsJson?.status?.currentMatchupPeriod || 0);
+
+    const result = await refreshPowerRankingsCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum);
+    res.json({ ...result, currentWeekNum });
+  } catch (error) {
+    console.error('Manual Power Rankings cache rebuild failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get all snapshots for a season
 app.get("/api/leagues/:leagueId/snapshots/:seasonId", async (req, res) => {
   try {
@@ -4055,23 +4101,17 @@ async function computeTrophyCaseData(espnLeagueId, seasonId, teamNames, throughW
   };
 }
 
-// Called once per league per auto-refresh cycle (see runAutoRefreshForLeague
-// below). Cheap no-op most of the time: it only does the real work of
-// rebuilding the Trophy Case cache when there's a genuinely new completed
-// week available that the cache doesn't have yet - so in practice this
-// actually recomputes roughly once a week (right after that week's last
-// game finishes), not on some fixed clock.
-async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum) {
-  const cached = await getTrophyCaseCache(espnLeagueId, seasonId);
-
-  // Find the true number of completed weeks by checking which weeks
-  // already have a captured snapshot with all games decided - mirrors the
-  // client's own "allGamesComplete" check, using data that's already been
-  // fetched/stored earlier in this same refresh cycle (see
-  // captureWeeklySnapshot calls in runAutoRefreshForLeague), so this adds
-  // no extra ESPN requests. Also builds the teamId -> teamName map straight
-  // off whichever snapshot's own stored team list we find first, instead of
-  // needing that passed in separately.
+// Shared by both the Trophy Case cache and the Power Rankings/Playoff
+// Odds/Strength of Schedule cache below: finds the true number of
+// completed weeks by checking which weeks already have a captured snapshot
+// with all games decided (not a calendar-based guess), using data that's
+// already been fetched/stored earlier in this same refresh cycle (see
+// captureWeeklySnapshot calls in runAutoRefreshForLeague), so this adds no
+// extra ESPN requests. Also builds the teamId -> teamName map straight off
+// whichever snapshot's own stored team list we find first. Pulling this
+// into one shared function (instead of two separate copies) means both
+// caches always agree on "what week is it" and can't quietly drift apart.
+async function findLatestCompletedWeek(espnLeagueId, seasonId, currentWeekNum) {
   let latestCompletedWeek = 0;
   let teamNames = null;
   const weekDiagnostics = [];
@@ -4093,6 +4133,18 @@ async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWee
     weekDiagnostics.push({ week, hasSnapshot: !!snap, matchupCount: matchups.length, complete });
     if (complete) latestCompletedWeek = week;
   }
+  return { latestCompletedWeek, teamNames, weekDiagnostics };
+}
+
+// Called once per league per auto-refresh cycle (see runAutoRefreshForLeague
+// below). Cheap no-op most of the time: it only does the real work of
+// rebuilding the Trophy Case cache when there's a genuinely new completed
+// week available that the cache doesn't have yet - so in practice this
+// actually recomputes roughly once a week (right after that week's last
+// game finishes), not on some fixed clock.
+async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum) {
+  const cached = await getTrophyCaseCache(espnLeagueId, seasonId);
+  const { latestCompletedWeek, teamNames, weekDiagnostics } = await findLatestCompletedWeek(espnLeagueId, seasonId, currentWeekNum);
 
   if (!teamNames) return { recomputed: false, reason: "no team data available yet", weekDiagnostics };
   if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet", weekDiagnostics };
@@ -4103,6 +4155,103 @@ async function refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWee
   const fresh = await computeTrophyCaseData(espnLeagueId, seasonId, teamNames, latestCompletedWeek);
   await saveTrophyCaseCache(espnLeagueId, seasonId, fresh);
   return { recomputed: true, throughWeek: fresh.throughWeek, weekDiagnostics };
+}
+
+/* =========================================================
+   Power Rankings / Playoff Odds / Strength of Schedule cache
+   =========================================================
+   Same idea as the Trophy Case cache above: these three tables only
+   change once a week's games are final (Playoff Odds re-runs a full
+   10,000-iteration Monte Carlo simulation every time it's asked for), so
+   there's no reason to redo any of that live on every Power Rankings page
+   load. Computed once in the background per completed week and saved;
+   the page reads the saved copy first. Reuses the weekly_snapshots table
+   again, with a different sentinel week_number (-1) so it can never
+   collide with a real week (>=1) or the Trophy Case cache (0).
+   ========================================================= */
+
+async function savePowerRankingsCache(leagueId, seasonId, cache) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        INSERT INTO weekly_snapshots (league_id, season_id, week_number, snapshot_data)
+        VALUES ($1, $2, -1, $3)
+        ON CONFLICT (league_id, season_id, week_number)
+        DO UPDATE SET snapshot_data = $3, created_at = CURRENT_TIMESTAMP
+      `, [leagueId, seasonId, JSON.stringify(cache)]);
+    } finally {
+      client.release();
+    }
+  } else {
+    await writeJson(`powerrankingscache_${leagueId}_${seasonId}.json`, cache);
+  }
+}
+
+async function getPowerRankingsCache(leagueId, seasonId) {
+  if (DATABASE_URL) {
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT snapshot_data FROM weekly_snapshots WHERE league_id = $1 AND season_id = $2 AND week_number = -1',
+        [leagueId, seasonId]
+      );
+      return result.rows.length > 0 ? result.rows[0].snapshot_data : null;
+    } finally {
+      client.release();
+    }
+  } else {
+    return await readJson(`powerrankingscache_${leagueId}_${seasonId}.json`, null);
+  }
+}
+
+// Calls the same three Python-service endpoints the Power Rankings page
+// itself calls (power-rankings, playoff-odds, strength-of-schedule), with
+// the real completed-week number, and bundles the three results into one
+// saved object. Uses the league's ESPN credentials straight from the
+// environment (same as every other background/scheduled ESPN call in this
+// file - see buildCookie()'s note on this being safe outside a real
+// request too), since there's no incoming browser request to read cookies
+// from here.
+async function computePowerRankingsPageData(espnLeagueId, seasonId, throughWeek) {
+  const espn_s2 = process.env.ESPN_S2;
+  const swid = process.env.SWID;
+
+  const [rankingsRes, playoffRes, sosRes] = await Promise.all([
+    callPythonService('/power-rankings', { leagueId: espnLeagueId, year: parseInt(seasonId), currentWeek: throughWeek, espn_s2, swid }),
+    callPythonService('/playoff-odds', { leagueId: espnLeagueId, year: parseInt(seasonId), currentWeek: throughWeek, numSimulations: 10000, espn_s2, swid }),
+    callPythonService('/strength-of-schedule', { leagueId: espnLeagueId, seasonId, currentWeek: throughWeek, espn_s2, swid })
+  ]);
+
+  const rankings = (rankingsRes?.rankings || []).map((team, index) => ({ ...team, rank: index + 1 }));
+  const playoffOdds = playoffRes?.playoffOdds || [];
+
+  return {
+    rankings,
+    playoffOdds,
+    finalStandingsOdds: playoffOdds.map(team => ({ name: team.teamName, positions: team.positions })),
+    strengthOfSchedule: sosRes?.strengthOfSchedule || [],
+    throughWeek,
+    computedAt: new Date().toISOString()
+  };
+}
+
+// Same "only do real work when there's a genuinely new completed week"
+// pattern as refreshTrophyCaseCacheIfNeeded above - most cycles this is a
+// fast no-op, and the two caches always agree on the completed week
+// because they both call the same findLatestCompletedWeek() helper.
+async function refreshPowerRankingsCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum) {
+  const cached = await getPowerRankingsCache(espnLeagueId, seasonId);
+  const { latestCompletedWeek } = await findLatestCompletedWeek(espnLeagueId, seasonId, currentWeekNum);
+
+  if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet" };
+  if (cached && cached.throughWeek === latestCompletedWeek) {
+    return { recomputed: false, reason: "already up to date" };
+  }
+
+  const fresh = await computePowerRankingsPageData(espnLeagueId, seasonId, latestCompletedWeek);
+  await savePowerRankingsCache(espnLeagueId, seasonId, fresh);
+  return { recomputed: true, throughWeek: fresh.throughWeek };
 }
 
 async function getTeamHistory(leagueId, seasonId, teamId) {
@@ -4766,6 +4915,17 @@ try {
   }
 } catch (tcErr) {
   logRefresh(`Trophy Case cache refresh failed for ${leagueConfig.id}: ${tcErr.message}`, 'error');
+}
+
+// Power Rankings / Playoff Odds / Strength of Schedule cache: same
+// only-when-needed pattern as Trophy Case above.
+try {
+  const prResult = await refreshPowerRankingsCacheIfNeeded(leagueConfig.espnId, seasonId, currentWeekNum);
+  if (prResult.recomputed) {
+    logRefresh(`Power Rankings cache rebuilt for ${leagueConfig.id} through week ${prResult.throughWeek}`);
+  }
+} catch (prErr) {
+  logRefresh(`Power Rankings cache refresh failed for ${leagueConfig.id}: ${prErr.message}`, 'error');
 }
 
     if (report && report.totalsRows && report.totalsRows.length > 0) {

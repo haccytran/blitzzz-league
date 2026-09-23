@@ -6474,6 +6474,34 @@ const sortedRankings = [...rankings].sort((a, b) => {
     setError("");
 
     try {
+      // 2026-09-22: try the server's pre-computed cache first - same idea
+      // as Trophy Case's cache (see loadTrophies above). The server
+      // rebuilds this automatically in the background once a week's games
+      // are all final, so most page loads can skip calling the Python
+      // service (including its 10,000-simulation Monte Carlo run)
+      // entirely. Falls straight through to the live calculation below if
+      // nothing's cached yet.
+      try {
+        const baseURL = import.meta.env.DEV ? 'http://localhost:8787' : '';
+        const cacheResp = await fetch(`${baseURL}/api/leagues/${config.id}/power-rankings-cache/${espn.seasonId}`);
+        if (cacheResp.ok) {
+          const cached = await cacheResp.json();
+          if (cached && Array.isArray(cached.rankings)) {
+            setCurrentWeek(cached.throughWeek || 1);
+            setRankings(cached.rankings);
+            setPlayoffOdds(cached.playoffOdds || []);
+            setFinalStandingsOdds(cached.finalStandingsOdds || []);
+            setStrengthOfSchedule(cached.strengthOfSchedule || []);
+            setLastUpdated(cached.computedAt ? new Date(cached.computedAt).toLocaleString() : new Date().toLocaleString());
+            setError("");
+            setLoading(false);
+            return; // done - no Python/ESPN calls needed
+          }
+        }
+      } catch (cacheErr) {
+        console.warn('Power Rankings cache lookup failed, computing live instead:', cacheErr);
+      }
+
       // Calculate current week - use last COMPLETED week.
       // 2026-09-22: completedGamesWeekOf, not leagueWeekOf - leagueWeekOf
       // shifts the week back by one on Tuesdays (for transaction/dues

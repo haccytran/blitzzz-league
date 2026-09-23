@@ -384,8 +384,22 @@ def calculate_power_rankings():
                     'teamId': away.get('teamId'),
                     'score': away.get('totalPoints', 0)
                 })
-        # Build rankings output
-        rankings = []
+        # Build rankings output.
+        #
+        # 2026-09-22: Simple Power Score used to be
+        # (PF x 2) + (PF x Win%) + (PF x All-Play Win%) - an unexplained
+        # "x2" baseline, and built from each team's cumulative total points
+        # rather than an average, so the raw number kept climbing every
+        # week just from more games being played and wasn't comparable
+        # week-to-week or to anything else on the page. Replaced with a
+        # cleaner, equally "simple to explain" version: average points per
+        # game (normalized to the same 0-100 scale as everything else on
+        # this page, so it can't be swamped by raw scoring magnitude - see
+        # power_points()'s normalize() for the same technique), weighted
+        # 50% scoring / 25% win% / 25% all-play win%. First pass below
+        # collects each team's raw ingredients so avg PF can be normalized
+        # across the whole field before combining.
+        raw_rows = []
         for team_id, stats in team_stats.items():
             power_score = power_ranks.get(team_id, 0)
             wins = stats['outcomes'].count('W')
@@ -393,11 +407,12 @@ def calculate_power_rankings():
             ties = stats['outcomes'].count('T')
             total_pf = sum(stats['scores'])
             total_pa = sum(stats.get('scores_against', []))
-            
+            games_played = max(len(stats['scores']), 1)
+
             # Calculate all-play record
             all_play_wins = 0
             all_play_total = 0
-            
+
             for week, week_scores in all_week_scores.items():
                 team_score_entry = next((s for s in week_scores if s['teamId'] == team_id), None)
                 if team_score_entry:
@@ -407,25 +422,46 @@ def calculate_power_rankings():
                             all_play_total += 1
                             if team_score > opp['score']:
                                 all_play_wins += 1
-            
+
             all_play_win_pct = all_play_wins / all_play_total if all_play_total > 0 else 0
             actual_win_pct = wins / max(wins + losses + ties, 1)
-            
-            # Simple Power Score = (PF × 2) + (PF × Win%) + (PF × All-Play Win%)
-            simple_score = (total_pf * 2) + (total_pf * actual_win_pct) + (total_pf * all_play_win_pct)
-            
-            rankings.append({
-                "teamId": team_id,
-                "teamName": stats['teamName'],
-                "comprehensivePowerScore": round(power_score, 2),
-                "simplePowerScore": round(simple_score, 2),
-                "totalPointsFor": round(total_pf, 2),
-                "totalPointsAgainst": round(total_pa, 2),
-                "wins": wins,
-                "losses": losses,
-                "ties": ties
+            avg_pf = total_pf / games_played
+
+            raw_rows.append({
+                "teamId": team_id, "teamName": stats['teamName'],
+                "power_score": power_score, "wins": wins, "losses": losses, "ties": ties,
+                "total_pf": total_pf, "total_pa": total_pa,
+                "avg_pf": avg_pf, "actual_win_pct": actual_win_pct, "all_play_win_pct": all_play_win_pct
             })
-        
+
+        all_avg_pf = [r["avg_pf"] for r in raw_rows]
+        pf_lo, pf_hi = (min(all_avg_pf), max(all_avg_pf)) if all_avg_pf else (0, 0)
+
+        def norm_pf(v):
+            if pf_hi == pf_lo:
+                return 50.0
+            return ((v - pf_lo) / (pf_hi - pf_lo)) * 100
+
+        rankings = []
+        for r in raw_rows:
+            simple_score = (
+                (norm_pf(r["avg_pf"]) * 0.50) +
+                (r["actual_win_pct"] * 100 * 0.25) +
+                (r["all_play_win_pct"] * 100 * 0.25)
+            )
+
+            rankings.append({
+                "teamId": r["teamId"],
+                "teamName": r["teamName"],
+                "comprehensivePowerScore": round(r["power_score"], 2),
+                "simplePowerScore": round(simple_score, 2),
+                "totalPointsFor": round(r["total_pf"], 2),
+                "totalPointsAgainst": round(r["total_pa"], 2),
+                "wins": r["wins"],
+                "losses": r["losses"],
+                "ties": r["ties"]
+            })
+
         rankings.sort(key=lambda x: x['comprehensivePowerScore'], reverse=True)
         return jsonify({"rankings": rankings}), 200
         
@@ -679,20 +715,37 @@ def calculate_playoff_odds():
                 stats["projectedTies"] += standing["ties"]
                 stats["projectedPF"] += standing["pf"]
         
+        # 2026-09-22: with games still left to play, no team's playoff spot
+        # is actually mathematically guaranteed (or eliminated) - a team
+        # that "won" all 10,000 simulated seasons could still theoretically
+        # miss the playoffs if it lost every remaining game in real life.
+        # Rounding a count of 9,996/10,000 up to a flat "100.0%" (or a
+        # bottom team's 4/10,000 down to "0.0%") makes the odds LOOK like a
+        # certainty when it isn't one. So whenever the season isn't over
+        # yet, we clamp the displayed number away from the two extremes -
+        # the underlying simulation and its raw count are untouched, this
+        # only affects what gets rounded and shown.
+        season_in_progress = current_week < total_weeks
+        def display_odds(raw_count):
+            pct = (raw_count / num_simulations) * 100
+            if season_in_progress:
+                pct = min(max(pct, 0.1), 99.9)
+            return round(pct, 1)
+
         # Build results
         results = []
         for team_id, stats in team_stats.items():
             results.append({
                 "teamName": stats["teamName"],
-                "currentRecord": f"{stats['currentWins']}-{stats['currentLosses']}" + 
+                "currentRecord": f"{stats['currentWins']}-{stats['currentLosses']}" +
                                (f"-{stats['currentTies']}" if stats['currentTies'] > 0 else ""),
                 "projectedWins": round(stats["projectedWins"] / num_simulations, 1),
                 "projectedLosses": round(stats["projectedLosses"] / num_simulations, 1),
                 "projectedTies": round(stats["projectedTies"] / num_simulations, 1),
                 "projectedPointsFor": round(stats["projectedPF"] / num_simulations, 1),
-                "playoffOdds": round((stats["playoffCount"] / num_simulations) * 100, 1),
+                "playoffOdds": display_odds(stats["playoffCount"]),
                 "positions": [
-                    {"position": i + 1, "probability": round((count / num_simulations) * 100, 1)}
+                    {"position": i + 1, "probability": display_odds(count)}
                     for i, count in enumerate(stats["positionCounts"])
                 ]
             })
@@ -1243,8 +1296,19 @@ def strength_of_schedule_endpoint():
             min_power = min(all_power_scores) if all_power_scores else 0
             norm_power = ((avg_opp_power - min_power) / (max_power - min_power)) * 100 if max_power > min_power else 50
             
-            # Weighted formula: PPG 42.5%, Win% 15%, Power 42.5%
-            overall_difficulty = (norm_ppg * 0.425) + (norm_win_pct * 0.15) + (norm_power * 0.425)
+            # 2026-09-22: this used to weight opponent PPG and opponent
+            # Power Rank equally at 42.5% each - but Power Rank is ITSELF
+            # partly built from avg_score (see calculate_team_power_rankings),
+            # so PPG was being counted twice: once directly, and again
+            # baked into the Power number. That silently overweighted raw
+            # scoring compared to the other things Power Rank also
+            # captures (dominance, margin of victory). Power Rank is the
+            # more complete "how good is this opponent" signal, so it now
+            # carries most of the weight, with Win% as a secondary,
+            # independent signal (a team can be win-lucky or win-unlucky
+            # relative to its Power score) and PPG kept as a smaller,
+            # non-redundant tiebreaker rather than a full co-equal input.
+            overall_difficulty = (norm_power * 0.60) + (norm_win_pct * 0.20) + (norm_ppg * 0.20)
             
             sos_results.append({
                 'teamName': team_name,

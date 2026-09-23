@@ -4275,7 +4275,7 @@ async function getPowerRankingsCache(leagueId, seasonId) {
 // the completed-week number itself hasn't changed. Without this, a stale
 // cache would otherwise keep serving pre-fix numbers until the next real
 // week finished.
-const POWER_RANKINGS_FORMULA_VERSION = 2;
+const POWER_RANKINGS_FORMULA_VERSION = 4;
 
 async function computePowerRankingsPageData(espnLeagueId, seasonId, throughWeek) {
   const espn_s2 = process.env.ESPN_S2;

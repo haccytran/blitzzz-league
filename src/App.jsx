@@ -3537,8 +3537,9 @@ const getPositionPriority = (slot) => {
   // Handle multiple RBs and WRs by giving them same priority
   if (slot === "RB") return 1;
   if (slot === "WR") return 4;
-  if (slot === "Bench") return 999; // Always last
-  
+  if (slot === "Bench") return 999; // Always last...
+  if (slot === "IR") return 1000; // ...except IR, which goes below the bench (2026-09-24: this league added an IR slot this season)
+
   const index = positionOrder.findIndex(pos => slot.includes(pos));
   return index === -1 ? 500 : index;
 };
@@ -3581,7 +3582,10 @@ useEffect(() => {
             const slot = slotMap[e.lineupSlotId] || "—";
             
             const position = p?.defaultPositionId ? posIdToName(p.defaultPositionId) : "";
-            const displayName = slot === "Bench" 
+            // 2026-09-24: IR players get the same "(position)" suffix bench
+            // players get - IR (like the bench) doesn't already say what
+            // position the player is, so it needs to be added the same way.
+            const displayName = (slot === "Bench" || slot === "IR")
               ? (position ? `${fullName} (${position})` : fullName)
               : fullName.replace(/\s*\([^)]*\)\s*/g, '').trim();
             
@@ -3641,11 +3645,22 @@ useEffect(() => {
             <ul style={{ margin: 0, paddingLeft: 16 }}>
   {team.entries.map((e, i) => {
     const isFirstBench = e.slot === "Bench" && (i === 0 || team.entries[i-1]?.slot !== "Bench");
+    // 2026-09-24: this league added an IR slot this season - IR players
+    // now render underneath the bench, with their own divider/label
+    // (same pattern as the bench divider right above) instead of the
+    // plain hairline the bench uses, so it's clear IR is a separate group.
+    const isFirstIR = e.slot === "IR" && (i === 0 || team.entries[i-1]?.slot !== "IR");
     return (
       <React.Fragment key={i}>
         {isFirstBench && (
   <li style={{ margin: "8px 0", padding: 0, listStyle: "none" }}>
     <hr style={{ border: "none", borderTop: "2px solid #9ca3af", margin: "4px 0" }} />
+  </li>
+)}
+        {isFirstIR && (
+  <li style={{ margin: "8px 0", padding: 0, listStyle: "none" }}>
+    <hr style={{ border: "none", borderTop: "2px solid #dc2626", margin: "4px 0 2px" }} />
+    <div style={{ fontSize: 11, fontWeight: 700, color: "#dc2626", letterSpacing: "0.03em" }}>INJURED RESERVE</div>
   </li>
 )}
         <li style={{ marginBottom: 4 }}>

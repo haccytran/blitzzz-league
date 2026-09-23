@@ -5152,7 +5152,10 @@ async function runAutoRefreshForLeague(leagueConfig) {
  let position = "";
 const slotId = e.lineupSlotId;
 
-if (slotId === 20) { // Bench
+if (slotId === 20 || slotId === 21) { // Bench or IR (2026-09-24: leagues added
+  // an IR slot this season - IR players need the same "figure out their real
+  // position from eligibleSlots" treatment bench players already got, or
+  // they'd show up with no position tag)
   const eligible = p?.eligibleSlots || [];
   
   // RB check FIRST (slot 2)
@@ -5194,9 +5197,18 @@ if (slotId === 20) { // Bench
   };
 });
 
-          // Sort starters and bench
-          const starters = entries.filter(e => e.slot !== "Bench");
+          // Sort starters, bench, and IR.
+          // 2026-09-24: IR players used to fall through the cracks here -
+          // this only ever split entries into "starters" (everything not
+          // Bench) and "bench" (slot === "Bench"), so an IR-slot player
+          // was neither a recognized starter position (starterOrderWithCounts
+          // below has no "IR" entry, so it never got pulled into
+          // sortedStarters) nor counted as bench - it just vanished from
+          // the roster entirely. IR is now split out into its own group
+          // and appended after the bench, the same way bench players are.
+          const starters = entries.filter(e => e.slot !== "Bench" && e.slot !== "IR");
           const bench = entries.filter(e => e.slot === "Bench");
+          const ir = entries.filter(e => e.slot === "IR");
           
           const starterOrderWithCounts = [
             { pos: "QB", max: 1 },
@@ -5225,10 +5237,18 @@ if (slotId === 20) { // Bench
               name: p.position ? `${p.name} (${p.position})` : p.name,
               slot: p.slot
             }));
-          
+
+          const sortedIr = ir
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(p => ({
+              name: p.position ? `${p.name} (${p.position})` : p.name,
+              slot: p.slot
+            }));
+
           const finalEntries = [
             ...sortedStarters.map(p => ({ name: p.name, slot: p.slot })),
-            ...sortedBench
+            ...sortedBench,
+            ...sortedIr
           ];
           
           return { 

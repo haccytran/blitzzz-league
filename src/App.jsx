@@ -1472,12 +1472,17 @@ function formatActivityPT(ts) {
 // 2026-09-24: Free Agent adds in white, Waiver adds in orange - Hac's
 // request, so a glance at Recent Activity shows which pickups actually
 // went through the waiver process vs a same-day free-agent grab.
-function MethodBadge({ method }) {
+function MethodBadge({ method, bidAmount }) {
   if (!method) return null;
   const isWaiver = /waiver/i.test(method);
+  // 2026-09-24: show the FAAB bid alongside a waiver add, at Hac's request -
+  // bidAmount is only ever populated (non-null/undefined) for waiver moves
+  // in a FAAB league to begin with (see rawMoves in server.mjs), so this
+  // naturally stays blank for Free Agent adds and for non-FAAB leagues.
+  const showBid = isWaiver && bidAmount !== null && bidAmount !== undefined;
   return (
     <span style={{ color: isWaiver ? "#f97316" : "#ffffff", fontWeight: 600, fontSize: 12 }}>
-      {method}
+      {method}{showBid ? ` ($${bidAmount})` : ""}
     </span>
   );
 }
@@ -1555,6 +1560,7 @@ for (let i = 0; i < sortedMoves.length; i++) {
         date: new Date(move.date).toLocaleDateString(),
         ts: move.ts ?? new Date(move.date).getTime(),
         method: move.method,
+        bidAmount: move.bidAmount,
         team: move.team,
         player: move.player,
         action: "ADDED",
@@ -1580,6 +1586,7 @@ for (let i = 0; i < sortedMoves.length; i++) {
         date: new Date(move.date).toLocaleDateString(),
         ts: move.ts ?? new Date(move.date).getTime(),
         method: move.method,
+        bidAmount: move.bidAmount,
         team: move.team,
         player: move.player,
         action: "ADDED",
@@ -1670,7 +1677,7 @@ setActivities(pairedActivities);
               color: "#16a34a",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b>{activity.team}</b> ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} /></span>
+              <span><b>{activity.team}</b> ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} bidAmount={activity.bidAmount} /></span>
               <span style={{ color: "#64748b" }}>{formatActivityPT(activity.ts)}</span>
             </div>,
             <div key={i + "drop"} style={{
@@ -1701,7 +1708,7 @@ setActivities(pairedActivities);
               color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
               backgroundColor: isShaded ? "#fffbeb" : "transparent"
             }}>
-              <span><b>{activity.team}</b> {activity.action} <b>{activity.player}</b> {activity.action === "ADDED" && <MethodBadge method={activity.method} />}</span>
+              <span><b>{activity.team}</b> {activity.action} <b>{activity.player}</b> {activity.action === "ADDED" && <MethodBadge method={activity.method} bidAmount={activity.bidAmount} />}</span>
               <span style={{ color: "#64748b" }}>{formatActivityPT(activity.ts)}</span>
             </div>
           );

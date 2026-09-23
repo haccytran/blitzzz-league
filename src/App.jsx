@@ -4795,11 +4795,29 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
   const [trophyCounts, setTrophyCounts] = useState({});
   const [seasonStats, setSeasonStats] = useState({});
+  // 2026-09-22: loadTrophies gets called more than once in quick succession
+  // (once when this view first mounts, again once the real league/season
+  // finishes loading a moment later) and each call is its own independent
+  // trip through this whole async function. Without anything to say "this
+  // one's stale, ignore it", whichever call happens to finish LAST wins and
+  // overwrites the screen - even if an earlier call already had the fully
+  // correct, faster (cached) answer. That race is what was randomly wiping
+  // out the Naughty List: the fast cache-based call would set it correctly,
+  // then a slower, in-flight older call would finish afterward and stomp it
+  // back to empty. requestIdRef is a simple ticket system: every call grabs
+  // the next number, and right before it's about to update the screen it
+  // checks whether it's still holding the LATEST ticket. If a newer call
+  // has already started, this older one just quietly stops instead of
+  // overwriting the newer call's results.
+  const requestIdRef = useRef(0);
   const loadTrophies = async () => {
     if (!espn.leagueId || !espn.seasonId) {
       setError("Set League ID and Season in League Settings first.");
       return;
     }
+
+    const myRequestId = ++requestIdRef.current;
+    const isStale = () => myRequestId !== requestIdRef.current;
 
     setLoading(true);
     setError("");
@@ -4819,6 +4837,7 @@ function TrophyCaseView({ espn, config, seasonYear, btnPri, btnSec }) {
         const cacheResp = await fetch(`${baseURL}/api/leagues/${config.id}/trophy-case-cache/${espn.seasonId}`);
         if (cacheResp.ok) {
           const cached = await cacheResp.json();
+          if (isStale()) return; // a newer loadTrophies call has since started - drop this result
           if (cached && Array.isArray(cached.trophiesData)) {
             // 2026-09-22: the server stores weeks in the order it computed
             // them (oldest first). The live-computation path below always
@@ -4966,7 +4985,8 @@ try {
     `${baseURL}/api/leagues/${config.id}/weekly-awards/${espn.seasonId}?week=${weekNum}`
   );
   const naughtyData = await naughtyResponse.json();
-  
+  if (isStale()) return; // a newer loadTrophies call has since started - drop this result
+
   setNaughtyLists(prev => ({
     ...prev,
     [weekNum]: naughtyData.naughtyList || []
@@ -5311,6 +5331,7 @@ if (worstManager.benchPoints > 0 && worstManager.teams.length > 0) {
       const weeksToTry = [];
       for (let w = 1; w <= maxWeekToTry; w++) weeksToTry.push(w);
       const weekResults = await Promise.all(weeksToTry.map(processWeek));
+      if (isStale()) return; // a newer loadTrophies call has since started - drop this result
       for (const wt of weekResults) {
         if (wt) trophiesData.push(wt);
       }

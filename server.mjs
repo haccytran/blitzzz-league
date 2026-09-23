@@ -1334,8 +1334,16 @@ app.get("/api/leagues/:leagueId/trophy-case-cache/:seasonId/rebuild", async (req
     });
     const currentWeekNum = Math.min(14, settingsJson?.status?.currentMatchupPeriod || 0);
 
+    // 2026-09-22: repair any week whose SAVED data is missing or stuck
+    // incomplete (e.g. captured too early, before its games were played)
+    // before reading from it - otherwise this manual link just re-reads
+    // the same stale data and reports nothing changed, instead of
+    // actually fixing it the way the automatic background job eventually
+    // would on its own (see ensureWeeklySnapshotsFresh above).
+    const repairedWeeks = await ensureWeeklySnapshotsFresh(espnLeagueId, seasonId, currentWeekNum);
+
     const result = await refreshTrophyCaseCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum);
-    res.json({ ...result, currentWeekNum });
+    res.json({ ...result, currentWeekNum, repairedWeeks });
   } catch (error) {
     console.error('Manual Trophy Case cache rebuild failed:', error);
     res.status(500).json({ error: error.message });
@@ -1413,8 +1421,10 @@ app.get("/api/leagues/:leagueId/power-rankings-cache/:seasonId/rebuild", async (
     });
     const currentWeekNum = Math.min(14, settingsJson?.status?.currentMatchupPeriod || 0);
 
+    const repairedWeeks = await ensureWeeklySnapshotsFresh(espnLeagueId, seasonId, currentWeekNum);
+
     const result = await refreshPowerRankingsCacheIfNeeded(espnLeagueId, seasonId, currentWeekNum);
-    res.json({ ...result, currentWeekNum });
+    res.json({ ...result, currentWeekNum, repairedWeeks });
   } catch (error) {
     console.error('Manual Power Rankings cache rebuild failed:', error);
     res.status(500).json({ error: error.message });
@@ -3632,6 +3642,26 @@ function isWeeklySnapshotComplete(snap, week) {
   return matchups.length > 0 && matchups.every(m =>
     m.home?.totalPoints > 0 && m.away?.totalPoints > 0 && m.winner !== 'UNDECIDED'
   );
+}
+
+// Re-fetches any week (1..currentWeekNum) whose stored snapshot is missing
+// or incomplete (see isWeeklySnapshotComplete above) - the same repair the
+// scheduled background job does on its own every ~30 minutes, pulled out
+// so the manual "rebuild now" links below can trigger it immediately
+// instead of the caller having to wait for that next scheduled cycle.
+async function ensureWeeklySnapshotsFresh(espnLeagueId, seasonId, currentWeekNum) {
+  const repaired = [];
+  for (let week = 1; week <= currentWeekNum; week++) {
+    const existing = await getWeeklySnapshot(espnLeagueId, seasonId, week);
+    if (existing && isWeeklySnapshotComplete(existing, week)) continue;
+    try {
+      await captureWeeklySnapshot({ leagueId: espnLeagueId, seasonId, weekNumber: week, req: { headers: {} } });
+      repaired.push(week);
+    } catch (err) {
+      console.error(`[ensureWeeklySnapshotsFresh] Week ${week} re-capture failed:`, err.message);
+    }
+  }
+  return repaired;
 }
 
 async function getSeasonSnapshots(leagueId, seasonId) {

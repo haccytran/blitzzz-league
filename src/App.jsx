@@ -2640,6 +2640,11 @@ function DuesPaymentTracker({ isAdmin, data, setData, seasonId, report, updateDu
   const updatePayment = async (teamName, isPaid) => {
     if (!isAdmin) return;
 
+    // 2026-09-24: confirm before toggling, at Hac's request - a mis-tap
+    // while scrolling on mobile used to silently flip a team's paid
+    // status with no way to notice until later.
+    if (!window.confirm(`Mark ${teamName} as ${isPaid ? "PAID" : "NOT PAID"}?`)) return;
+
     const updates = { ...currentPayments, [teamName]: isPaid };
     
     // Optimistically update local state
@@ -7455,7 +7460,13 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
     }
   };
 
-  const togglePaid = (id) => patch({ paid: { ...cur.paid, [id]: !cur.paid[id] } });
+  // 2026-09-24: confirm before toggling, at Hac's request - same reason
+  // as the Waiver Dues Checklist above (accidental mobile scroll-taps).
+  const togglePaid = (id, name) => {
+    const willBePaid = !cur.paid[id];
+    if (!window.confirm(`Mark ${name} as ${willBePaid ? "PAID" : "NOT PAID"}?`)) return;
+    patch({ paid: { ...cur.paid, [id]: willBePaid } });
+  };
   const markAll = () => patch({ paid: Object.fromEntries(members.map(m => [m.id, true])) });
   const resetAll = () => patch({ paid: {} });
 
@@ -7502,7 +7513,7 @@ function BuyInTracker({ isAdmin, members, seasonYear, data, setData, updateBuyIn
                 <input
                   type="checkbox"
                   checked={!!cur.paid[m.id]}
-                  onChange={() => isAdmin && togglePaid(m.id)}
+                  onChange={() => isAdmin && togglePaid(m.id, m.name)}
                   disabled={!isAdmin}
                 />
                 <span style={{

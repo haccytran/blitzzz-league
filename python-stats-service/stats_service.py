@@ -640,10 +640,30 @@ def calculate_playoff_odds():
         known_stds = [s["rawStd"] for s in team_stats.values() if s["rawStd"] is not None]
         league_avg_std = float(np.mean(known_stds)) if known_stds else 15.0
 
+        # 2026-09-24: same shrinkage idea as stdDev above, now also applied
+        # to each team's scoring AVERAGE, at Hac's request. Before this, a
+        # team's first couple of games were trusted outright as their "true"
+        # scoring level for every remaining simulated game - so an 0-2 team
+        # in week 3 (2 real data points) got simulated as a genuinely bad
+        # team for all 12 remaining games, compounding into a near-zero
+        # playoff number that a 2-game sample can't actually support. This
+        # blends each team's own average with the league-wide average,
+        # weighted by games played - heavy blending early (small, unreliable
+        # sample), fading out to almost pure "their own real average" once
+        # they've played a full season's worth of games. Doesn't touch which
+        # games get simulated or how many are left - that was already
+        # correct - just stops an unlucky small sample from being read as
+        # destiny.
+        known_avgs = [s["avgScore"] for s in team_stats.values()]
+        league_avg_score = float(np.mean(known_avgs)) if known_avgs else 100.0
+
         for stats in team_stats.values():
             n = stats["gamesPlayed"]
             own_std = stats["rawStd"] if stats["rawStd"] is not None else league_avg_std
             stats["stdDev"] = ((n * own_std) + (SHRINKAGE_GAMES * league_avg_std)) / (n + SHRINKAGE_GAMES) if n > 0 else league_avg_std
+
+            raw_avg = stats["avgScore"]
+            stats["avgScore"] = ((n * raw_avg) + (SHRINKAGE_GAMES * league_avg_score)) / (n + SHRINKAGE_GAMES) if n > 0 else league_avg_score
 
         # Get remaining matchups (weeks AFTER current_week)
         remaining_matchups = []

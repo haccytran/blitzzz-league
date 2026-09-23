@@ -1106,7 +1106,7 @@ async function loadOfficialReport(silent=false){
 
   ...(config.id !== 'sculpin' && { weekly: <WeeklyView {...{isAdmin,data,addWeekly,deleteWeekly, editWeekly, seasonYear}} espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} /> }),
   ...(config.id === 'sculpin' && { highestscorer: <HighestScorerView espn={espn} config={config} seasonYear={seasonYear} btnPri={btnPri} btnSec={btnSec} /> }),
-  activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} />,
+  activity: <RecentActivityView espn={espn} config={config} btnPri={btnPri} btnSec={btnSec} isAdmin={isAdmin} />,
   transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} espn={espn} btnPri={btnPri} btnSec={btnSec} />,
   drafts: <DraftsView espn={espn} btnPri={btnPri} btnSec={btnSec} />,
   waivers: <WaiversView 
@@ -1452,7 +1452,7 @@ function AnnouncementsView({isAdmin,login,logout,data,addAnnouncement,deleteAnno
   );
 }
 
-function RecentActivityView({ espn, config, btnPri, btnSec }) {
+function RecentActivityView({ espn, config, btnPri, btnSec, isAdmin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activities, setActivities] = useState([]);
@@ -1588,9 +1588,17 @@ setActivities(pairedActivities);
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <strong>Recent Transactions</strong>
-          <button className="btn" style={btnSec} onClick={loadReport} disabled={loading}>
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
+          {/* 2026-09-24: limited to admins at Hac's request - this page's
+              own useEffect above already reloads on mount/season change, so
+              a regular visitor gets fresh data just by opening the page.
+              The only time re-clicking this actually matters is right after
+              an admin updates the official snapshot elsewhere while this
+              page is still open - so it stays, admin-only. */}
+          {isAdmin && (
+            <button className="btn" style={btnSec} onClick={loadReport} disabled={loading}>
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
+          )}
         </div>
         
         {!espn.seasonId && <div style={{ color: "#64748b" }}>Set your ESPN season in League Settings.</div>}
@@ -1838,11 +1846,20 @@ else if (week === 3) {
   return (
     <div id="weekly-challenges-root" data-loaded={loading ? "false" : "true"}>
     <Section title="Weekly Challenges" actions={
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn" style={btnSec} onClick={() => loadWeeklyChallengeWinners(true)} disabled={loading}>
-          {loading ? "Loading..." : "Refresh Winners"}
-        </button>
-      </div>
+      // 2026-09-24: "Refresh Winners" limited to admins at Hac's request -
+      // winners already reveal themselves automatically once a week (see
+      // the cache-staleness check above, keyed off revealedThroughWeek), so
+      // a regular visitor never needs to force this. Kept for admins only,
+      // as a manual override in case a winner-determination fix needs to
+      // overwrite an already-cached (and now wrong) result without waiting
+      // a week for the cache to naturally roll over.
+      isAdmin ? (
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn" style={btnSec} onClick={() => loadWeeklyChallengeWinners(true)} disabled={loading}>
+            {loading ? "Loading..." : "Refresh Winners"}
+          </button>
+        </div>
+      ) : null
     }>
       <div className="grid" style={{ gap: 12, marginTop: 12 }}>
         {list.map(item => {

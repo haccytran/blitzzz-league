@@ -5687,12 +5687,30 @@ try {
                   }}>
                     <span style={{ fontSize: 24 }}>{trophy.emoji}</span>
                     <div>
-                      <div className="trophy-title" style={{ fontWeight: 600, marginBottom: 2 }}>{trophy.title}</div>
+      <div className="trophy-title" style={{ fontWeight: 600, marginBottom: 2 }}>{trophy.title}</div>
                       <div className="trophy-value" style={{ fontSize: 14, color: "#64748b" }}>{renderTrophyValue(trophy)}</div>
                     </div>
                   </div>
                 ))}
               </div>
+
+              {/* 2026-09-22: with 13 weeks of trophies possibly collapsed
+                  below, jump straight to the season-long leaderboard instead
+                  of scrolling past all of them. Only shown once the
+                  leaderboard actually has data to jump to. Works the same
+                  way on the live current-season Trophy Case and every Hall
+                  of Fame season's Trophy Case, since both reuse this same
+                  component and both render the leaderboard section below
+                  with id="trophy-leaderboard". */}
+              {Object.keys(trophyCounts).length > 0 && (
+                <button
+                  className="btn"
+                  style={{ ...btnSec, marginTop: 12, width: "100%" }}
+                  onClick={() => document.getElementById('trophy-leaderboard')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                >
+                  🏆 See Trophy Leaderboard ▼
+                </button>
+              )}
 
             </div>
           )}
@@ -5700,7 +5718,7 @@ try {
       ))}
 {/* Trophy Count Table */}
 {Object.keys(trophyCounts).length > 0 && (
-  <div className="card" style={{ padding: 16, marginTop: 16 }}>
+  <div id="trophy-leaderboard" className="card" style={{ padding: 16, marginTop: 16 }}>
     <h3 style={{ marginBottom: 16 }}>🏆 Trophy Leaderboard</h3>
     <div style={{ overflowX: 'auto' }}>
       {/* Desktop Table */}

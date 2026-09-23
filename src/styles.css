@@ -65,7 +65,23 @@ body{
     padding-top: 70px;
   }
 
-}.mobile-logo {
+}
+
+/* 2026-09-22: the "See Trophy Leaderboard" button scrolls the page so this
+   section's top edge lines up with the top of the viewport - but on
+   mobile, the fixed header (see .mobile-header above, and "main"'s
+   padding-top: 70px right above) sits on top of that same spot and covers
+   the section's own title. scroll-margin-top tells the browser to stop
+   that much short of the very top instead, so the title lands just below
+   the fixed header rather than underneath it. Desktop has no fixed header,
+   so nothing changes there. */
+@media (max-width: 1023px) {
+  #trophy-leaderboard {
+    scroll-margin-top: 80px;
+  }
+}
+
+.mobile-logo {
   display: flex;
   align-items: center;
   gap: 8px;

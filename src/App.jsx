@@ -1672,22 +1672,22 @@ setActivities(pairedActivities);
         {activities.length > 0 ? (
   <div style={{ marginTop: 12 }}>
     {(() => {
-      let pairCounter = 0;
-      const renderedActivities = [];
-      
+      // 2026-09-25: normalize activities into one flat list of "items"
+      // (either a genuine same-moment ADD+DROP pair, or a solo ADD/DROP)
+      // ONCE, then render that same list twice below - once in the
+      // existing desktop layout, once in a new mobile-card layout that
+      // matches the Transactions page's mobile cards (Hac's request:
+      // "let's just use similar formatting as the transactions page").
+      // Only one of the two ever shows at a time - see
+      // .recent-activity-desktop / .recent-activity-mobile in styles.css.
+      const items = [];
       for (let i = 0; i < activities.length; i++) {
         const activity = activities[i];
         const nextActivity = activities[i + 1];
-        
-        // 2026-09-24: check whether this ADD/DROP is a genuine same-moment
-        // swap using isPaired/pairWith (set earlier from an exact
-        // timestamp match, see matchIdx above) instead of comparing
-        // activity.date - that field had already been truncated to a
-        // date-only string by this point, so two unrelated transactions
-        // from the same team on the same day (different times) were
-        // incorrectly rendered as if they were one grouped swap. Hac
-        // caught this from the highlighting making unrelated rows look
-        // connected.
+
+        // Check whether this ADD/DROP is a genuine same-moment swap using
+        // isPaired/pairWith (set earlier from an exact timestamp match,
+        // see matchIdx above).
         if (activity.action === "ADDED" &&
             activity.isPaired &&
             nextActivity &&
@@ -1696,49 +1696,104 @@ setActivities(pairedActivities);
             nextActivity.team === activity.team &&
             nextActivity.pairWith === activity.player &&
             activity.pairWith === nextActivity.player) {
-          // This is a genuine pair - one card, one shared timestamp (both
-          // sides of a real swap happen at the same instant, so showing it
-          // twice was redundant - Hac's request).
-          const isShaded = pairCounter % 2 === 0;
-          renderedActivities.push(
-            <div key={i} style={{
-              padding: "8px",
-              borderBottom: "1px solid #e2e8f0",
-              backgroundColor: isShaded ? "#fffbeb" : "transparent"
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <b style={{ color: "#0080C6", fontSize: 14 }}>{activity.team}</b>
-                <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={activity.ts} /></span>
-              </div>
-              <div style={{ fontSize: 14, color: "#16a34a" }}>ADDED <b>{activity.player}</b> <MethodBadge method={activity.method} bidAmount={activity.bidAmount} /></div>
-              <div style={{ fontSize: 14, color: "#dc2626" }}>DROPPED <b>{nextActivity.player}</b></div>
-            </div>
-          );
-          i++; // Skip next since we processed it
-          pairCounter++;
+          items.push({
+            key: i,
+            isPair: true,
+            team: activity.team,
+            ts: activity.ts,
+            method: activity.method,
+            bidAmount: activity.bidAmount,
+            addPlayer: activity.player,
+            dropPlayer: nextActivity.player
+          });
+          i++; // Skip next since we processed it as the drop half of this pair
         } else {
-          // Solo transaction
-          const isShaded = pairCounter % 2 === 0;
-          renderedActivities.push(
-            <div key={i} style={{
-              padding: "8px",
-              borderBottom: "1px solid #e2e8f0",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              fontSize: 14,
-              color: activity.action === "ADDED" ? "#16a34a" : "#dc2626",
-              backgroundColor: isShaded ? "#fffbeb" : "transparent"
-            }}>
-              <span><b style={{ color: "#0080C6" }}>{activity.team}</b> {activity.action} <b>{activity.player}</b> {activity.action === "ADDED" && <MethodBadge method={activity.method} bidAmount={activity.bidAmount} />}</span>
-              <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={activity.ts} /></span>
-            </div>
-          );
-          pairCounter++;
+          items.push({
+            key: i,
+            isPair: false,
+            team: activity.team,
+            ts: activity.ts,
+            method: activity.method,
+            bidAmount: activity.bidAmount,
+            player: activity.player,
+            action: activity.action
+          });
         }
       }
-      
-      return renderedActivities;
+
+      return (
+        <>
+          {/* Desktop layout - unchanged from before */}
+          <div className="recent-activity-desktop">
+            {items.map((item, idx) => {
+              const isShaded = idx % 2 === 0;
+              const backgroundColor = isShaded ? "#fffbeb" : "transparent";
+
+              if (item.isPair) {
+                return (
+                  <div key={item.key} style={{ padding: "8px", borderBottom: "1px solid #e2e8f0", backgroundColor }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <b style={{ color: "#0080C6", fontSize: 14 }}>{item.team}</b>
+                      <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={item.ts} /></span>
+                    </div>
+                    <div style={{ fontSize: 14, color: "#16a34a" }}>ADDED <b>{item.addPlayer}</b> <MethodBadge method={item.method} bidAmount={item.bidAmount} /></div>
+                    <div style={{ fontSize: 14, color: "#dc2626" }}>DROPPED <b>{item.dropPlayer}</b></div>
+                  </div>
+                );
+              }
+              return (
+                <div key={item.key} style={{
+                  padding: "8px",
+                  borderBottom: "1px solid #e2e8f0",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  fontSize: 14,
+                  color: item.action === "ADDED" ? "#16a34a" : "#dc2626",
+                  backgroundColor
+                }}>
+                  <span><b style={{ color: "#0080C6" }}>{item.team}</b> {item.action} <b>{item.player}</b> {item.action === "ADDED" && <MethodBadge method={item.method} bidAmount={item.bidAmount} />}</span>
+                  <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={item.ts} /></span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Mobile layout - card style matching the Transactions page's mobile cards */}
+          <div className="recent-activity-mobile">
+            {items.map((item, idx) => {
+              const isShaded = idx % 2 === 0;
+              const backgroundColor = isShaded ? "#fffbeb" : "transparent";
+
+              return (
+                <div key={item.key} className="card" style={{ padding: 8, marginBottom: 6, backgroundColor }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <div style={{ fontWeight: "bold", fontSize: 14, color: "#0080C6" }}>{item.team}</div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}><ActivityTimestamp ts={item.ts} /></div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {item.isPair ? (
+                        <div>
+                          <div style={{ color: "#16a34a" }}>+{item.addPlayer}</div>
+                          <div style={{ color: "#dc2626" }}>-{item.dropPlayer}</div>
+                        </div>
+                      ) : (
+                        <span style={{ color: item.action === "ADDED" ? "#16a34a" : "#dc2626" }}>
+                          {item.action === "ADDED" ? "+" : "-"}{item.player}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12 }}>
+                      {(item.isPair || item.action === "ADDED") && <MethodBadge method={item.method} bidAmount={item.bidAmount} />}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      );
     })()}
   </div>
 ) : !loading && !error && (

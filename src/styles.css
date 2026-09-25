@@ -397,7 +397,7 @@ main {
   .transactions-table {
     display: none;
   }
-  
+
   .transactions-mobile {
     display: block;
   }
@@ -405,6 +405,24 @@ main {
 
 @media (min-width: 768px) {
   .transactions-mobile {
+    display: none;
+  }
+}
+
+/* Recent Activity mobile toggle (2026-09-25: mirrors the Transactions
+   page's table/mobile-card toggle above, at Hac's request) */
+@media (max-width: 767px) {
+  .recent-activity-desktop {
+    display: none;
+  }
+
+  .recent-activity-mobile {
+    display: block;
+  }
+}
+
+@media (min-width: 768px) {
+  .recent-activity-mobile {
     display: none;
   }
 }

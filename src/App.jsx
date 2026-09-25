@@ -1733,7 +1733,7 @@ setActivities(pairedActivities);
                 return (
                   <div key={item.key} style={{ padding: "8px", borderBottom: "1px solid #e2e8f0", backgroundColor }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <b style={{ color: "#0080C6", fontSize: 14 }}>{item.team}</b>
+                      <b style={{ color: "#FFC20E", fontSize: 14 }}>{item.team}</b>
                       <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={item.ts} /></span>
                     </div>
                     <div style={{ fontSize: 14, color: "#16a34a" }}>ADDED <b>{item.addPlayer}</b> <MethodBadge method={item.method} bidAmount={item.bidAmount} /></div>
@@ -1752,7 +1752,7 @@ setActivities(pairedActivities);
                   color: item.action === "ADDED" ? "#16a34a" : "#dc2626",
                   backgroundColor
                 }}>
-                  <span><b style={{ color: "#0080C6" }}>{item.team}</b> {item.action} <b>{item.player}</b> {item.action === "ADDED" && <MethodBadge method={item.method} bidAmount={item.bidAmount} />}</span>
+                  <span><b style={{ color: "#FFC20E" }}>{item.team}</b> {item.action} <b>{item.player}</b> {item.action === "ADDED" && <MethodBadge method={item.method} bidAmount={item.bidAmount} />}</span>
                   <span style={{ color: "#64748b", textAlign: "right", flexShrink: 0 }}><ActivityTimestamp ts={item.ts} /></span>
                 </div>
               );
@@ -1768,7 +1768,7 @@ setActivities(pairedActivities);
               return (
                 <div key={item.key} className="card" style={{ padding: 8, marginBottom: 6, backgroundColor }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <div style={{ fontWeight: "bold", fontSize: 14, color: "#0080C6" }}>{item.team}</div>
+                    <div style={{ fontWeight: "bold", fontSize: 14, color: "#FFC20E" }}>{item.team}</div>
                     <div style={{ fontSize: 11, color: "#64748b" }}><ActivityTimestamp ts={item.ts} /></div>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -3370,7 +3370,7 @@ for (let i = 0; i < rows.length; i++) {
             return `${dateString} ${formattedTime}`;
           })()}
         </td>
-        <td style={td}>{r.team}</td>
+        <td style={{ ...td, color: "#FFC20E", fontWeight: 600 }}>{r.team}</td>
         <td style={{ ...td, fontWeight: 600 }}>
           {r.isPair ? (
             <div>
@@ -3465,7 +3465,7 @@ for (let i = 0; i < rows.length; i++) {
       return (
         <div key={i} className="card" style={{ padding: 8, marginBottom: 6, backgroundColor }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <div style={{ fontWeight: "bold", fontSize: 14 }}>{r.team}</div>
+            <div style={{ fontWeight: "bold", fontSize: 14, color: "#FFC20E" }}>{r.team}</div>
             <div style={{ fontSize: 12, color: "#64748b" }}>
               {(() => {
                 const date = new Date(r.date);

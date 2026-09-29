@@ -29,6 +29,86 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 // =========================
+// Traffic heatmap (2026-09-29)
+// =========================
+// Goal: figure out which hours real visitors actually show up, so we can
+// eventually replace the old "ping every 10 minutes, 24/7" keep-alive with
+// one that only fires during hours people are actually around - letting
+// both services sleep the rest of the time and stay under Render's free
+// monthly instance-hour allowance.
+//
+// This counts real page/API requests into a 7 (day-of-week) x 24 (hour)
+// grid, in league time (America/Los_Angeles) - kept ENTIRELY in memory
+// during normal operation and flushed to Postgres every 15 minutes (not
+// on every request - that would be wasteful DB load for no reason). A
+// deploy or restart in between flushes loses at most 15 minutes of
+// counts, which doesn't matter for a "which hours are busy" read taken
+// over a few weeks.
+//
+// Health-check pings (/api/health, /health) and static asset requests
+// (/assets/..., images, favicon) are excluded on purpose - we only want to
+// count things that mean "a real visit is happening", not background
+// noise or the 8+ asset requests one page load generates.
+const TRAFFIC_HEATMAP_FILE = "traffic_heatmap.json";
+const trafficHeatmap = {
+  // grid[dayOfWeek][hour] = request count, dayOfWeek: 0=Sun .. 6=Sat, hour: 0-23, both in league time (PT)
+  grid: Array.from({ length: 7 }, () => new Array(24).fill(0)),
+  trackingStartedAt: new Date().toISOString(),
+  daysObserved: new Set() // distinct "YYYY-MM-DD" (PT) dates seen, for averaging later
+};
+let trafficHeatmapDirty = false;
+
+function shouldCountForHeatmap(req) {
+  const p = req.path;
+  if (p === "/api/health" || p === "/health") return false;
+  if (p.startsWith("/assets/")) return false;
+  if (/\.(png|jpg|jpeg|svg|ico|webp|css|js|map)$/i.test(p)) return false;
+  return true;
+}
+
+app.use((req, res, next) => {
+  try {
+    if (shouldCountForHeatmap(req)) {
+      const pt = toPT(new Date());
+      trafficHeatmap.grid[pt.getDay()][pt.getHours()]++;
+      trafficHeatmap.daysObserved.add(pt.toISOString().slice(0, 10));
+      trafficHeatmapDirty = true;
+    }
+  } catch (e) {
+    // Never let heatmap tracking break a real request
+  }
+  next();
+});
+
+async function loadTrafficHeatmapFromDb() {
+  try {
+    const saved = await readJson(TRAFFIC_HEATMAP_FILE, null);
+    if (saved && Array.isArray(saved.grid)) {
+      trafficHeatmap.grid = saved.grid;
+      trafficHeatmap.trackingStartedAt = saved.trackingStartedAt || trafficHeatmap.trackingStartedAt;
+      trafficHeatmap.daysObserved = new Set(saved.daysObserved || []);
+      console.log(`[TRAFFIC HEATMAP] Loaded existing data - tracking since ${trafficHeatmap.trackingStartedAt}, ${trafficHeatmap.daysObserved.size} days observed`);
+    }
+  } catch (e) {
+    console.log(`[TRAFFIC HEATMAP] Failed to load existing data: ${e.message}`);
+  }
+}
+
+async function flushTrafficHeatmapToDb() {
+  if (!trafficHeatmapDirty) return;
+  try {
+    trafficHeatmapDirty = false;
+    await writeJson(TRAFFIC_HEATMAP_FILE, {
+      grid: trafficHeatmap.grid,
+      trackingStartedAt: trafficHeatmap.trackingStartedAt,
+      daysObserved: Array.from(trafficHeatmap.daysObserved)
+    });
+  } catch (e) {
+    console.log(`[TRAFFIC HEATMAP] Failed to save: ${e.message}`);
+  }
+}
+
+// =========================
 // PostgreSQL Setup
 // =========================
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -477,6 +557,30 @@ app.get('/api/health', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   await pool.query('SELECT 1');
   res.json({ ok: true });
+});
+
+// GET /api/traffic-heatmap - view the traffic data being collected to
+// figure out real visit hours (see the tracking middleware near the top
+// of this file). Visit this any time to check progress; the numbers get
+// more meaningful the longer this runs (aim for at least 2-3 weeks before
+// drawing conclusions, so it covers a full weekly cycle including a
+// gameday).
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+app.get('/api/traffic-heatmap', async (req, res) => {
+  await flushTrafficHeatmapToDb(); // make sure what we show is current, not up to 15 min stale
+  const daysObserved = trafficHeatmap.daysObserved.size;
+  const grid = trafficHeatmap.grid.map((hours, dayIdx) => ({
+    day: DAY_NAMES[dayIdx],
+    hourly: hours // hours[0..23], each PT hour's total request count across all observed days
+  }));
+  res.json({
+    trackingStartedAt: trafficHeatmap.trackingStartedAt,
+    daysObserved,
+    note: daysObserved < 14
+      ? "Fewer than 2 weeks observed so far - keep collecting before using this to design a keep-alive schedule."
+      : "2+ weeks observed - this should be enough to see real weekly patterns (including gamedays).",
+    grid
+  });
 });
 
 // MAIN LEAGUE DATA ROUTE - PUT THIS FIRST
@@ -6248,6 +6352,12 @@ app.get("/api/weekly-image/trophies.png", async (req, res) => {
 
 // Start auto-refresh system
 startAutoRefresh();
+
+// Traffic heatmap: load whatever's already been recorded, then flush the
+// in-memory counts to the DB every 15 minutes (see the tracking middleware
+// and helpers near the top of this file).
+loadTrafficHeatmapFromDb();
+setInterval(flushTrafficHeatmapToDb, 15 * 60 * 1000);
 
 // =========================
 // Server startup

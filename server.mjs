@@ -6228,28 +6228,23 @@ app.get("/api/weekly-image/trophies.png", async (req, res) => {
 });
 
 // 2026-09-22: Render's free tier spins the Python stats service down after
-// ~15 minutes with no traffic. The next request to it then has to wait for
-// a cold start (50+ seconds), which blows past callPythonService's timeout -
-// Power Rankings (and the other Python-backed features) would silently fall
-// back to old data instead of erroring loudly, which is exactly what made
-// the live site look "stuck" on an old week while localhost was fine.
-// Pinging its /health endpoint every 10 minutes keeps it warm so a real
-// user request never has to pay that cold-start cost. Only runs on Render -
-// there's nothing to keep warm when developing locally, since PYTHON_SERVICE_URL
-// already points at localhost:5001 there.
-if (process.env.RENDER) {
-  const PYTHON_KEEPALIVE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
-  async function pingPythonService() {
-    try {
-      const response = await fetch(`${PYTHON_SERVICE_URL}/health`, { signal: AbortSignal.timeout(15000) });
-      console.log(`[PYTHON KEEPALIVE] ping ${response.ok ? 'ok' : `HTTP ${response.status}`}`);
-    } catch (e) {
-      console.log(`[PYTHON KEEPALIVE] ping failed: ${e.message}`);
-    }
-  }
-  pingPythonService(); // once at startup, then on the interval
-  setInterval(pingPythonService, PYTHON_KEEPALIVE_INTERVAL_MS);
-}
+// ~15 minutes with no traffic, so this used to ping its /health endpoint
+// every 10 minutes forever to keep it warm and avoid a cold-start delay on
+// a real user request.
+//
+// 2026-09-28: REMOVED. Pinging every 10 minutes around the clock never lets
+// either service actually sleep, which is what burned through Render's
+// monthly free instance-hour allowance (750/month, shared across both
+// services) in under a month and got both blitzzz-league and Python
+// suspended - unrelated to how much real traffic or testing was happening.
+// Both services are on a paid Starter plan right now specifically to lift
+// that suspension, but the plan is to move back to the Free plan once
+// usage settles - and this ping would just recreate the same problem the
+// moment that happens. Removed entirely rather than disabled, so it can't
+// accidentally get re-enabled by a future RENDER env var change. If a cold
+// start on the first request after an idle period turns out to be a real
+// problem again, a smarter version of this (only pinging during known
+// high-traffic hours, not 24/7) would be the fix - not this.
 
 // Start auto-refresh system
 startAutoRefresh();

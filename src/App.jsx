@@ -2285,10 +2285,28 @@ async function determineBullseye(weekNumber, leagueId, seasonId, ht_projectedFor
 // Helper function to get player position name
 function getPositionName(positionId) {
   const positions = {
-    0: "QB", 1: "TQB", 2: "RB", 3: "RB/WR", 4: "WR", 5: "WR/TE", 
-    6: "TE", 7: "OP", 16: "D/ST", 17: "K", 20: "Bench"
+    1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K",
+    16: "D/ST", 20: "Bench"
   };
   return positions[positionId] || "Unknown";
+}
+
+// Shared helpers for the player-based weekly challenges.
+// ESPN lineup slot 20 = Bench, 21 = IR. Neither counts as a "starter".
+function isStarterSlot(slotId) {
+  return slotId !== 20 && slotId !== 21;
+}
+
+// Finds a player's ACTUAL points for a week (statSourceId 0 = actual, 1 = projection;
+// statSplitTypeId 1 = single game). Falls back to any entry for that week only if
+// no actual entry exists, so it can never come back worse than before.
+function getActualWeekStats(stats, weekNumber) {
+  if (!Array.isArray(stats)) return null;
+  return (
+    stats.find(s => s.scoringPeriodId === weekNumber && s.statSourceId === 0 && s.statSplitTypeId === 1) ||
+    stats.find(s => s.scoringPeriodId === weekNumber && s.statSourceId === 0) ||
+    null
+  );
 }
 
 // Helper function to get lineup slot name
@@ -2402,12 +2420,12 @@ function determineDirty30(boxscoreData, teamNames, weekNumber) {
       [matchup.home, matchup.away].forEach(team => {
         if (team?.rosterForCurrentScoringPeriod?.entries) {
           team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) { // Not bench
+            if (isStarterSlot(entry.lineupSlotId)) { // Starters only (not bench, not IR)
               const player = entry.playerPoolEntry?.player;
               const stats = player?.stats;
               
               if (stats && Array.isArray(stats)) {
-                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                const weekStats = getActualWeekStats(stats, weekNumber);
                 if (weekStats?.appliedTotal) {
                   const score = weekStats.appliedTotal;
                   const diff = Math.abs(score - 30);
@@ -2448,15 +2466,15 @@ function determineHighestWRRB(boxscoreData, teamNames, weekNumber) {
       [matchup.home, matchup.away].forEach(team => {
         if (team?.rosterForCurrentScoringPeriod?.entries) {
           team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) { // Not bench
+            if (isStarterSlot(entry.lineupSlotId)) { // Starters only (not bench, not IR)
               const player = entry.playerPoolEntry?.player;
               const stats = player?.stats;
               const playerPos = player?.defaultPositionId;
               
-              // Check if WR (4) or RB (2)
-              if (playerPos === 2 || playerPos === 4) {
+              // ESPN player position ids: RB = 2, WR = 3 (TE = 4)
+              if (playerPos === 2 || playerPos === 3) {
                 if (stats && Array.isArray(stats)) {
-                  const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                  const weekStats = getActualWeekStats(stats, weekNumber);
                   if (weekStats?.appliedTotal) {
                     const score = weekStats.appliedTotal;
                     
@@ -2562,8 +2580,8 @@ function determineHighestTE(boxscoreData, teamNames, weekNumber) {
       [matchup.home, matchup.away].forEach(team => {
         if (team?.rosterForCurrentScoringPeriod?.entries) {
           team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            // CHECK THE LINEUP SLOT - Slot 6 is the TE position
-            if (entry.lineupSlotId === 6) {
+            // Any STARTING tight end counts (TE slot OR FLEX). ESPN player position id 4 = TE.
+            if (isStarterSlot(entry.lineupSlotId) && entry.playerPoolEntry?.player?.defaultPositionId === 4) {
               const player = entry.playerPoolEntry?.player;
               const stats = player?.stats;
               
@@ -2613,7 +2631,7 @@ function determineMVP(boxscoreData, teamNames, weekNumber) {
       [matchup.home, matchup.away].forEach(team => {
         if (team?.rosterForCurrentScoringPeriod?.entries) {
           team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) {  // Exclude bench
+            if (isStarterSlot(entry.lineupSlotId)) {  // Starters only (not bench, not IR)
               const player = entry.playerPoolEntry?.player;
               const stats = player?.stats;
               
@@ -2701,7 +2719,7 @@ function determineBenchWarmer(boxscoreData, teamNames, weekNumber) {
               const stats = player?.stats;
               
               if (stats && Array.isArray(stats)) {
-                const weekStats = stats.find(s => s.scoringPeriodId === weekNumber);
+                const weekStats = getActualWeekStats(stats, weekNumber);
                 if (weekStats?.appliedTotal) {
                   const score = weekStats.appliedTotal;
                   
@@ -2740,7 +2758,7 @@ function determineHighestDST(boxscoreData, teamNames, weekNumber) {
       [matchup.home, matchup.away].forEach(team => {
         if (team?.rosterForCurrentScoringPeriod?.entries) {
           team.rosterForCurrentScoringPeriod.entries.forEach(entry => {
-            if (entry.lineupSlotId !== 20) { // Not bench
+            if (isStarterSlot(entry.lineupSlotId)) { // Starters only (not bench, not IR)
               const player = entry.playerPoolEntry?.player;
               const stats = player?.stats;
               const playerPos = player?.defaultPositionId;

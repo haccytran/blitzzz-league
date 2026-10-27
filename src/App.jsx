@@ -1111,6 +1111,7 @@ async function loadOfficialReport(silent=false){
   drafts: <DraftsView espn={espn} btnPri={btnPri} btnSec={btnSec} />,
   waivers: <WaiversView 
   espn={espn}
+  config={config}
   espnReport={espnReport}
   isAdmin={isAdmin}
   data={data}
@@ -4787,27 +4788,80 @@ async function computeWaiverReport(leagueId, seasonId) {
 }
 // ---- END WAIVER REPORT LOGIC ----
 
-function WaiverReportCard({ espn, btnSec }) {
+// How the Waiver Report Card loads (same idea as Weekly Challenges):
+//   1) the server keeps ONE saved snapshot per season. Everybody just reads it,
+//      so the page opens instantly and ESPN isn't hit at all.
+//   2) the first visit after a new week becomes final finds the snapshot is
+//      out of date, calculates the report live (about 10 seconds), shows it,
+//      and saves it as the new snapshot for every visitor after that.
+//   3) the commissioner's Refresh button forces a fresh calculation any time.
+function WaiverReportCard({ espn, config, isAdmin, btnSec }) {
   const [report, setReport] = useState(null);
+  const [savedAt, setSavedAt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const load = async (force = false) => {
+  const load = async (forceRecompute = false) => {
     if (!espn?.leagueId || !espn?.seasonId) {
       setError("Set League ID and Season in League Settings first.");
       return;
     }
     const key = `${espn.leagueId}:${espn.seasonId}`;
-    if (!force && __waiverReportCache && __waiverReportCache.key === key && Date.now() - __waiverReportCache.at < 10 * 60 * 1000) {
+    // Flipping between tabs: reuse what this browser already has for 10 minutes.
+    if (!forceRecompute && __waiverReportCache && __waiverReportCache.key === key && Date.now() - __waiverReportCache.at < 10 * 60 * 1000) {
       setReport(__waiverReportCache.report);
+      setSavedAt(__waiverReportCache.savedAt || "");
       return;
     }
     setLoading(true);
     setError("");
     try {
+      // The last week that should be final, according to ESPN's own "current week"
+      await loadEspnWeekAnchor(espn.leagueId, espn.seasonId);
+      const anchor = __espnWeekAnchor[espn.seasonId];
+      const expectedThrough = anchor ? anchor.week - 1 : 0;
+
+      const baseURL = import.meta.env.DEV ? "http://localhost:8787" : "";
+      const cacheUrl = config?.id ? `${baseURL}/api/leagues/${config.id}/waiver-report-cache/${espn.seasonId}` : null;
+
+      // 1) Use the server's saved snapshot if it covers every finished week.
+      //    (A snapshot under 6 hours old is also trusted, so if ESPN is slow to
+      //    mark a week final we don't recalculate on every single visit.)
+      if (!forceRecompute && cacheUrl) {
+        try {
+          const resp = await fetch(cacheUrl);
+          if (resp.ok) {
+            const cached = await resp.json();
+            const savedMs = Date.parse(cached?.savedAt);
+            const ageMs = isNaN(savedMs) ? Infinity : Date.now() - savedMs;
+            if (cached?.report && (cached.report.throughWeek >= expectedThrough || ageMs < 6 * 60 * 60 * 1000)) {
+              __waiverReportCache = { key, at: Date.now(), report: cached.report, savedAt: cached.savedAt || "" };
+              setReport(cached.report);
+              setSavedAt(cached.savedAt || "");
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (e) {
+          // snapshot fetch failed - fall through to the live calculation
+        }
+      }
+
+      // 2) Calculate live from ESPN
       const result = await computeWaiverReport(espn.leagueId, espn.seasonId);
-      __waiverReportCache = { key, at: Date.now(), report: result };
+      const stamp = new Date().toISOString();
+      __waiverReportCache = { key, at: Date.now(), report: result, savedAt: stamp };
       setReport(result);
+      setSavedAt(stamp);
+
+      // 3) Save it as the new weekly snapshot (best-effort - a failed save never breaks the page)
+      if (cacheUrl && result.throughWeek > 0) {
+        fetch(cacheUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ report: result })
+        }).catch(() => {});
+      }
     } catch (e) {
       console.error("Waiver Report Card failed:", e);
       setError("Couldn't build the Waiver Report Card: " + (e?.message || e));
@@ -4820,24 +4874,35 @@ function WaiverReportCard({ espn, btnSec }) {
   }, [espn?.leagueId, espn?.seasonId]);
 
   const signed = n => `${n >= 0 ? "+" : ""}${(Math.round(n * 10) / 10).toFixed(1)}`;
+  const savedLabel = savedAt && !isNaN(Date.parse(savedAt))
+    ? new Date(savedAt).toLocaleString("en-US", { timeZone: "America/Los_Angeles", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " PT"
+    : "";
+  const labelStyle = { fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.4 };
 
   return (
     <div className="card" style={{ padding: 16, marginTop: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
-        <div>
+        <div style={{ flex: 1, minWidth: 220 }}>
           <h3 style={{ margin: 0 }}>📋 Waiver Report Card</h3>
           <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
             Who really won waivers? Only points scored in a starting lineup count.
             {report ? ` Through Week ${report.throughWeek}.` : ""} Everyone started with ${WAIVER_FAAB_BUDGET} of FAAB.
           </div>
+          {report && (
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+              Updated once a week, after each week's games are final{savedLabel ? ` (snapshot saved ${savedLabel})` : ""}.
+            </div>
+          )}
         </div>
-        <button className="btn" style={btnSec} onClick={() => load(true)} disabled={loading}>
-          {loading ? "Loading..." : "Refresh"}
-        </button>
+        {isAdmin && (
+          <button className="btn" style={btnSec} onClick={() => load(true)} disabled={loading}>
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+        )}
       </div>
 
       {error && <p style={{ color: "#dc2626", marginTop: 12 }}>{error}</p>}
-      {loading && !report && <p style={{ color: "#64748b", marginTop: 12 }}>Crunching every waiver claim and lineup of the season...</p>}
+      {loading && !report && <p style={{ color: "#64748b", marginTop: 12 }}>Crunching every waiver claim and lineup of the season. This can take about 10 seconds the first time each week...</p>}
 
       {report && report.throughWeek === 0 && (
         <p style={{ color: "#64748b", marginTop: 12 }}>No finished weeks yet. The report card starts once Week 1 is final.</p>
@@ -4847,39 +4912,39 @@ function WaiverReportCard({ espn, btnSec }) {
         <>
           <h4 style={{ marginBottom: 6, marginTop: 16 }}>Waiver Leaderboard</h4>
           <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Ranked by Net Value (see "How these numbers work" below).</div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={th}>#</th>
-                  <th style={th}>Team</th>
-                  <th style={th}>Starter Pts</th>
-                  <th style={th}>Spent</th>
-                  <th style={th}>Left</th>
-                  <th style={th}>Pts/$</th>
-                  <th style={th}>Hit Rate</th>
-                  <th style={th}>Net Value</th>
-                  <th style={th}>Wins</th>
-                  <th style={th}>FA Pts</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.rows.map((r, i) => (
-                  <tr key={r.id}>
-                    <td style={td}>{i + 1}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{r.name}</td>
-                    <td style={td}>{r.starterPts.toFixed(1)}</td>
-                    <td style={td}>${r.spent}</td>
-                    <td style={td}>${r.left}</td>
-                    <td style={td}>{r.pointsPerDollar === null ? "-" : r.pointsPerDollar.toFixed(2)}</td>
-                    <td style={td}>{r.hitRate === null ? "-" : `${Math.round(r.hitRate * 100)}% (${r.startedClaims}/${r.claims})`}</td>
-                    <td style={{ ...td, fontWeight: 700, color: r.netValue > 0.05 ? "#16a34a" : r.netValue < -0.05 ? "#dc2626" : "inherit" }}>{signed(r.netValue)}</td>
-                    <td style={td}>{r.wins}</td>
-                    <td style={td}>{r.faPts.toFixed(1)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {report.rows.map((r, i) => {
+              const stats = [
+                ["Starter Pts", r.starterPts.toFixed(1)],
+                ["Spent / Left", `$${r.spent} / $${r.left}`],
+                ["Pts/$", r.pointsPerDollar === null ? "-" : r.pointsPerDollar.toFixed(2)],
+                ["Hit Rate", r.hitRate === null ? "-" : `${Math.round(r.hitRate * 100)}% (${r.startedClaims}/${r.claims})`],
+                ["Wins", String(r.wins)],
+                ["FA Pts", r.faPts.toFixed(1)]
+              ];
+              return (
+                <div key={r.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ minWidth: 30, fontWeight: 700, color: "#64748b", textAlign: "center" }}>
+                      {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, fontWeight: 700, overflowWrap: "anywhere" }}>{r.name}</div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 18, color: r.netValue > 0.05 ? "#16a34a" : r.netValue < -0.05 ? "#dc2626" : "inherit" }}>{signed(r.netValue)}</div>
+                      <div style={labelStyle}>Net Value</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: "8px 12px", marginTop: 10 }}>
+                    {stats.map(([label, value]) => (
+                      <div key={label}>
+                        <div style={labelStyle}>{label}</div>
+                        <div style={{ fontSize: 14 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
           {report.pendingClaims > 0 && (
             <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
@@ -4929,6 +4994,7 @@ function WaiverReportCard({ espn, btnSec }) {
               <li><b>Wins:</b> games decided by waiver pickups (see Game Changer above).</li>
               <li><b>FA Pts:</b> starting-lineup points from free-agent pickups. Those cost $0, sit outside the FAAB system, and aren't part of the waiver awards. Shown for bragging rights.</li>
               <li><b>Finished weeks only:</b> a game in progress can't change the report. A claim made for the current week starts counting once that week is final.</li>
+              <li><b>Weekly snapshot:</b> the report is saved once each week after the games are final, so the page loads instantly. Spent and Left reflect the moment the snapshot was saved.</li>
             </ul>
           </details>
         </>
@@ -4938,7 +5004,7 @@ function WaiverReportCard({ espn, btnSec }) {
 }
 
 function WaiversView({ 
-  espn, espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
+  espn, config, espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
   updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember, btnPri, btnSec 
 }) {
 
@@ -5104,7 +5170,7 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
           <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
         </div>
       )}
-      <WaiverReportCard espn={espn} btnSec={btnSec} />
+      {config?.id === 'blitzzz' && <WaiverReportCard espn={espn} config={config} isAdmin={isAdmin} btnSec={btnSec} />}
     </Section>
   );
 }

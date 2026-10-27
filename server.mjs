@@ -1626,6 +1626,79 @@ app.post("/api/leagues/:leagueId/weekly-challenges-cache/:seasonId", async (req,
   }
 });
 
+// ---------------------------------------------------------
+// Waiver Report Card snapshot (2026-10-27)
+// The Waiver Report Card page calculates its report from ESPN (about 10
+// seconds, a few dozen ESPN calls) once a week's games are final, then saves
+// it here so every other visit - and every other visitor - just reads this
+// saved copy instantly. Same idea as the Weekly Challenges cache above.
+//
+// Storage: reuses the generic espn_raw_cache table (get/saveEspnRawCache,
+// defined further down) under its own cache key instead of weekly_snapshots,
+// because the playoff odds / power rankings code reads EVERY row in
+// weekly_snapshots for a season and expects real weekly data - a different
+// table keeps this completely out of their way. Falls back to a JSON file
+// when there's no database, like every other cache in this file.
+// ---------------------------------------------------------
+const WAIVER_REPORT_CACHE_KEY = "waiver-report-card";
+
+app.get("/api/leagues/:leagueId/waiver-report-cache/:seasonId", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+
+    const cache = await getEspnRawCache(espnLeagueId, seasonId, WAIVER_REPORT_CACHE_KEY);
+    if (cache) {
+      res.json(cache);
+    } else {
+      // Nothing saved yet - the page calculates it live and posts it here afterward
+      res.status(404).json({ error: "Waiver Report Card snapshot not built yet" });
+    }
+  } catch (error) {
+    console.error('Failed to retrieve Waiver Report Card snapshot:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/leagues/:leagueId/waiver-report-cache/:seasonId", async (req, res) => {
+  try {
+    const { leagueId, seasonId } = req.params;
+    const leagueConfigs = { blitzzz: '226912', sculpin: '58645' };
+    const espnLeagueId = leagueConfigs[leagueId] || leagueId;
+
+    const { report } = req.body || {};
+    // Make sure it really is a waiver report before saving, so a bad request
+    // can never leave the page with something it can't draw.
+    const looksRight =
+      report && typeof report === "object" &&
+      Number.isFinite(report.throughWeek) && report.throughWeek >= 0 &&
+      Number.isFinite(report.pointsPerDollar) &&
+      Array.isArray(report.rows) && report.rows.length <= 40 &&
+      Array.isArray(report.awards) && report.awards.length <= 20 &&
+      Array.isArray(report.winLog);
+    if (!looksRight) {
+      return res.status(400).json({ error: "Missing or invalid 'report' in request body" });
+    }
+
+    // Never let an older calculation overwrite a newer saved one.
+    const existing = await getEspnRawCache(espnLeagueId, seasonId, WAIVER_REPORT_CACHE_KEY);
+    if (existing && Number.isFinite(existing.throughWeek) && existing.throughWeek > report.throughWeek) {
+      return res.json({ ok: true, skipped: true });
+    }
+
+    await saveEspnRawCache(espnLeagueId, seasonId, WAIVER_REPORT_CACHE_KEY, {
+      report,
+      throughWeek: report.throughWeek,
+      savedAt: new Date().toISOString()
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to save Waiver Report Card snapshot:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get the pre-computed Power Rankings/Playoff Odds/Strength of Schedule
 // cache for a season, if one has been built yet. This is what the Power
 // Rankings page reads FIRST - see computePowerRankingsPageData()/

@@ -1110,6 +1110,7 @@ async function loadOfficialReport(silent=false){
   transactions: <TransactionsView report={espnReport} loadOfficialReport={loadOfficialReport} espn={espn} btnPri={btnPri} btnSec={btnSec} />,
   drafts: <DraftsView espn={espn} btnPri={btnPri} btnSec={btnSec} />,
   waivers: <WaiversView 
+  espn={espn}
   espnReport={espnReport}
   isAdmin={isAdmin}
   data={data}
@@ -4449,8 +4450,495 @@ function PayDuesView({ data, updateBuyIns, setData, isAdmin, btnPri, btnSec }) {
     </Section>
   );
 }
+// =========================================================
+// WAIVER REPORT CARD (added 2026-10-27)
+// ---------------------------------------------------------
+// "Who REALLY won waivers?" Rates every winning FAAB claim by what the
+// player actually did in that team's STARTING lineup after being added.
+// Bench points never count. Everything is calculated live from ESPN:
+//   - mTransactions2: every claim, its status (ESPN labels each one
+//     EXECUTED or FAILED_..., so failed bids are excluded using ESPN's own
+//     label instead of guessing) and the real FAAB bid
+//   - mBoxscore: each team's lineup slot plus the player's ACTUAL points
+//     (statSourceId 0 / statSplitTypeId 1 - NOT projections) for each week
+// Only weeks ESPN has marked final are counted, so a game still in
+// progress can't swing the results.
+// =========================================================
+const WAIVER_FAAB_BUDGET = 200;          // every team starts the season with $200 of FAAB
+const WAIVER_REPLACEMENT_PTS = 8;        // "typical" replacement-level starter (only used for Game Changer)
+const WAIVER_CHEAP_BID = 2;              // Bargain Bin Hero: claims that cost this much or less
+const WAIVER_BUST_MIN_BID = 10;          // Bust of the Year: only claims that cost at least this much
+const WAIVER_SHARPSHOOTER_MIN_CLAIMS = 5; // Sharpshooter: minimum claims to qualify
+
+// Remembers the last result for 10 minutes so flipping between tabs doesn't
+// re-download everything from ESPN.
+let __waiverReportCache = null;
+
+// Runs fn over items, but only `limit` at a time (so we don't hammer ESPN).
+async function mapWithLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+async function computeWaiverReport(leagueId, seasonId) {
+  // 1) Team names + what week it is
+  const [teamData, settingsData] = await Promise.all([
+    fetchEspnJson({ leagueId, seasonId, view: "mTeam" }),
+    fetchEspnJson({ leagueId, seasonId, view: "mSettings" })
+  ]);
+
+  const teamNames = {};
+  (teamData?.teams || []).forEach(t => {
+    teamNames[t.id] = teamName(t).replace(/\s+/g, " ").trim();
+  });
+
+  const currentWeek =
+    settingsData?.scoringPeriodId ||
+    settingsData?.status?.latestScoringPeriod ||
+    teamData?.status?.currentMatchupPeriod ||
+    1;
+  const maxWeek = Math.max(1, Math.min(currentWeek, 17));
+  const weeks = Array.from({ length: maxWeek }, (_, i) => i + 1);
+
+  // 2) Every week's lineups + every week's claims
+  const boxes = await mapWithLimit(weeks, 4, w =>
+    fetchEspnJson({ leagueId, seasonId, view: ["mMatchup", "mBoxscore"], scoringPeriodId: w })
+  );
+  const txLists = await mapWithLimit(weeks, 4, w =>
+    fetchEspnJson({ leagueId, seasonId, view: "mTransactions2", scoringPeriodId: w, auth: true })
+  );
+
+  // 3) Lineups: who was on each team each week, in which slot, scoring what.
+  //    Slot 20 = bench, 21 = IR (neither counts as a starter).
+  const roster = {};
+  const schedule = {};
+  const playerNames = {};
+  const weekFinal = {};
+  weeks.forEach((w, i) => {
+    roster[w] = {};
+    schedule[w] = [];
+    const matchups = (boxes[i]?.schedule || []).filter(m => m.matchupPeriodId === w);
+    const hasWinnerField = matchups.some(m => m.winner !== undefined);
+    weekFinal[w] =
+      matchups.length > 0 &&
+      (hasWinnerField ? matchups.every(m => m.winner && m.winner !== "UNDECIDED") : w < currentWeek);
+
+    matchups.forEach(m => {
+      const sides = [m.home, m.away].filter(Boolean);
+      schedule[w].push(sides.map(s => ({ id: s.teamId, pts: s.totalPoints || 0 })));
+      sides.forEach(s => {
+        const byPlayer = new Map();
+        (s.rosterForCurrentScoringPeriod?.entries || []).forEach(e => {
+          const p = e.playerPoolEntry?.player;
+          if (!p) return;
+          const row = (p.stats || []).find(
+            x => x.scoringPeriodId === w && x.statSourceId === 0 && x.statSplitTypeId === 1
+          );
+          playerNames[e.playerId] = p.fullName;
+          byPlayer.set(e.playerId, { slot: e.lineupSlotId, pts: row?.appliedTotal ?? 0 });
+        });
+        roster[w][s.teamId] = byPlayer;
+      });
+    });
+  });
+
+  // Last week where EVERY week up to it is final
+  let lastDone = 0;
+  while (lastDone < maxWeek && weekFinal[lastDone + 1]) lastDone++;
+
+  // 4) Every claim that actually went through
+  const seenTx = new Set();
+  const adds = [];
+  txLists.forEach(list => {
+    (list?.transactions || []).forEach(t => {
+      if (!t?.id || seenTx.has(t.id)) return;
+      seenTx.add(t.id);
+      if (t.status !== "EXECUTED" || (t.type !== "WAIVER" && t.type !== "FREEAGENT")) return;
+      (t.items || []).forEach(item => {
+        if (item.type !== "ADD") return;
+        adds.push({
+          team: item.toTeamId,
+          playerId: item.playerId,
+          kind: t.type,
+          bid: t.type === "WAIVER" ? (t.bidAmount || 0) : 0,
+          week: t.scoringPeriodId || 1,
+          weeks: []
+        });
+      });
+    });
+  });
+
+  // For each claim: walk forward week by week while he's still on that
+  // team's roster, and add up the points from weeks he was a STARTER.
+  adds.forEach(a => {
+    for (let w = Math.max(a.week, 1); w <= lastDone; w++) {
+      const e = roster[w]?.[a.team]?.get(a.playerId);
+      if (!e) break;
+      a.weeks.push({ w, started: e.slot !== 20 && e.slot !== 21, pts: e.pts });
+    }
+    a.name = playerNames[a.playerId] || `Player #${a.playerId}`;
+    a.starterPts = a.weeks.filter(x => x.started).reduce((s, x) => s + x.pts, 0);
+    a.startedWeeks = a.weeks.filter(x => x.started).length;
+  });
+
+  const waiverAdds = adds.filter(a => a.kind === "WAIVER");
+  const counted = waiverAdds.filter(a => a.week <= lastDone); // claims we can judge yet
+
+  // 5) Per-team totals
+  const teams = {};
+  const getTeam = id => {
+    if (!teams[id]) {
+      teams[id] = {
+        id,
+        name: teamNames[id] || `Team ${id}`,
+        claims: 0, spent: 0, spentCounted: 0, starterPts: 0,
+        startedClaims: 0, startedManyClaims: 0, faPts: 0, wins: 0, cheapPts: 0
+      };
+    }
+    return teams[id];
+  };
+  Object.keys(teamNames).forEach(id => getTeam(Number(id)));
+
+  waiverAdds.forEach(a => { getTeam(a.team).spent += a.bid; });
+  counted.forEach(a => {
+    const t = getTeam(a.team);
+    t.claims++;
+    t.spentCounted += a.bid;
+    t.starterPts += a.starterPts;
+    if (a.startedWeeks >= 1) t.startedClaims++;
+    if (a.startedWeeks >= 3) t.startedManyClaims++;
+    if (a.bid <= WAIVER_CHEAP_BID) t.cheapPts += a.starterPts;
+  });
+  adds.filter(a => a.kind === "FREEAGENT" && a.week <= lastDone).forEach(a => {
+    getTeam(a.team).faPts += a.starterPts;
+  });
+
+  // League-wide "going rate": how many starting-lineup points a FAAB dollar
+  // bought on average. Used to judge whether a team over- or under-paid.
+  const totalPts = Object.values(teams).reduce((s, t) => s + t.starterPts, 0);
+  const totalSpent = Object.values(teams).reduce((s, t) => s + t.spentCounted, 0);
+  const k = totalSpent > 0 ? totalPts / totalSpent : 0;
+
+  // 6) Games decided by waivers: the team won, but would have lost if every
+  //    waiver starter had only scored a replacement-level 8 points.
+  const winLog = [];
+  for (let w = 1; w <= lastDone; w++) {
+    schedule[w].forEach(pair => {
+      if (pair.length < 2) return;
+      pair.forEach((me, idx) => {
+        const opp = pair[1 - idx];
+        const margin = me.pts - opp.pts;
+        if (margin <= 0) return;
+        const boost = counted
+          .filter(a => a.team === me.id)
+          .flatMap(a => a.weeks.filter(x => x.w === w && x.started).map(x => Math.max(0, x.pts - WAIVER_REPLACEMENT_PTS)))
+          .reduce((s, x) => s + x, 0);
+        if (boost > margin) {
+          getTeam(me.id).wins++;
+          winLog.push({ week: w, team: getTeam(me.id).name, margin, boost });
+        }
+      });
+    });
+  }
+
+  const rows = Object.values(teams)
+    .map(t => ({
+      ...t,
+      left: WAIVER_FAAB_BUDGET - t.spent,
+      pointsPerDollar: t.spentCounted > 0 ? t.starterPts / t.spentCounted : null,
+      hitRate: t.claims > 0 ? t.startedClaims / t.claims : null,
+      netValue: t.starterPts - k * t.spentCounted
+    }))
+    .sort((a, b) => b.netValue - a.netValue || b.starterPts - a.starterPts);
+
+  // 7) Awards
+  const f1 = n => (Math.round(n * 10) / 10).toFixed(1);
+  const money = n => `$${Math.round(n)}`;
+  const games = n => `${n} game${n === 1 ? "" : "s"}`;
+  const leadersOf = (list, valueOf, minExclusive = 0) => {
+    let best = -Infinity;
+    let out = [];
+    list.forEach(item => {
+      const v = valueOf(item);
+      if (v === null || v === undefined || !isFinite(v)) return;
+      if (v > best + 1e-9) { best = v; out = [item]; }
+      else if (Math.abs(v - best) <= 1e-9) out.push(item);
+    });
+    return out.length && best > minExclusive ? { value: best, items: out } : null;
+  };
+  const teamWinner = r => r.items.map(t => t.name).join(" & ");
+  const awards = [];
+
+  // Waiver Wizard
+  {
+    const r = leadersOf(rows.filter(t => t.claims > 0), t => t.netValue);
+    const t = r?.items[0];
+    awards.push({
+      key: "wizard", icon: "🧙", title: "Waiver Wizard",
+      meaning: `The best bang for the FAAB buck. Across the league, each $1 of FAAB has bought about ${k.toFixed(2)} starting-lineup points. A team's "net value" is the points its pickups scored minus what its spending should have bought at that rate. Highest net value wins.`,
+      winner: r ? teamWinner(r) : null,
+      detail: r ? `${r.value >= 0 ? "+" : ""}${f1(r.value)} net value: ${f1(t.starterPts)} starter pts on ${money(t.spentCounted)} spent` : "No finished claims yet."
+    });
+  }
+
+  // Best Pickup
+  {
+    const best = [...counted].sort((a, b) => b.starterPts - a.starterPts)[0];
+    const ok = best && best.starterPts > 0;
+    awards.push({
+      key: "bestPickup", icon: "💎", title: "Best Pickup",
+      meaning: "The single waiver claim that scored the most points while sitting in a starting lineup. Points he scored on a bench, or before the team claimed him, don't count.",
+      winner: ok ? getTeam(best.team).name : null,
+      detail: ok ? `${best.name}: ${f1(best.starterPts)} starter pts over ${games(best.startedWeeks)} (${money(best.bid)} claim in Week ${best.week})` : "No finished claims yet."
+    });
+  }
+
+  // Bargain Bin Hero
+  {
+    const r = leadersOf(rows, t => t.cheapPts);
+    awards.push({
+      key: "bargain", icon: "🏷️", title: "Bargain Bin Hero",
+      meaning: `Most starting-lineup points from waiver claims that cost ${money(WAIVER_CHEAP_BID)} or less. The award for finding real production without spending real money.`,
+      winner: r ? teamWinner(r) : null,
+      detail: r ? `${f1(r.value)} starter pts from claims of ${money(WAIVER_CHEAP_BID)} or less` : "Nobody has produced from a cheap claim yet."
+    });
+  }
+
+  // Sharpshooter
+  {
+    const r = leadersOf(rows.filter(t => t.claims >= WAIVER_SHARPSHOOTER_MIN_CLAIMS), t => t.hitRate);
+    const t = r?.items[0];
+    awards.push({
+      key: "sharpshooter", icon: "🎯", title: "Sharpshooter",
+      meaning: `Highest hit rate: the share of a team's waiver claims that actually cracked a starting lineup at least once. A team needs at least ${WAIVER_SHARPSHOOTER_MIN_CLAIMS} claims to qualify, so one lucky grab can't win it.`,
+      winner: r ? teamWinner(r) : null,
+      detail: r ? `${t.startedClaims} of ${t.claims} claims started (${Math.round(r.value * 100)}%)` : `Nobody has ${WAIVER_SHARPSHOOTER_MIN_CLAIMS} finished claims yet.`
+    });
+  }
+
+  // Game Changer
+  {
+    const r = leadersOf(rows, t => t.wins);
+    awards.push({
+      key: "gameChanger", icon: "⚡", title: "Game Changer",
+      meaning: `Most wins that were decided by waiver pickups. For each win we ask: if every waiver pickup in that week's lineup had scored just a replacement-level ${WAIVER_REPLACEMENT_PTS} points, would the team have lost? If yes, waivers won that game.`,
+      winner: r ? teamWinner(r) : null,
+      detail: r ? `${r.value} win${r.value === 1 ? "" : "s"} decided by waiver pickups` : "No game has been decided by a waiver pickup yet."
+    });
+  }
+
+  // Lightning in a Bottle
+  {
+    const flat = counted.flatMap(a => a.weeks.filter(x => x.started).map(x => ({ a, w: x.w, pts: x.pts })));
+    const best = flat.sort((x, y) => y.pts - x.pts)[0];
+    awards.push({
+      key: "lightning", icon: "🌩️", title: "Lightning in a Bottle",
+      meaning: "The biggest single-game explosion from a waiver pickup while he was in a starting lineup.",
+      winner: best ? getTeam(best.a.team).name : null,
+      detail: best ? `${best.a.name} scored ${f1(best.pts)} in Week ${best.w} (${money(best.a.bid)} claim)` : "No finished claims yet."
+    });
+  }
+
+  // Bust of the Year
+  {
+    const pool = counted.filter(a => a.bid >= WAIVER_BUST_MIN_BID && a.week <= lastDone - 1);
+    const worst = [...pool].sort((a, b) => (a.starterPts - k * a.bid) - (b.starterPts - k * b.bid))[0];
+    const ok = worst && worst.starterPts - k * worst.bid < 0;
+    awards.push({
+      key: "bust", icon: "🧯", title: "Bust of the Year",
+      meaning: `The biggest waste of FAAB. Looks only at claims of ${money(WAIVER_BUST_MIN_BID)}+ that have had at least two weeks to prove themselves, and finds the one that scored furthest below what its price tag should have bought.`,
+      winner: ok ? getTeam(worst.team).name : null,
+      detail: ok
+        ? `${worst.name}: ${money(worst.bid)} claim in Week ${worst.week}, ${worst.startedWeeks === 0 ? "never started" : `${f1(worst.starterPts)} starter pts in ${games(worst.startedWeeks)}`}`
+        : "No big claim has flopped yet."
+    });
+  }
+
+  // Big Spender
+  {
+    const r = leadersOf(rows, t => t.spent);
+    const t = r?.items[0];
+    awards.push({
+      key: "bigSpender", icon: "💸", title: "Big Spender",
+      meaning: "Most FAAB spent on winning claims so far. Failed bids cost nothing and don't count. Not good or bad on its own: it's the \"where did all the money go?\" award.",
+      winner: r ? teamWinner(r) : null,
+      detail: r ? `${money(r.value)} spent, ${money(WAIVER_FAAB_BUDGET - r.value)} left of ${money(WAIVER_FAAB_BUDGET)}` : "Nobody has spent FAAB yet."
+    });
+  }
+
+  return {
+    throughWeek: lastDone,
+    currentWeek,
+    pointsPerDollar: k,
+    totalClaims: counted.length,
+    pendingClaims: waiverAdds.length - counted.length,
+    rows,
+    awards,
+    winLog
+  };
+}
+// ---- END WAIVER REPORT LOGIC ----
+
+function WaiverReportCard({ espn, btnSec }) {
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = async (force = false) => {
+    if (!espn?.leagueId || !espn?.seasonId) {
+      setError("Set League ID and Season in League Settings first.");
+      return;
+    }
+    const key = `${espn.leagueId}:${espn.seasonId}`;
+    if (!force && __waiverReportCache && __waiverReportCache.key === key && Date.now() - __waiverReportCache.at < 10 * 60 * 1000) {
+      setReport(__waiverReportCache.report);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await computeWaiverReport(espn.leagueId, espn.seasonId);
+      __waiverReportCache = { key, at: Date.now(), report: result };
+      setReport(result);
+    } catch (e) {
+      console.error("Waiver Report Card failed:", e);
+      setError("Couldn't build the Waiver Report Card: " + (e?.message || e));
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load(false);
+  }, [espn?.leagueId, espn?.seasonId]);
+
+  const signed = n => `${n >= 0 ? "+" : ""}${(Math.round(n * 10) / 10).toFixed(1)}`;
+
+  return (
+    <div className="card" style={{ padding: 16, marginTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ margin: 0 }}>📋 Waiver Report Card</h3>
+          <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
+            Who really won waivers? Only points scored in a starting lineup count.
+            {report ? ` Through Week ${report.throughWeek}.` : ""} Everyone started with ${WAIVER_FAAB_BUDGET} of FAAB.
+          </div>
+        </div>
+        <button className="btn" style={btnSec} onClick={() => load(true)} disabled={loading}>
+          {loading ? "Loading..." : "Refresh"}
+        </button>
+      </div>
+
+      {error && <p style={{ color: "#dc2626", marginTop: 12 }}>{error}</p>}
+      {loading && !report && <p style={{ color: "#64748b", marginTop: 12 }}>Crunching every waiver claim and lineup of the season...</p>}
+
+      {report && report.throughWeek === 0 && (
+        <p style={{ color: "#64748b", marginTop: 12 }}>No finished weeks yet. The report card starts once Week 1 is final.</p>
+      )}
+
+      {report && report.throughWeek > 0 && (
+        <>
+          <h4 style={{ marginBottom: 6, marginTop: 16 }}>Waiver Leaderboard</h4>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>Ranked by Net Value (see "How these numbers work" below).</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={th}>#</th>
+                  <th style={th}>Team</th>
+                  <th style={th}>Starter Pts</th>
+                  <th style={th}>Spent</th>
+                  <th style={th}>Left</th>
+                  <th style={th}>Pts/$</th>
+                  <th style={th}>Hit Rate</th>
+                  <th style={th}>Net Value</th>
+                  <th style={th}>Wins</th>
+                  <th style={th}>FA Pts</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.rows.map((r, i) => (
+                  <tr key={r.id}>
+                    <td style={td}>{i + 1}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{r.name}</td>
+                    <td style={td}>{r.starterPts.toFixed(1)}</td>
+                    <td style={td}>${r.spent}</td>
+                    <td style={td}>${r.left}</td>
+                    <td style={td}>{r.pointsPerDollar === null ? "-" : r.pointsPerDollar.toFixed(2)}</td>
+                    <td style={td}>{r.hitRate === null ? "-" : `${Math.round(r.hitRate * 100)}% (${r.startedClaims}/${r.claims})`}</td>
+                    <td style={{ ...td, fontWeight: 700, color: r.netValue > 0.05 ? "#16a34a" : r.netValue < -0.05 ? "#dc2626" : "inherit" }}>{signed(r.netValue)}</td>
+                    <td style={td}>{r.wins}</td>
+                    <td style={td}>{r.faPts.toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {report.pendingClaims > 0 && (
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>
+              {report.pendingClaims} claim{report.pendingClaims === 1 ? "" : "s"} for the week in progress will count once that week is final.
+            </div>
+          )}
+
+          <h4 style={{ marginBottom: 6, marginTop: 20 }}>Waiver Awards</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+            {report.awards.map(a => (
+              <div key={a.key} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12 }}>
+                <div style={{ fontWeight: 700 }}>{a.icon} {a.title}</div>
+                <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 8px" }}>{a.meaning}</div>
+                {a.winner ? (
+                  <>
+                    <div style={{ fontWeight: 700, color: "#FFC20E" }}>🏆 {a.winner}</div>
+                    <div style={{ fontSize: 13 }}>{a.detail}</div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 13, color: "#64748b" }}>{a.detail}</div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {report.winLog.length > 0 && (
+            <>
+              <h4 style={{ marginBottom: 6, marginTop: 20 }}>Games Decided by Waivers</h4>
+              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                {report.winLog.map((g, i) => (
+                  <li key={i} style={{ padding: "6px 0", borderBottom: "1px solid #e2e8f0", fontSize: 13 }}>
+                    <b>Week {g.week}:</b> {g.team} won by {g.margin.toFixed(1)}. Their waiver starters scored {g.boost.toFixed(1)} points above replacement level.
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <details style={{ marginTop: 20 }}>
+            <summary style={{ cursor: "pointer", fontWeight: 700 }}>How these numbers work</summary>
+            <ul style={{ fontSize: 13, color: "#64748b", paddingLeft: 18, marginTop: 8, lineHeight: 1.5 }}>
+              <li><b>Starter Pts:</b> points a team's waiver pickups scored while in the starting lineup, counting only weeks after the claim. Bench points and anything scored for a previous team don't count.</li>
+              <li><b>Spent / Left:</b> FAAB paid on winning claims out of ${WAIVER_FAAB_BUDGET}. Failed bids cost nothing and aren't counted (ESPN labels every claim as won or failed).</li>
+              <li><b>Pts/$:</b> Starter Pts divided by dollars spent. Shows "-" for a team that spent nothing, since you can't divide by $0.</li>
+              <li><b>Hit Rate:</b> the percent of a team's waiver claims that made a starting lineup at least once (started / total claims).</li>
+              <li><b>Net Value:</b> Starter Pts minus the points that team's spending should have bought at the league-wide rate (about {report.pointsPerDollar.toFixed(2)} pts per $1 right now). Positive means they beat the market, negative means they overpaid. It's the one number that rewards both smart spending and results.</li>
+              <li><b>Wins:</b> games decided by waiver pickups (see Game Changer above).</li>
+              <li><b>FA Pts:</b> starting-lineup points from free-agent pickups. Those cost $0, sit outside the FAAB system, and aren't part of the waiver awards. Shown for bragging rights.</li>
+              <li><b>Finished weeks only:</b> a game in progress can't change the report. A claim made for the current week starts counting once that week is final.</li>
+            </ul>
+          </details>
+        </>
+      )}
+    </div>
+  );
+}
+
 function WaiversView({ 
-  espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
+  espn, espnReport, isAdmin, data, selectedWeek, setSelectedWeek, seasonYear, membersById,
   updateOfficialSnapshot, setActive, loadServerData, addWaiver, deleteWaiver, deleteMember, btnPri, btnSec 
 }) {
 
@@ -4616,6 +5104,7 @@ const waiversThisWeek = espnReport.rawMoves.filter(move => {
           <button className="btn" style={btnSec} onClick={()=>setActive("dues")}>Open Dues</button>
         </div>
       )}
+      <WaiverReportCard espn={espn} btnSec={btnSec} />
     </Section>
   );
 }

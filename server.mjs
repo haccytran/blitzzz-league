@@ -555,7 +555,6 @@ async function saveLeagueData(data, leagueId = 'default') {
 // Add this simple endpoint for keep-alive pings
 app.get('/api/health', async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  await pool.query('SELECT 1');
   res.json({ ok: true });
 });
 

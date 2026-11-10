@@ -311,6 +311,73 @@ async function pythonFetch(url, init) {
   }
 }
 
+// The Nerd Data numbers (season records, positional records, luck index) only change when a new week
+// finishes. So each answer from the Python service is saved (in the database, so it survives restarts)
+// and shown instantly. The Python service - which sleeps on Render's free plan - is only woken ONCE PER
+// WEEK by the automatic refresh job (refreshNerdDataIfNeeded below), or the very first time if no saved
+// copy exists yet. If Python can't be reached, the older saved copy is shown instead of an error.
+const pythonCacheMemory = new Map();
+async function pythonSaved(key) {
+  let hit = pythonCacheMemory.get(key);
+  if (!hit) {
+    try {
+      const saved = await readJson(`pythoncache_${key}.json`, null);
+      if (saved && saved.at) { hit = saved; pythonCacheMemory.set(key, hit); }
+    } catch (e) { /* no saved copy yet */ }
+  }
+  return hit || null;
+}
+async function pythonSave(key, producer) {
+  const data = await producer();
+  const entry = { at: Date.now(), data };
+  pythonCacheMemory.set(key, entry);
+  try { await writeJson(`pythoncache_${key}.json`, entry); } catch (e) { console.log('[PYTHON CACHE] could not save', key, e.message); }
+  return data;
+}
+async function pythonCached(key, producer) {
+  const hit = await pythonSaved(key);
+  if (hit) return hit.data;
+  return await pythonSave(key, producer); // first time ever: ask Python (may take a minute if it is asleep)
+}
+function fetchSeasonRecords(espnLeagueId) {
+  return async () => {
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
+    if (!response.ok) throw new Error(`Python service error: HTTP ${response.status}`);
+    return await response.json();
+  };
+}
+function fetchPositionalRecords(espnLeagueId) {
+  return async () => {
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
+    if (!response.ok) throw new Error(`Python service error: HTTP ${response.status}`);
+    return await response.json();
+  };
+}
+function fetchLuckIndex(espnLeagueId, seasonId, week) {
+  return () => callPythonService('/luck-index', {
+    leagueId: espnLeagueId,
+    year: parseInt(seasonId),
+    currentWeek: parseInt(week) || 5,
+    espn_s2: process.env.ESPN_S2,
+    swid: process.env.SWID
+  });
+}
+// Runs from the automatic refresh. Does nothing unless a new week has finished since the last time.
+async function refreshNerdDataIfNeeded(espnLeagueId, seasonId, completedWeek) {
+  const marker = await pythonSaved(`nerdweek_${espnLeagueId}_${seasonId}`);
+  if (marker && marker.data && marker.data.week === completedWeek) return { refreshed: false };
+  console.log(`[NERD DATA] new completed week ${completedWeek}, refreshing the saved Nerd Data...`);
+  await pythonSave(`season-records_${espnLeagueId}`, fetchSeasonRecords(espnLeagueId));
+  await pythonSave(`positional-records_${espnLeagueId}`, fetchPositionalRecords(espnLeagueId));
+  await pythonSave(`luck-index_${espnLeagueId}_${seasonId}_${completedWeek}`, fetchLuckIndex(espnLeagueId, seasonId, completedWeek));
+  await pythonSave(`nerdweek_${espnLeagueId}_${seasonId}`, async () => ({ week: completedWeek }));
+  return { refreshed: true };
+}
+async function refreshNerdDataSafely(espnLeagueId, seasonId, completedWeek) {
+  try { return await refreshNerdDataIfNeeded(espnLeagueId, seasonId, completedWeek); }
+  catch (error) { console.error('[NERD DATA] weekly refresh failed, will retry next cycle:', error.message); return { refreshed: false }; }
+}
+
 async function callPythonService(endpoint, data) {
   try {
     const response = await pythonFetch(`${PYTHON_SERVICE_URL}${endpoint}`, {
@@ -437,8 +504,7 @@ app.get('/api/leagues/:leagueId/season-records', async (req, res) => {
     // same machine - on Render they're two separate services, so this
     // always failed in production. PYTHON_SERVICE_URL already resolves to
     // the right host in both environments (see its definition above).
-    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
-    const data = await response.json();
+    const data = await pythonCached(`season-records_${espnLeagueId}`, fetchSeasonRecords(espnLeagueId));
     res.json(data);
   } catch (error) {
     console.error('Season records error:', error);
@@ -455,8 +521,7 @@ app.get('/api/leagues/:leagueId/positional-records', async (req, res) => {
     const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
     
     // 2026-09-22: same PYTHON_SERVICE_URL fix as season-records above.
-    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
-    const data = await response.json();
+    const data = await pythonCached(`positional-records_${espnLeagueId}`, fetchPositionalRecords(espnLeagueId));
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -934,13 +999,7 @@ app.post('/api/leagues/:leagueId/luck-index/:seasonId', async (req, res) => {
     
     console.log('[LUCK INDEX] Request:', { leagueId, espnLeagueId, seasonId, currentWeek });
 
-    const data = await callPythonService('/luck-index', {
-      leagueId: espnLeagueId,
-      year: parseInt(seasonId),
-      currentWeek: parseInt(currentWeek) || 5,
-      espn_s2: process.env.ESPN_S2 || req.cookies?.espn_s2,
-      swid: process.env.SWID || req.cookies?.swid
-    });
+    const data = await pythonCached(`luck-index_${espnLeagueId}_${seasonId}_${parseInt(currentWeek) || 5}`, fetchLuckIndex(espnLeagueId, seasonId, currentWeek));
 
     console.log('[LUCK INDEX] Python response:', data);
     res.json(data);
@@ -979,8 +1038,7 @@ app.get("/api/leagues/:leagueId/season-records/:seasonId", async (req, res) => {
     // there, at PYTHON_SERVICE_URL) - this is why /#nerddata was blank
     // in production. This is the route the frontend actually calls
     // (with :seasonId); the earlier duplicate route above got the same fix.
-    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
-    const data = await response.json();
+    const data = await pythonCached(`season-records_${espnLeagueId}`, fetchSeasonRecords(espnLeagueId));
     res.json(data);
   } catch (error) {
     console.error('Season records failed:', error);
@@ -996,8 +1054,7 @@ app.get("/api/leagues/:leagueId/positional-records/:seasonId", async (req, res) 
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
     // 2026-09-22: same PYTHON_SERVICE_URL fix as season-records above.
-    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
-    const data = await response.json();
+    const data = await pythonCached(`positional-records_${espnLeagueId}`, fetchPositionalRecords(espnLeagueId));
     res.json(data);
   } catch (error) {
     console.error('Positional records failed:', error);
@@ -4849,11 +4906,13 @@ async function refreshPowerRankingsCacheIfNeeded(espnLeagueId, seasonId, current
 
   if (latestCompletedWeek === 0) return { recomputed: false, reason: "no completed weeks yet" };
   if (cached && cached.throughWeek === latestCompletedWeek && cached.formulaVersion === POWER_RANKINGS_FORMULA_VERSION) {
+    await refreshNerdDataSafely(espnLeagueId, seasonId, latestCompletedWeek);
     return { recomputed: false, reason: "already up to date" };
   }
 
   const fresh = await computePowerRankingsPageData(espnLeagueId, seasonId, latestCompletedWeek);
   await savePowerRankingsCache(espnLeagueId, seasonId, fresh);
+  await refreshNerdDataSafely(espnLeagueId, seasonId, latestCompletedWeek);
   return { recomputed: true, throughWeek: fresh.throughWeek };
 }
 

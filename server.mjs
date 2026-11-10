@@ -288,13 +288,35 @@ const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL ||
 console.log(`[ENVIRONMENT] Running in ${process.env.RENDER ? 'RENDER' : 'LOCAL'} mode`);
 console.log(`[ENVIRONMENT] Python service URL: ${PYTHON_SERVICE_URL}`);
 
+// Render's free plan puts the Python service to sleep after 15 idle minutes. While it wakes up
+// (30-60 seconds) Render answers with a web page instead of data, which used to break the Nerd Data
+// and Power Rankings pages. So: if the answer isn't real data yet, wait a few seconds and ask again.
+async function pythonFetch(url, init) {
+  const maxAttempts = 8;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let response;
+    try {
+      response = await fetch(url, Object.assign({}, init, { signal: AbortSignal.timeout(70000) }));
+    } catch (error) {
+      if (attempt === maxAttempts) throw error;
+      console.log(`[PYTHON SERVICE] attempt ${attempt} failed (${error.message}), retrying...`);
+      await new Promise(r => setTimeout(r, 5000));
+      continue;
+    }
+    const type = response.headers.get('content-type') || '';
+    const waking = [502, 503, 504].includes(response.status) || (!type.includes('json') && response.status !== 500);
+    if (!waking || attempt === maxAttempts) return response;
+    console.log(`[PYTHON SERVICE] still waking up (HTTP ${response.status}), attempt ${attempt}/${maxAttempts}, retrying...`);
+    await new Promise(r => setTimeout(r, 5000));
+  }
+}
+
 async function callPythonService(endpoint, data) {
   try {
-    const response = await fetch(`${PYTHON_SERVICE_URL}${endpoint}`, {
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-      timeout: 30000 // 30 second timeout
+      body: JSON.stringify(data)
     });
     
     if (!response.ok) {
@@ -415,7 +437,7 @@ app.get('/api/leagues/:leagueId/season-records', async (req, res) => {
     // same machine - on Render they're two separate services, so this
     // always failed in production. PYTHON_SERVICE_URL already resolves to
     // the right host in both environments (see its definition above).
-    const response = await fetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -433,7 +455,7 @@ app.get('/api/leagues/:leagueId/positional-records', async (req, res) => {
     const espnLeagueId = leagueConfigs[req.params.leagueId] || req.params.leagueId;
     
     // 2026-09-22: same PYTHON_SERVICE_URL fix as season-records above.
-    const response = await fetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -936,7 +958,7 @@ app.get("/api/leagues/:leagueId/streaming-analysis/:seasonId", async (req, res) 
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
     // 2026-09-22: was hardcoded to localhost:5001 - see PYTHON_SERVICE_URL fix note below.
-    const response = await fetch(`${PYTHON_SERVICE_URL}/streaming-analysis?leagueId=${espnLeagueId}&year=${seasonId}`);
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/streaming-analysis?leagueId=${espnLeagueId}&year=${seasonId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -957,7 +979,7 @@ app.get("/api/leagues/:leagueId/season-records/:seasonId", async (req, res) => {
     // there, at PYTHON_SERVICE_URL) - this is why /#nerddata was blank
     // in production. This is the route the frontend actually calls
     // (with :seasonId); the earlier duplicate route above got the same fix.
-    const response = await fetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/season-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
@@ -974,7 +996,7 @@ app.get("/api/leagues/:leagueId/positional-records/:seasonId", async (req, res) 
     const espnLeagueId = leagueConfigs[leagueId] || leagueId;
     
     // 2026-09-22: same PYTHON_SERVICE_URL fix as season-records above.
-    const response = await fetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
+    const response = await pythonFetch(`${PYTHON_SERVICE_URL}/positional-records?leagueId=${espnLeagueId}`);
     const data = await response.json();
     res.json(data);
   } catch (error) {
